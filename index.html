@@ -223,6 +223,17 @@ details.panel + details.panel{
   margin-top: 12px;
 }
 
+.location-search{
+  display:flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.location-search .field-input{
+  flex: 1;
+  min-width: 0;
+}
+
 .hint{
   color: var(--muted);
   font-size: 13px;
@@ -550,12 +561,19 @@ details.panel + details.panel{
     <div class="panel-label">Route</div>
     <div id="map"></div>
     <div class="map-actions">
+      <div class="location-search">
+        <div class="field-input">
+          <input type="text" id="locationSearchInput" placeholder="Search a place or address…" autocomplete="off">
+        </div>
+        <button class="btn btn-ghost" id="locationSearchBtn" onclick="searchLocation()">Search</button>
+      </div>
       <button class="btn btn-ghost" onclick="getLocation()">Use my location</button>
-      <p class="hint">Click the map to drop a start point, click again
-      for the destination. Drag either pin to adjust it. After you
-      calculate, red circles mark schools, kindergartens, hospitals
-      and playgrounds, faint blue circles mark buildings, and the
-      solid blue line shows the route around them.</p>
+      <p class="hint">Search for a place, or click the map to drop a
+      start point, click again for the destination. Drag either pin
+      to adjust it. After you calculate, red circles mark schools,
+      kindergartens, hospitals and playgrounds, faint blue circles
+      mark buildings, and the solid blue line shows the route around
+      them.</p>
     </div>
   </section>
 
@@ -624,6 +642,39 @@ details.panel + details.panel{
               window.alert("Geolocation is not supported by this browser.");
               }
      }
+
+     async function searchLocation() {
+      var input = document.getElementById('locationSearchInput');
+      var query = input.value.trim();
+      if (!query) { input.focus(); return; }
+
+      var btn = document.getElementById('locationSearchBtn');
+      var originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Searching\u2026';
+
+      try {
+        var result = await geocodeLocation(query);
+        if (!result) {
+          window.alert('No location found for "' + query + '". Try a different search.');
+          return;
+        }
+        useCurrentLocationAsStart(result.lat, result.lng);
+      } catch (err) {
+        console.error(err);
+        window.alert('Something went wrong while searching for that location - please try again.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+     }
+
+     document.getElementById('locationSearchInput').addEventListener('keydown', function(e){
+      if (e.key === 'Enter'){
+        e.preventDefault();
+        searchLocation();
+      }
+     });
 
      async function getHeight() {
       var btn = document.getElementById('calcBtn');
