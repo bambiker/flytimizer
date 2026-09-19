@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Flytimizer - Drone Optimal Route Optimizer</title>
+<title>Flytimizer</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <base target="_top">
 <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
@@ -519,43 +519,14 @@ details.panel + details.panel{
 
   <header class="topbar">
     <div>
-      <h1><i class="fas fa-drone"></i> Flytimizer - Drone Optimal Route Optimizer</h1>
-      <p class="subtitle">Find the safest and most efficient flight route and altitude for your drone</p>
+      <h1><i class="fas fa-drone"></i> Flytimizer</h1>
+      <p class="subtitle">Fly (Time & Battery) Optimizer</p>
     </div>
   </header>
 
   <p class="lede">Set a start and destination. We pull live wind at
   different heights along the route and work out the altitude that
   gets your drone there — and back — fastest.</p>
-
-  <details class="panel">
-    <summary>Why altitude matters</summary>
-    <div class="disclosure-body">
-      <ul>
-        <li>The right height makes deliveries faster, keeps food warmer,
-        and saves battery or stretches your range.</li>
-        <li>Fly often — a delivery route, say — and small gains per trip
-        add up fast.</li>
-        <li>Wind isn't uniform with height, so a route grounded by a
-        high-wind warning near the ground can still be flyable higher
-        up.</li>
-        <li>Fly above 30m where you can — it cuts noise disturbance
-        noticeably. We'll also keep you at least 20m above the
-        tallest building OpenStreetMap knows about near your route,
-        shown in faint blue on the map — climbing over buildings is
-        simpler and safer than weaving between them at low level.</li>
-        <li>Schools, kindergartens, hospitals and playgrounds are
-        risky to fly over — we mark the ones OpenStreetMap knows about
-        in red on the map and route around them horizontally, since
-        altitude alone doesn't make overflying them safe.</li>
-        <li>Altitude choice matters most on long routes, with
-        higher-drag drones, and when the wind runs roughly along your
-        heading.</li>
-        <li>Drag isn't the enemy — flown with the wind, it works for
-        you.</li>
-      </ul>
-    </div>
-  </details>
 
   <section class="panel map-panel">
     <div class="panel-label">Route</div>
@@ -578,17 +549,18 @@ details.panel + details.panel{
   </section>
 
   <details class="panel" id="droneConfigPanel">
-      <summary>Drone: <span id="droneSummaryName">DJI Mavic 3 Classic</span></summary>
+      <summary>Drone: <span id="droneSummaryName">DJI Neo 2</span></summary>
       <div class="disclosure-body">
       <div class="field-grid">
         <label class="field">
           Drone model
           <div class="field-input">
             <select id="droneModel" onchange="applyDronePreset()">
-              <option value="mavic3classic" selected>DJI Mavic 3 Classic</option>
+              <option value="mavic3classic">DJI Mavic 3 Classic</option>
               <option value="mini4pro">DJI Mini 4 Pro</option>
               <option value="air3">DJI Air 3</option>
               <option value="matrice300">DJI Matrice 300 RTK</option>
+              <option value="neo2" selected>DJI Neo 2</option>
               <option value="evolite">Autel EVO Lite+</option>
               <option value="custom">Custom</option>
             </select>
@@ -596,19 +568,19 @@ details.panel + details.panel{
         </label>
         <label class="field">
           Horizontal speed
-          <div class="field-input"><input type="text" id="hor" value="21" oninput="checkCustom()"><span class="unit">m/s</span></div>
+          <div class="field-input"><input type="text" id="hor" value="12" oninput="checkCustom()"><span class="unit">m/s</span></div>
         </label>
         <label class="field">
           Ascent speed
-          <div class="field-input"><input type="text" id="asc" value="8" oninput="checkCustom()"><span class="unit">m/s</span></div>
+          <div class="field-input"><input type="text" id="asc" value="5" oninput="checkCustom()"><span class="unit">m/s</span></div>
         </label>
         <label class="field">
           Descent speed
-          <div class="field-input"><input type="text" id="des" value="6" oninput="checkCustom()"><span class="unit">m/s</span></div>
+          <div class="field-input"><input type="text" id="des" value="3" oninput="checkCustom()"><span class="unit">m/s</span></div>
         </label>
         <label class="field">
           Wind resistance
-          <div class="field-input"><input type="text" id="windres" value="12" oninput="checkCustom()"><span class="unit">m/s</span></div>
+          <div class="field-input"><input type="text" id="windres" value="10.7" oninput="checkCustom()"><span class="unit">m/s</span></div>
         </label>
         <label class="field">
           Drag coefficient
@@ -631,7 +603,7 @@ details.panel + details.panel{
       </div>
     </details>
 
-  <button class="btn btn-primary" id="calcBtn" onclick="getHeight()">Calculate optimal altitude</button>
+  <button class="btn btn-primary" id="calcBtn" onclick="getHeight()">Find Optimal Route</button>
 
   <script>
      function getLocation() {
@@ -734,7 +706,7 @@ details.panel + details.panel{
         <tr><th>Altitude</th><th>Wind</th><th>Gust (est.)</th><th>Heading</th><th>Outbound</th><th>Return</th></tr>
       </thead>
       <tbody>
-        <tr><td>20 m</td><td><span id="ws20"></span> m/s</td><td><span id="gust20"></span> m/s</td><td><span id="wd20"></span>&deg;</td><td><span id="timefore20"></span></td><td><span id="timeback20"></span></td></tr>
+        <tr><td>30 m</td><td><span id="ws30"></span> m/s</td><td><span id="gust30"></span> m/s</td><td><span id="wd30"></span>&deg;</td><td><span id="timefore30"></span></td><td><span id="timeback30"></span></td></tr>
         <tr><td>80 m</td><td><span id="ws80"></span> m/s</td><td><span id="gust80"></span> m/s</td><td><span id="wd80"></span>&deg;</td><td><span id="timefore80"></span></td><td><span id="timeback80"></span></td></tr>
         <tr><td>120 m</td><td><span id="ws120"></span> m/s</td><td><span id="gust120"></span> m/s</td><td><span id="wd120"></span>&deg;</td><td><span id="timefore120"></span></td><td><span id="timeback120"></span></td></tr>
       </tbody>
@@ -752,12 +724,42 @@ details.panel + details.panel{
     </div>
 
     <p class="hint" style="margin-top:12px">We only check altitudes
-    between 20m and 120m.</p>
+    between 30m and 120m.</p>
   </section>
 
   <p class="credit">Wind data from <a href="http://open-meteo.com" target="_blank">open-meteo.com</a>.</p>
 
   <script type="text/javascript" src="map.js"></script>
+
+  <details class="panel">
+    <summary>Why altitude matters</summary>
+    <div class="disclosure-body">
+      <ul>
+        <li>The right height makes deliveries faster, keeps food warmer,
+        and saves battery or stretches your range.</li>
+        <li>Fly often — a delivery route, say — and small gains per trip
+        add up fast.</li>
+        <li>Wind isn't uniform with height, so a route grounded by a
+        high-wind warning near the ground can still be flyable higher
+        up.</li>
+        <li>We won't recommend flying below 30m — besides clearance
+        margins, it also cuts noise disturbance noticeably. We'll
+        keep you at least 20m above the tallest building OpenStreetMap
+        knows about near your route, shown in faint blue on the map —
+        climbing over buildings is simpler and safer than weaving
+        between them at low level.</li>
+        <li>Schools, kindergartens, hospitals and playgrounds are
+        risky to fly over — we mark the ones OpenStreetMap knows about
+        in red on the map and route around them horizontally, since
+        altitude alone doesn't make overflying them safe.</li>
+        <li>Altitude choice matters most on long routes, with
+        higher-drag drones, and when the wind runs roughly along your
+        heading.</li>
+        <li>Drag isn't the enemy — flown with the wind, it works for
+        you.</li>
+      </ul>
+    </div>
+  </details>
 
   <details class="panel">
     <summary>Research</summary>
