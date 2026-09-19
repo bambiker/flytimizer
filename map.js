@@ -26,6 +26,24 @@ function formatDuration(totalSeconds, decimals){
   return sign + mins + ' min ' + secs.toFixed(decimals) + ' s'
 }
 
+// Looks up a free-text place or address using OpenStreetMap's
+// Nominatim geocoder (the same open data source as the buildings and
+// hazard lookups above) and returns the best match's coordinates, or
+// null if nothing was found. Used by the location search box next to
+// "Use my location".
+async function geocodeLocation(query){
+  var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(query);
+  var response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  if (!response.ok){
+    throw new Error('Location search failed: ' + response.status);
+  }
+  var results = await response.json();
+  if (!results || results.length === 0){
+    return null;
+  }
+  return { lat: parseFloat(results[0].lat), lng: parseFloat(results[0].lon), label: results[0].display_name };
+}
+
 //Function called to initialize / create the map.
 //This is called when the page has loaded.
 
