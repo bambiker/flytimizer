@@ -3,8 +3,7 @@
 // todo:
 // if choose start and than use GPs it makes two start marker
 // before calculate height test if there is start and destination
-// change minimum height to be 20m
-// tell the user, how much he will save if he fly at 20m, 120m
+// tell the user, how much he will save if he fly at 30m, 120m
 // let the user decide horizontal and vertical UAV speed
 
 //Set up some of our variables.
@@ -143,6 +142,7 @@ var DRONE_PRESETS = {
   mini4pro:      { name: 'DJI Mini 4 Pro',       hor: 16, asc: 5, des: 5, windres: 10.7 },
   air3:          { name: 'DJI Air 3',            hor: 21, asc: 10, des: 10, windres: 12 },
   matrice300:    { name: 'DJI Matrice 300 RTK',  hor: 23, asc: 6, des: 5, windres: 12 },
+  neo2:          { name: 'DJI Neo 2',            hor: 12, asc: 5, des: 3, windres: 10.7 },
   evolite:       { name: 'Autel EVO Lite+',      hor: 18, asc: 5, des: 4, windres: 10.6 }
 };
 
@@ -776,7 +776,7 @@ function polarToXY(cx, cy, r, deg){
   return { x: cx + r * Math.sin(rad), y: cy - r * Math.cos(rad) };
 }
 
-var WIND_COLORS = ['#7c9cff', '#4fd1c5', '#ffd166']; // 20m, 80m, 120m
+var WIND_COLORS = ['#7c9cff', '#4fd1c5', '#ffd166']; // 30m, 80m, 120m
 
 // Draws a line from the center out to `length`, with a small triangular
 // arrowhead at the tip pointing in the direction of travel, plus an
@@ -844,7 +844,7 @@ function renderCompassRose(droneDeg, windPoints){
   var legendRows = [
     { color: VIZ_COLORS.ink, text: 'drone heading ' + droneDeg.toFixed(0) + '\u00B0' }
   ];
-  var windLabels = ['wind 20m \u2192 ', 'wind 80m \u2192 ', 'wind 120m \u2192 '];
+  var windLabels = ['wind 30m \u2192 ', 'wind 80m \u2192 ', 'wind 120m \u2192 '];
   for (var k = 0; k < windPoints.length; k++){
     legendRows.push({
       color: WIND_COLORS[k % WIND_COLORS.length],
@@ -953,7 +953,7 @@ gustFactor = Math.min(Math.max(gustFactor, 1), 3);
     // drone's own speeds - not on the route distance - so we can work
     // these out before we know the final (possibly detoured) route
     // length below.
-    heights = [20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120]
+    heights = [30, 40, 50, 60, 70, 80, 90, 100, 110, 120]
     ws = []
     wd = []
     estgust = []
@@ -1082,7 +1082,7 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
     //  - the crosswind component of the average wind meets or exceeds
     //    the drone's horizontal speed for that leg - beyond that point
     //    the drone can't hold its course at all, regardless of speed.
-    var minSafeAltitude = maxBuildingHeight > 0 ? (maxBuildingHeight + BUILDING_HEIGHT_SAFETY_MARGIN_M) : 20;
+    var minSafeAltitude = maxBuildingHeight > 0 ? (maxBuildingHeight + BUILDING_HEIGHT_SAFETY_MARGIN_M) : 30;
 
     flyableOut = []
     flyableBack = []
@@ -1121,22 +1121,22 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
     }
     document.getElementById('dronedir').innerHTML = outboundHeading.toFixed(tofixed)
     // document.getElementById('windrose').innerHTML = wd[0].toFixed(tofixed)
-    document.getElementById('timenowind').innerHTML = formatDuration(timeupdown[10]+timeupdownback[10]+(routeDist / speedhorizontal)+(routeDist / speedhorizontalback))
-    document.getElementById('ws20').innerHTML = (ws[0]).toFixed(1)
-    document.getElementById('ws80').innerHTML = (ws[6]).toFixed(1)
-    document.getElementById('ws120').innerHTML = (ws[10]).toFixed(1)
-    document.getElementById('gust20').innerHTML = (estgust[0]).toFixed(1)
-    document.getElementById('gust80').innerHTML = (estgust[6]).toFixed(1)
-    document.getElementById('gust120').innerHTML = (estgust[10]).toFixed(1)
-    document.getElementById('wd20').innerHTML = (wd[0]).toFixed(0)
-    document.getElementById('wd80').innerHTML = (wd[6]).toFixed(0)
-    document.getElementById('wd120').innerHTML = (wd[10]).toFixed(0)
-    document.getElementById('timefore20').innerHTML = formatDuration(timeupdown[0]+timehor[0])
-    document.getElementById('timeback20').innerHTML = formatDuration(timeupdownback[0]+timehorb[0])
-    document.getElementById('timefore80').innerHTML = formatDuration(timeupdown[6]+timehor[6])
-    document.getElementById('timeback80').innerHTML = formatDuration(timeupdownback[6]+timehorb[6])
-    document.getElementById('timefore120').innerHTML = formatDuration(timeupdown[10]+timehor[10])
-    document.getElementById('timeback120').innerHTML = formatDuration(timeupdownback[10]+timehorb[10])
+    document.getElementById('timenowind').innerHTML = formatDuration(timeupdown[9]+timeupdownback[9]+(routeDist / speedhorizontal)+(routeDist / speedhorizontalback))
+    document.getElementById('ws30').innerHTML = (ws[0]).toFixed(1)
+    document.getElementById('ws80').innerHTML = (ws[5]).toFixed(1)
+    document.getElementById('ws120').innerHTML = (ws[9]).toFixed(1)
+    document.getElementById('gust30').innerHTML = (estgust[0]).toFixed(1)
+    document.getElementById('gust80').innerHTML = (estgust[5]).toFixed(1)
+    document.getElementById('gust120').innerHTML = (estgust[9]).toFixed(1)
+    document.getElementById('wd30').innerHTML = (wd[0]).toFixed(0)
+    document.getElementById('wd80').innerHTML = (wd[5]).toFixed(0)
+    document.getElementById('wd120').innerHTML = (wd[9]).toFixed(0)
+    document.getElementById('timefore30').innerHTML = formatDuration(timeupdown[0]+timehor[0])
+    document.getElementById('timeback30').innerHTML = formatDuration(timeupdownback[0]+timehorb[0])
+    document.getElementById('timefore80').innerHTML = formatDuration(timeupdown[5]+timehor[5])
+    document.getElementById('timeback80').innerHTML = formatDuration(timeupdownback[5]+timehorb[5])
+    document.getElementById('timefore120').innerHTML = formatDuration(timeupdown[9]+timehor[9])
+    document.getElementById('timeback120').innerHTML = formatDuration(timeupdownback[9]+timehorb[9])
 
     var unsafeReasonBuilding = "Below the minimum safe height above buildings on this route (min " + minSafeAltitude.toFixed(0) + " m).";
     var unsafeReasonGust = "Estimated gust here is at or above this drone's rated wind resistance (" + windResistance.toFixed(1) + " m/s).";
@@ -1148,23 +1148,23 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
         if (!crosswindOk) return crossMsg;
         return '';
     }
-    markUnsafe('timefore20', !flyableOut[0], cellReason(0, crosswindOkOut[0], unsafeReasonCrossOut))
-    markUnsafe('timeback20', !flyableBack[0], cellReason(0, crosswindOkBack[0], unsafeReasonCrossBack))
-    markUnsafe('timefore80', !flyableOut[6], cellReason(6, crosswindOkOut[6], unsafeReasonCrossOut))
-    markUnsafe('timeback80', !flyableBack[6], cellReason(6, crosswindOkBack[6], unsafeReasonCrossBack))
-    markUnsafe('timefore120', !flyableOut[10], cellReason(10, crosswindOkOut[10], unsafeReasonCrossOut))
-    markUnsafe('timeback120', !flyableBack[10], cellReason(10, crosswindOkBack[10], unsafeReasonCrossBack))
-    markUnsafe('ws20', !crosswindOkOut[0] || !crosswindOkBack[0], "The crosswind component here is at or above this drone's speed for at least one leg.")
-    markUnsafe('ws80', !crosswindOkOut[6] || !crosswindOkBack[6], "The crosswind component here is at or above this drone's speed for at least one leg.")
-    markUnsafe('ws120', !crosswindOkOut[10] || !crosswindOkBack[10], "The crosswind component here is at or above this drone's speed for at least one leg.")
-    markUnsafe('gust20', !windResOk[0], unsafeReasonGust)
-    markUnsafe('gust80', !windResOk[6], unsafeReasonGust)
-    markUnsafe('gust120', !windResOk[10], unsafeReasonGust)
+    markUnsafe('timefore30', !flyableOut[0], cellReason(0, crosswindOkOut[0], unsafeReasonCrossOut))
+    markUnsafe('timeback30', !flyableBack[0], cellReason(0, crosswindOkBack[0], unsafeReasonCrossBack))
+    markUnsafe('timefore80', !flyableOut[5], cellReason(5, crosswindOkOut[5], unsafeReasonCrossOut))
+    markUnsafe('timeback80', !flyableBack[5], cellReason(5, crosswindOkBack[5], unsafeReasonCrossBack))
+    markUnsafe('timefore120', !flyableOut[9], cellReason(9, crosswindOkOut[9], unsafeReasonCrossOut))
+    markUnsafe('timeback120', !flyableBack[9], cellReason(9, crosswindOkBack[9], unsafeReasonCrossBack))
+    markUnsafe('ws30', !crosswindOkOut[0] || !crosswindOkBack[0], "The crosswind component here is at or above this drone's speed for at least one leg.")
+    markUnsafe('ws80', !crosswindOkOut[5] || !crosswindOkBack[5], "The crosswind component here is at or above this drone's speed for at least one leg.")
+    markUnsafe('ws120', !crosswindOkOut[9] || !crosswindOkBack[9], "The crosswind component here is at or above this drone's speed for at least one leg.")
+    markUnsafe('gust30', !windResOk[0], unsafeReasonGust)
+    markUnsafe('gust80', !windResOk[5], unsafeReasonGust)
+    markUnsafe('gust120', !windResOk[9], unsafeReasonGust)
 
     var buildingInfo = document.getElementById('buildingInfo')
     buildingInfo.classList.remove('warning-hint')
     if (buildings === null){
-        buildingInfo.innerHTML = "Couldn't load building data from OpenStreetMap for this route, so only wind is being checked right now &mdash; heights below 20 m above nearby buildings might not actually be safe."
+        buildingInfo.innerHTML = "Couldn't load building data from OpenStreetMap for this route, so only wind is being checked right now &mdash; heights below 30 m above nearby buildings might not actually be safe."
         buildingInfo.classList.add('warning-hint')
     } else if (buildings.count === 0){
         buildingInfo.innerHTML = "No buildings found near this route in OpenStreetMap, so no extra height is needed for obstacle clearance."
@@ -1245,7 +1245,7 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
         flyWarning.style.display = 'none'
         savingsText.style.display = ''
 
-        travel120=timeupdown[10]+timeupdownback[10]+timehor[10]+timehorb[10]
+        travel120=timeupdown[9]+timeupdownback[9]+timehor[9]+timehorb[9]
         travelopt=timeupdown[minhor]+timehor[minhor]+timeupdownback[minhorb]+timehorb[minhorb]
 
         document.getElementById('savesec').innerHTML = formatDuration(travel120-travelopt, 1)
@@ -1277,7 +1277,7 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
             reasonBits.push("the crosswind meets or beats the drone's speed at every height we can still check, so it couldn't hold course")
         }
         if (reasonBits.length===0){
-            reasonBits.push("no height between 20 and 120 m clears the buildings, the gusts, and the crosswind on this route")
+            reasonBits.push("no height between 30 and 120 m clears the buildings, the gusts, and the crosswind on this route")
         }
 
         flyWarning.innerHTML = "We can't recommend a safe height for the " + legs.join(' and ') + " leg: " + reasonBits.join(' and ') + ". Consider a faster drone, a different time, or don't fly."
@@ -1301,8 +1301,8 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
 
     renderCompassRose(outboundHeading, [
         {h: 20, wd: wd[0]},
-        {h: 80, wd: wd[6]},
-        {h: 120, wd: wd[10]}
+        {h: 80, wd: wd[5]},
+        {h: 120, wd: wd[9]}
     ]);
 
     return;
