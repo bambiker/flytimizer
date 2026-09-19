@@ -236,7 +236,8 @@ var BUILDING_TYPE_FOOTPRINT_M = {
 };
 var MAX_FLIGHT_ALTITUDE_M = 120;          // ceiling we check up to (matches the heights[] table below)
 var BUILDING_HEIGHT_SAFETY_MARGIN_M = 20; // vertical buffer added on top of a building's height when climbing over it
-var BUILDING_LATERAL_SAFETY_MARGIN_M = 30; // buffer added on top of a too-tall building's footprint when routing around it
+var BUILDING_LATERAL_SAFETY_MARGIN_M = 30; // buffer added on top of a building's footprint when routing around it
+var BUILDING_AVOID_MAX_COUNT = 4; // detour around this many (or fewer) buildings actually on the route instead of climbing over them; beyond this, climbing over the tallest climbable one avoids an impractical zigzag
 
 // Places that are risky to overfly: schools, kindergartens, hospitals
 // and playgrounds. Unlike buildings, altitude doesn't make these
@@ -638,6 +639,26 @@ function maxLateralDeviationM(path, lat1, lng1, lat2, lng2){
   return maxDev;
 }
 
+// Which of the given buildings actually sit on (within marginM of)
+// the straight start->destination line, out of all the ones OSM
+// returned in the search corridor. The corridor is deliberately wider
+// than the route itself (see corridorHalfWidth), so most buildings it
+// finds are off to the side and shouldn't affect this particular
+// flight at all.
+function buildingsCrossingStraightLine(buildingList, lat1, lng1, lat2, lng2, marginM){
+  var mPerDegLat = 110540;
+  var mPerDegLng = 111320 * Math.cos(deg2rad(lat1));
+  function toLocal(lat, lng){
+    return { x: (lng - lng1) * mPerDegLng, y: (lat - lat1) * mPerDegLat };
+  }
+  var p1 = toLocal(lat1, lng1);
+  var p2 = toLocal(lat2, lng2);
+  return buildingList.filter(function(b){
+    var c = toLocal(b.lat, b.lng);
+    return distancePointToSegment(p1, p2, c) < (b.radius + marginM);
+  });
+}
+
 function computeAvoidanceRoute(lat1, lng1, lat2, lng2, obstacles){
   var straightDist = getDistanceFromLatLon(lat1, lng1, lat2, lng2);
   var straightPath = [{ lat: lat1, lng: lng1 }, { lat: lat2, lng: lng2 }];
@@ -986,27 +1007,38 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
         }
     }
 
-    // Buildings taller than that effective ceiling can't be cleared
-    // by climbing today, so those go into the obstacle list and get
-    // routed around horizontally, exactly like hazards. Buildings
-    // within the ceiling stay in the "climb over the tallest one"
-    // group - maxBuildingHeight below is only the tallest *climbable*
-    // one, so a single very tall building no longer forces the whole
-    // route to fail; it just gets detoured around instead.
-    var climbableBuildings = [];
-    var tooTallBuildings = [];
-    buildingList.forEach(function(b){
-      if (b.height + BUILDING_HEIGHT_SAFETY_MARGIN_M > effectiveCeilingM){
-        tooTallBuildings.push(b);
-      } else {
-        climbableBuildings.push(b);
-      }
+    // Only buildings that actually sit on (within a safety margin of)
+    // the straight route matter here - the search corridor is wider
+    // than that on purpose (see corridorHalfWidth) so we still catch
+    // buildings the route swings past once it detours around hazards,
+    // but a building elsewhere in that wide corridor isn't on this
+    // route and shouldn't push it higher or make it detour.
+    var onRouteBuildings = buildingsCrossingStraightLine(buildingList, startlat, startlng, destlat, destlng, BUILDING_LATERAL_SAFETY_MARGIN_M);
+
+    var tooTallOnRoute = onRouteBuildings.filter(function(b){
+      return b.height + BUILDING_HEIGHT_SAFETY_MARGIN_M > effectiveCeilingM;
     });
-    var maxBuildingHeight = climbableBuildings.reduce(function(m, b){ return Math.max(m, b.height); }, 0);
+    var climbableOnRoute = onRouteBuildings.filter(function(b){
+      return b.height + BUILDING_HEIGHT_SAFETY_MARGIN_M <= effectiveCeilingM;
+    });
+
+    // A handful of buildings actually on the route are simpler (and
+    // often lets us fly lower) to just detour around at ground level
+    // than to climb over all of them - detouring around every single
+    // one only risks an impractical zigzag once there are enough of
+    // them clustered on the direct line, so past that count we fall
+    // back to climbing over the tallest of the climbable ones, and
+    // only detour around the ones that are too tall to climb over
+    // regardless (which happens no matter how many there are).
+    var avoidAllOnRoute = onRouteBuildings.length > 0 && onRouteBuildings.length <= BUILDING_AVOID_MAX_COUNT;
+    var avoidedForSimplicity = avoidAllOnRoute ? climbableOnRoute : [];
+    var climbedOver = avoidAllOnRoute ? [] : climbableOnRoute;
+    var buildingsToAvoid = tooTallOnRoute.concat(avoidedForSimplicity);
+    var maxBuildingHeight = climbedOver.reduce(function(m, b){ return Math.max(m, b.height); }, 0);
 
     const obstacles = hazards.map(function(h){
       return { lat: h.lat, lng: h.lng, clearance: h.clearance, kind: 'hazard', type: h.type, name: h.name };
-    }).concat(tooTallBuildings.map(function(b){
+    }).concat(buildingsToAvoid.map(function(b){
       return { lat: b.lat, lng: b.lng, clearance: b.radius + BUILDING_LATERAL_SAFETY_MARGIN_M, kind: 'building', type: 'building', name: null, height: b.height };
     }));
 
@@ -1136,20 +1168,28 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
         buildingInfo.classList.add('warning-hint')
     } else if (buildings.count === 0){
         buildingInfo.innerHTML = "No buildings found near this route in OpenStreetMap, so no extra height is needed for obstacle clearance."
+    } else if (onRouteBuildings.length === 0){
+        buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, but none of them are actually on the direct line, so none affect this route's altitude or path. Buildings are shown in faint blue on the map for reference."
     } else {
         if (maxBuildingHeight > 0){
-            buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route &mdash; the tallest one we still climb over is about " + maxBuildingHeight.toFixed(0) + " m, so we won't recommend flying below " + minSafeAltitude.toFixed(0) + " m. Buildings are shown in faint blue on the map for reference."
+            buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, " + onRouteBuildings.length + " of which " + (onRouteBuildings.length===1?'sits':'sit') + " on the direct line &mdash; the tallest one we still climb over is about " + maxBuildingHeight.toFixed(0) + " m, so we won't recommend flying below " + minSafeAltitude.toFixed(0) + " m. Buildings are shown in faint blue on the map for reference."
         } else {
-            buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route &mdash; none of them need extra height to clear. Buildings are shown in faint blue on the map for reference."
+            buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, " + onRouteBuildings.length + " of which " + (onRouteBuildings.length===1?'sits':'sit') + " on the direct line &mdash; none of them need extra height, since the route detours around " + (onRouteBuildings.length===1?'it':'them') + " instead. Buildings are shown in faint blue on the map for reference."
         }
 
-        if (tooTallBuildings.length > 0){
-            var tallestTooTall = tooTallBuildings.reduce(function(m, b){ return Math.max(m, b.height); }, 0)
+        if (avoidedForSimplicity.length > 0){
+            var simplicityNote = document.createElement('span')
+            simplicityNote.innerHTML = ' ' + avoidedForSimplicity.length + ' building' + (avoidedForSimplicity.length===1?' is':'s are') + ' directly on the route and could be climbed over, but with only ' + onRouteBuildings.length + ' on the direct line it\'s simpler (and lets you fly lower) to detour sideways around ' + (avoidedForSimplicity.length===1?'it':'them') + " instead, with a " + BUILDING_LATERAL_SAFETY_MARGIN_M + ' m clearance.'
+            buildingInfo.appendChild(simplicityNote)
+        }
+
+        if (tooTallOnRoute.length > 0){
+            var tallestTooTall = tooTallOnRoute.reduce(function(m, b){ return Math.max(m, b.height); }, 0)
             var ceilingNote = (effectiveCeilingM < MAX_FLIGHT_ALTITUDE_M)
                 ? (' the ' + effectiveCeilingM.toFixed(0) + ' m ceiling that today\'s wind allows (below the usual ' + MAX_FLIGHT_ALTITUDE_M + ' m limit)')
                 : (' the ' + MAX_FLIGHT_ALTITUDE_M + ' m ceiling')
             var tooTallNote = document.createElement('span')
-            tooTallNote.innerHTML = ' ' + tooTallBuildings.length + ' building' + (tooTallBuildings.length===1?' is':'s are') + ' taller than' + ceilingNote + ' (up to about ' + tallestTooTall.toFixed(0) + ' m) \u2014 climbing over ' + (tooTallBuildings.length===1?'it':'them') + " isn't possible within that limit, so the route is detoured sideways around " + (tooTallBuildings.length===1?'it':'them') + ' instead.'
+            tooTallNote.innerHTML = ' ' + tooTallOnRoute.length + ' building' + (tooTallOnRoute.length===1?' is':'s are') + ' taller than' + ceilingNote + ' (up to about ' + tallestTooTall.toFixed(0) + ' m) \u2014 climbing over ' + (tooTallOnRoute.length===1?'it':'them') + " isn't possible within that limit, so the route is detoured sideways around " + (tooTallOnRoute.length===1?'it':'them') + ' instead, with a ' + BUILDING_LATERAL_SAFETY_MARGIN_M + ' m clearance.'
             buildingInfo.appendChild(tooTallNote)
         }
 
