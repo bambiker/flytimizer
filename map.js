@@ -184,11 +184,37 @@ function checkCustom(){
   updateDroneSummary();
 }
 
+// Turns an element id like "timefore80" or "gust120" into a readable
+// label for the tap-to-see-why note below the table.
+function unsafeCellLabel(id){
+  var m = id.match(/^([a-z]+)(\d+)$/);
+  if (!m) return id;
+  var prefixLabel = {
+    timefore: 'Outbound time at',
+    timeback: 'Return time at',
+    ws: 'Wind at',
+    gust: 'Gust at'
+  }[m[1]] || m[1];
+  return prefixLabel + ' ' + m[2] + ' m';
+}
+
+function showUnsafeReason(label, reason){
+  var note = document.getElementById('unsafeReasonNote');
+  if (!note) return;
+  note.innerHTML = '<strong>' + label + ':</strong> ' + reason;
+  note.style.display = 'block';
+}
+
+// Hovering a red (unsafe) value shows why via the title tooltip, but
+// there's no hover on a touchscreen - so tapping shows the same
+// reason in a small note under the table instead, which works the
+// same way on both desktop and mobile.
 function markUnsafe(id, unsafe, reason){
   var el = document.getElementById(id);
   if (!el) return;
   el.classList.toggle('unsafe-value', unsafe);
   el.title = unsafe ? reason : '';
+  el.onclick = unsafe ? function(){ showUnsafeReason(unsafeCellLabel(id), reason); } : null;
 }
 
 // ---------------------------------------------------------------
@@ -1148,6 +1174,8 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
         if (!crosswindOk) return crossMsg;
         return '';
     }
+    var unsafeNoteEl = document.getElementById('unsafeReasonNote')
+    if (unsafeNoteEl) unsafeNoteEl.style.display = 'none'
     markUnsafe('timefore30', !flyableOut[0], cellReason(0, crosswindOkOut[0], unsafeReasonCrossOut))
     markUnsafe('timeback30', !flyableBack[0], cellReason(0, crosswindOkBack[0], unsafeReasonCrossBack))
     markUnsafe('timefore80', !flyableOut[5], cellReason(5, crosswindOkOut[5], unsafeReasonCrossOut))
