@@ -127,7 +127,15 @@ h1 i{
 .subtitle{
   color: var(--muted);
   font-size: 14px;
-  margin: 6px 0 0;
+  margin: 0;
+}
+
+.brand-row{
+  display:flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
 }
 
 .lede{
@@ -518,15 +526,14 @@ details.panel + details.panel{
 <div class="wrap">
 
   <header class="topbar">
-    <div>
+    <div class="brand-row">
       <h1><i class="fas fa-drone"></i> Flytimizer</h1>
       <p class="subtitle">Fly (Time & Battery) Optimizer</p>
     </div>
   </header>
 
-  <p class="lede">Set a start and destination. We pull live wind at
-  different heights along the route and work out the altitude that
-  gets your drone there — and back — fastest.</p>
+  <p class="lede">Click or search to set the start point. Click again
+  to set the destination.</p>
 
   <section class="panel map-panel">
     <div class="panel-label">Route</div>
@@ -539,12 +546,6 @@ details.panel + details.panel{
         <button class="btn btn-ghost" id="locationSearchBtn" onclick="searchLocation()">Search</button>
       </div>
       <button class="btn btn-ghost" onclick="getLocation()">Use my location</button>
-      <p class="hint">Search for a place, or click the map to drop a
-      start point, click again for the destination. Drag either pin
-      to adjust it. After you calculate, red circles mark schools,
-      kindergartens, hospitals and playgrounds, faint blue circles
-      mark buildings, and the solid blue line shows the route around
-      them.</p>
     </div>
   </section>
 
@@ -745,7 +746,7 @@ details.panel + details.panel{
         <li>We won't recommend flying below 30m — besides clearance
         margins, it also cuts noise disturbance noticeably. We'll
         keep you at least 20m above the tallest building OpenStreetMap
-        knows about near your route, shown in faint blue on the map —
+        knows about near your route, shown in faint orange on the map —
         climbing over buildings is simpler and safer than weaving
         between them at low level.</li>
         <li>Schools, kindergartens, hospitals and playgrounds are
@@ -779,33 +780,10 @@ details.panel + details.panel{
     </div>
   </details>
 
-  <details class="panel">
-    <summary>What's new</summary>
-    <div class="disclosure-body">
-      <ul>
-        <li>2024/04/10 — On the return leg, payload coefficient now
-        defaults to 1.</li>
-        <li>2024/04/05 — Added a share button.</li>
-        <li>2024/03/31 — Started a "what's new" log and a todo list.</li>
-      </ul>
-    </div>
-  </details>
-
-  <details class="panel">
-    <summary>Todo</summary>
-    <div class="disclosure-body">
-      <ul>
-        <li>Model the gradual speed change caused by drift.</li>
-        <li>Add a rule of thumb for when flying above buildings beats
-        flying between them (streets are rarely parallel to the wind).</li>
-      </ul>
-    </div>
-  </details>
-
   <a class="feedback-link" href="https://docs.google.com/forms/d/e/1FAIpQLScucpTGf_6hN_e8NQMgTJqoPX7q7B1HavnFdywewEtgMXFuNA/viewform?usp=sf_link" target="_blank">Contact us for questions and improvement suggestions</a>
 
   <!-- AddToAny BEGIN -->
-  <div class="a2a_kit a2a_kit_size_32 a2a_default_style" data-a2a-url="https://bambiker.github.io/dronepath/">
+  <div class="a2a_kit a2a_kit_size_32 a2a_default_style" data-a2a-url="https://bambiker.github.io/dronepath/" data-a2a-title="Flytimizer">
     <a class="a2a_dd" href="https://www.addtoany.com/share"></a>
     <a class="a2a_button_copy_link"></a>
     <a class="a2a_button_twitter"></a>
