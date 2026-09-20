@@ -424,7 +424,7 @@ details.panel + details.panel{
 .unsafe-value{
   color: var(--danger);
   border-bottom: 1px dotted var(--danger);
-  cursor: help;
+  cursor: pointer;
 }
 
 .warning-hint{
@@ -453,11 +453,18 @@ details.panel + details.panel{
   display:block;
 }
 
+.table-scroll{
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 16px;
+}
+
 .wind-table{
   width: 100%;
+  min-width: 480px;
   border-collapse: collapse;
   font-size: 13px;
-  margin-bottom: 16px;
 }
 
 .wind-table th{
@@ -702,6 +709,7 @@ details.panel + details.panel{
       <div class="compass" id="compassRose"></div>
     </div>
 
+    <div class="table-scroll">
     <table class="wind-table">
       <thead>
         <tr><th>Altitude</th><th>Wind</th><th>Gust (est.)</th><th>Heading</th><th>Outbound</th><th>Return</th></tr>
@@ -712,6 +720,9 @@ details.panel + details.panel{
         <tr><td>120 m</td><td><span id="ws120"></span> m/s</td><td><span id="gust120"></span> m/s</td><td><span id="wd120"></span>&deg;</td><td><span id="timefore120"></span></td><td><span id="timeback120"></span></td></tr>
       </tbody>
     </table>
+    </div>
+
+    <p class="hint" id="unsafeReasonNote" style="display:none"></p>
 
     <p class="hint" id="buildingInfo" style="display:none"></p>
     <p class="hint" id="hazardInfo" style="display:none"></p>
@@ -783,7 +794,7 @@ details.panel + details.panel{
   <a class="feedback-link" href="https://docs.google.com/forms/d/e/1FAIpQLScucpTGf_6hN_e8NQMgTJqoPX7q7B1HavnFdywewEtgMXFuNA/viewform?usp=sf_link" target="_blank">Contact us for questions and improvement suggestions</a>
 
   <!-- AddToAny BEGIN -->
-  <div class="a2a_kit a2a_kit_size_32 a2a_default_style" data-a2a-url="https://bambiker.github.io/dronepath/" data-a2a-title="Flytimizer">
+  <div class="a2a_kit a2a_kit_size_32 a2a_default_style" data-a2a-url="https://bambiker.github.io/flytimizer/" data-a2a-title="Flytimizer">
     <a class="a2a_dd" href="https://www.addtoany.com/share"></a>
     <a class="a2a_button_copy_link"></a>
     <a class="a2a_button_twitter"></a>
