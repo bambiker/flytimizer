@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Terms of Use — Flytimizer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+
+:root{
+  --bg: #0a0f1a;
+  --panel: #121a2b;
+  --panel-2: #17223a;
+  --line: #263356;
+  --ink: #e7ecf6;
+  --muted: #8d9ab8;
+  --accent: #ff8a34;
+  --accent-ink: #1a1002;
+  --accent-2: #4fd1c5;
+  --danger: #ff5a5a;
+  --grid-line: rgba(79,209,197,0.06);
+  --danger-bg: rgba(255,90,90,0.12);
+  --radius: 6px;
+  --sans: "Space Grotesk", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light){
+  :root{
+    --bg: #f3f5fa;
+    --panel: #ffffff;
+    --panel-2: #eef1f8;
+    --line: #d7dceb;
+    --ink: #172037;
+    --muted: #58658a;
+    --accent: #d9670f;
+    --accent-ink: #1a1002;
+    --accent-2: #0e8c7f;
+    --danger: #c93030;
+    --grid-line: rgba(23,32,55,0.045);
+    --danger-bg: rgba(201,48,48,0.10);
+    color-scheme: light;
+  }
+}
+
+*{ box-sizing: border-box; }
+
+html,body{
+  margin:0;
+  padding:0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+body{
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 34px 34px;
+  background-attachment: fixed;
+}
+
+a{ color: var(--accent-2); }
+a:hover{ color: var(--accent); }
+
+::selection{ background: var(--accent); color: var(--accent-ink); }
+
+.wrap{
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 20px 64px;
+}
+
+.back-link{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size: 14px;
+  color: var(--muted);
+  text-decoration: none;
+  margin-bottom: 18px;
+}
+
+.back-link:hover{ color: var(--accent); }
+
+h1{
+  font-size: clamp(24px, 5vw, 32px);
+  font-weight: 600;
+  margin: 0 0 4px;
+  letter-spacing: -0.01em;
+}
+
+.updated{
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 28px;
+  font-family: var(--mono);
+}
+
+.panel{
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  margin-bottom: 18px;
+}
+
+h2{
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  color: var(--ink);
+}
+
+p{ margin: 0 0 12px; color: var(--ink); }
+p:last-child{ margin-bottom: 0; }
+
+ul{ margin: 0 0 12px; padding-left: 20px; }
+ul:last-child{ margin-bottom: 0; }
+li{ margin-bottom: 8px; }
+li:last-child{ margin-bottom: 0; }
+
+.callout{
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 12px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  margin-bottom: 18px;
+}
+
+
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <a class="back-link" href="index.html">&larr; Back to Flytimizer</a>
+
+  <h1>Terms of Use</h1>
+  <p class="updated">Last updated: September 20, 2026</p>
+
+  <div class="callout">
+    Flytimizer is a planning aid, not a source of legal authorization
+    to fly. It does not replace your obligations under local aviation
+    law, airspace authorization systems, or your own pre-flight risk
+    assessment.
+  </div>
+
+  <div class="panel">
+    <h2>1. Acceptance of these terms</h2>
+    <p>By accessing or using Flytimizer (the "Service"), you agree to
+    be bound by these Terms of Use. If you do not agree, do not use
+    the Service.</p>
+  </div>
+
+  <div class="panel">
+    <h2>2. What the Service is — and isn't</h2>
+    <p>Flytimizer estimates a flight altitude and route for a drone
+    based on forecast wind data and third-party map data (buildings
+    and points of interest such as schools, kindergartens, hospitals
+    and playgrounds). It is provided as a planning convenience only.</p>
+    <p>The Service is <strong>not</strong>:</p>
+    <ul>
+      <li>A substitute for checking official airspace restrictions,
+      NOTAMs, temporary flight restrictions, or any authorization
+      required by your local civil aviation authority;</li>
+      <li>A guarantee that a suggested altitude or route is safe,
+      legal, or compliant with any regulation in your jurisdiction;</li>
+      <li>A complete hazard survey — the building and hazard data
+      comes from OpenStreetMap contributors and may be incomplete,
+      outdated, or inaccurate, and the wind forecast is an estimate
+      that can differ from actual conditions at the time of flight;</li>
+      <li>Professional, legal, or aviation-safety advice of any kind.</li>
+    </ul>
+    <p>You are solely responsible for verifying, independently of this
+    Service, that any flight you plan or conduct is safe and lawful.</p>
+  </div>
+
+  <div class="panel">
+    <h2>3. Disclaimer of warranties</h2>
+    <p>The Service is provided "as is" and "as available," without
+    warranties of any kind, whether express, implied, or statutory,
+    including but not limited to warranties of merchantability,
+    fitness for a particular purpose, accuracy, or non-infringement.
+    We do not warrant that the Service will be uninterrupted,
+    error-free, or that any data (wind, building, or hazard
+    information) is complete or correct.</p>
+  </div>
+
+  <div class="panel">
+    <h2>4. Limitation of liability</h2>
+    <p>To the fullest extent permitted by law, the operators of
+    Flytimizer shall not be liable for any direct, indirect,
+    incidental, special, consequential, or punitive damages —
+    including but not limited to property damage, personal injury,
+    loss of data, or loss of a drone or its payload — arising out of
+    or in any way connected with your use of, or inability to use,
+    the Service, whether based on warranty, contract, tort, or any
+    other legal theory, even if advised of the possibility of such
+    damages.</p>
+    <p>You use the Service, and any altitude or route it suggests,
+    entirely at your own risk.</p>
+  </div>
+
+  <div class="panel">
+    <h2>5. Prohibited automated use</h2>
+    <p>You may not access or use the Service by any automated means —
+    including bots, scrapers, crawlers, scripts, or any other software
+    that is not a human operating a standard web browser — without our
+    prior written permission. This includes, without limitation:</p>
+    <ul>
+      <li>Automating calls to the Service's pages or endpoints instead
+      of interacting with them manually;</li>
+      <li>Using the Service as an unauthorized proxy to make bulk or
+      automated requests to the third-party services it relies on
+      (such as Open-Meteo, OpenStreetMap's Overpass API, or the
+      Nominatim geocoder) beyond what a normal, individual interactive
+      session would generate;</li>
+      <li>Circumventing, disabling, or interfering with any rate
+      limiting, security feature, or access restriction of the
+      Service;</li>
+      <li>Extracting data from the Service at scale for republication,
+      redistribution, or building a competing or derivative service,
+      without separately complying with the terms of the underlying
+      data providers.</li>
+    </ul>
+    <p>We reserve the right to block, rate-limit, or terminate access
+    for any use we reasonably believe is automated or abusive.</p>
+  </div>
+
+  <div class="panel">
+    <h2>6. Third-party data and services</h2>
+    <p>The Service displays and relies on data and services provided
+    by third parties, including wind forecasts from Open-Meteo, map,
+    building and points-of-interest data from OpenStreetMap
+    contributors (via the Overpass API), and place search via
+    Nominatim. We do not control, and are not responsible for, the
+    accuracy, availability, or licensing terms of that third-party
+    data. Your use of the Service is also subject to the applicable
+    terms and usage policies of those providers.</p>
+  </div>
+
+  <div class="panel">
+    <h2>7. Your responsibilities</h2>
+    <ul>
+      <li>Comply with all aviation laws and regulations applicable to
+      you and your flight, including obtaining any required
+      authorization, remote pilot certification, or airspace
+      clearance;</li>
+      <li>Independently verify no-fly zones, temporary restrictions,
+      and any obstacle or hazard information before flying;</li>
+      <li>Maintain visual line of sight and situational awareness as
+      required by law, regardless of what the Service suggests;</li>
+      <li>Not rely on the Service as your sole means of flight
+      planning or risk assessment.</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h2>8. Changes to the Service or these terms</h2>
+    <p>We may modify, suspend, or discontinue the Service, in whole or
+    in part, at any time without notice. We may also update these
+    Terms of Use from time to time; continued use of the Service after
+    changes are posted constitutes acceptance of the revised terms.</p>
+  </div>
+
+  <div class="panel">
+    <h2>9. Governing law</h2>
+    <p>These Terms of Use are governed by the laws of the State of
+    Israel, without regard to its conflict-of-law principles. Any
+    dispute arising out of or relating to these terms or the Service
+    shall be subject to the exclusive jurisdiction of the competent
+    courts of Israel.</p>
+  </div>
+
+  <div class="panel">
+    <h2>10. Contact</h2>
+    <p>Questions about these terms can be sent via our
+    <a href="https://docs.google.com/forms/d/e/1FAIpQLScucpTGf_6hN_e8NQMgTJqoPX7q7B1HavnFdywewEtgMXFuNA/viewform?usp=sf_link" target="_blank">feedback form</a>.</p>
+  </div>
+
+</div>
+</body>
+</html>
