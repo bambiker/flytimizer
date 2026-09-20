@@ -1169,12 +1169,12 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
     } else if (buildings.count === 0){
         buildingInfo.innerHTML = "No buildings found near this route in OpenStreetMap, so no extra height is needed for obstacle clearance."
     } else if (onRouteBuildings.length === 0){
-        buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, but none of them are actually on the direct line, so none affect this route's altitude or path. Buildings are shown in faint blue on the map for reference."
+        buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, but none of them are actually on the direct line, so none affect this route's altitude or path. Buildings are shown in faint orange on the map for reference."
     } else {
         if (maxBuildingHeight > 0){
-            buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, " + onRouteBuildings.length + " of which " + (onRouteBuildings.length===1?'sits':'sit') + " on the direct line &mdash; the tallest one we still climb over is about " + maxBuildingHeight.toFixed(0) + " m, so we won't recommend flying below " + minSafeAltitude.toFixed(0) + " m. Buildings are shown in faint blue on the map for reference."
+            buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, " + onRouteBuildings.length + " of which " + (onRouteBuildings.length===1?'sits':'sit') + " on the direct line &mdash; the tallest one we still climb over is about " + maxBuildingHeight.toFixed(0) + " m, so we won't recommend flying below " + minSafeAltitude.toFixed(0) + " m. Buildings are shown in faint orange on the map for reference."
         } else {
-            buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, " + onRouteBuildings.length + " of which " + (onRouteBuildings.length===1?'sits':'sit') + " on the direct line &mdash; none of them need extra height, since the route detours around " + (onRouteBuildings.length===1?'it':'them') + " instead. Buildings are shown in faint blue on the map for reference."
+            buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, " + onRouteBuildings.length + " of which " + (onRouteBuildings.length===1?'sits':'sit') + " on the direct line &mdash; none of them need extra height, since the route detours around " + (onRouteBuildings.length===1?'it':'them') + " instead. Buildings are shown in faint orange on the map for reference."
         }
 
         if (avoidedForSimplicity.length > 0){
@@ -1350,10 +1350,10 @@ function renderHazardsAndRoute(hazards, buildings, path){
     var b = buildings[j];
     L.circle([b.lat, b.lng], {
       radius: b.radius,
-      color: '#5c7cfa',
+      color: '#f2994a',
       weight: 1.5,
-      fillColor: '#5c7cfa',
-      fillOpacity: 0.12
+      fillColor: '#f2994a',
+      fillOpacity: 0.16
     }).bindTooltip('Building \u2014 ~' + b.height.toFixed(0) + 'm tall').addTo(buildingLayer);
   }
   routeLine.setLatLngs(path.map(function(p){ return [p.lat, p.lng]; }));
