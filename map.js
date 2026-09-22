@@ -375,6 +375,54 @@ function elementLatLng(el){
   return null;
 }
 
+// Hazards are few enough per route (unlike buildings) that we ask
+// Overpass for their full outline (out geom) instead of just a
+// center point, so schools/hospitals/etc. can be drawn as their
+// actual shape and get a tighter, real clearance radius instead of a
+// guessed one. Returns an array of {lat,lng} points, or null if this
+// element didn't come back with usable geometry (e.g. a bare node, or
+// a relation Overpass didn't expand).
+function hazardPolygonFromElement(el){
+  if (el.type === 'way' && Array.isArray(el.geometry)){
+    var pts = el.geometry.filter(function(p){ return p && typeof p.lat === 'number'; })
+      .map(function(p){ return { lat: p.lat, lng: p.lon }; });
+    return pts.length >= 3 ? pts : null;
+  }
+  if (el.type === 'relation' && Array.isArray(el.members)){
+    var mpts = [];
+    el.members.forEach(function(m){
+      if (Array.isArray(m.geometry)){
+        m.geometry.forEach(function(p){
+          if (p && typeof p.lat === 'number') mpts.push({ lat: p.lat, lng: p.lon });
+        });
+      }
+    });
+    return mpts.length >= 3 ? mpts : null;
+  }
+  return null;
+}
+
+// Centroid of a polygon's vertices, and the distance (in meters) from
+// that centroid out to the farthest vertex - i.e. the smallest circle
+// centered on the centroid that still fully encloses the shape. Used
+// as a real, geometry-based clearance radius in place of the guessed
+// per-type radius, whenever we have an actual outline to measure.
+function polygonCentroidAndRadius(points){
+  var sumLat = 0, sumLng = 0;
+  points.forEach(function(p){ sumLat += p.lat; sumLng += p.lng; });
+  var centroid = { lat: sumLat / points.length, lng: sumLng / points.length };
+  var mPerDegLat = 110540;
+  var mPerDegLng = 111320 * Math.cos(deg2rad(centroid.lat));
+  var maxR = 0;
+  points.forEach(function(p){
+    var dx = (p.lng - centroid.lng) * mPerDegLng;
+    var dy = (p.lat - centroid.lat) * mPerDegLat;
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d > maxR) maxR = d;
+  });
+  return { centroid: centroid, radius: maxR };
+}
+
 function polygonToStr(polygon){
   return polygon.map(function(p){ return p.lat + ' ' + p.lng; }).join(' ');
 }
@@ -430,14 +478,17 @@ async function getOsmDataNearRoute(lat1, lng1, lat2, lng2, bearingDeg){
   var buildingPoly = polygonToStr(routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, buildingHalfWidth));
   var hazardPoly = polygonToStr(routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, hazardHalfWidth));
 
-  var query = '[out:json][timeout:' + OVERPASS_QUERY_TIMEOUT_S + '];(' +
-    'way["building"](poly:"' + buildingPoly + '");' +
+  var query = '[out:json][timeout:' + OVERPASS_QUERY_TIMEOUT_S + '];' +
+    'way["building"](poly:"' + buildingPoly + '")->.b;' +
+    '(' +
     'node["amenity"~"^(school|kindergarten|hospital)$"](poly:"' + hazardPoly + '");' +
     'way["amenity"~"^(school|kindergarten|hospital)$"](poly:"' + hazardPoly + '");' +
     'relation["amenity"~"^(school|kindergarten|hospital)$"](poly:"' + hazardPoly + '");' +
     'node["leisure"="playground"](poly:"' + hazardPoly + '");' +
     'way["leisure"="playground"](poly:"' + hazardPoly + '");' +
-    ');out tags center;';
+    ')->.h;' +
+    '.b out tags center;' +
+    '.h out geom;';
 
   var data = await fetchOverpass(query);
   var elements = data.elements || [];
@@ -460,10 +511,22 @@ async function getOsmDataNearRoute(lat1, lng1, lat2, lng2, bearingDeg){
     }
     var hazardType = classifyHazard(tags);
     if (hazardType){
-      var pos = elementLatLng(elements[i]);
+      var polygon = hazardPolygonFromElement(elements[i]);
+      var pos, hazardRadius;
+      if (polygon){
+        var pr = polygonCentroidAndRadius(polygon);
+        pos = pr.centroid;
+        // Never go below the usual radius for this hazard type - a
+        // sliver of mapped outline (e.g. just one building on a big
+        // school campus) shouldn't shrink the safety margin below
+        // what we'd assume with no shape data at all.
+        hazardRadius = Math.max(pr.radius, HAZARD_TYPE_RADIUS_M[hazardType]);
+      } else {
+        pos = elementLatLng(elements[i]);
+        hazardRadius = HAZARD_TYPE_RADIUS_M[hazardType];
+      }
       if (pos){
-        var hazardRadius = HAZARD_TYPE_RADIUS_M[hazardType];
-        hazards.push({ lat: pos.lat, lng: pos.lng, type: hazardType, name: tags.name || null, radius: hazardRadius, clearance: hazardRadius + HAZARD_SAFETY_MARGIN_M });
+        hazards.push({ lat: pos.lat, lng: pos.lng, type: hazardType, name: tags.name || null, radius: hazardRadius, clearance: hazardRadius + HAZARD_SAFETY_MARGIN_M, polygon: polygon });
       }
     }
   }
@@ -1366,13 +1429,16 @@ function renderHazardsAndRoute(hazards, buildings, path){
     var hz = hazards[i];
     var label = HAZARD_TYPE_LABEL[hz.type] || 'Restricted area';
     if (hz.name) label += ' \u2014 ' + hz.name;
-    L.circle([hz.lat, hz.lng], {
-      radius: hz.radius,
+    var hazardStyle = {
       color: '#e6484f',
       weight: 2,
       fillColor: '#e6484f',
       fillOpacity: 0.22
-    }).bindTooltip(label).addTo(hazardLayer);
+    };
+    var hazardShape = hz.polygon
+      ? L.polygon(hz.polygon.map(function(p){ return [p.lat, p.lng]; }), hazardStyle)
+      : L.circle([hz.lat, hz.lng], Object.assign({ radius: hz.radius }, hazardStyle));
+    hazardShape.bindTooltip(label).addTo(hazardLayer);
   }
   for (var j = 0; j < buildings.length; j++){
     var b = buildings[j];
