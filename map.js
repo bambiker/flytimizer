@@ -265,18 +265,43 @@ var BUILDING_HEIGHT_SAFETY_MARGIN_M = 20; // vertical buffer added on top of a b
 var BUILDING_LATERAL_SAFETY_MARGIN_M = 30; // buffer added on top of a building's footprint when routing around it
 var BUILDING_AVOID_MAX_COUNT = 4; // detour around this many (or fewer) buildings actually on the route instead of climbing over them; beyond this, climbing over the tallest climbable one avoids an impractical zigzag
 
-// Places that are risky to overfly: schools, kindergartens, hospitals
-// and playgrounds. Unlike buildings, altitude doesn't make these
-// safe to cross, so these are the ones actually routed around
-// horizontally. We only know their tags + a center point (no
-// footprint, to keep the download small), so each is treated as a
-// circle whose radius is a rough guess by type.
+// Places that are risky to overfly: schools, kindergartens, hospitals,
+// playgrounds, nursing homes, universities/colleges, and power
+// infrastructure. Unlike buildings, altitude doesn't make these safe
+// to cross, so these are the ones actually routed around
+// horizontally. We ask Overpass for their real outline (out geom)
+// when it has one, and fall back to a rough per-type radius guess
+// when it doesn't.
 var HAZARD_CORRIDOR_HALF_WIDTH_M = 220; // floor - wide enough to see nearby hazards and have room to route around them
 var HAZARD_CORRIDOR_MAX_HALF_WIDTH_M = 700;
 var HAZARD_CORRIDOR_DISTANCE_FRACTION = 0.06; // +60 m of half-width per km of route - hazards get more headroom than buildings since the route actually swings sideways to dodge them
 var HAZARD_SAFETY_MARGIN_M = 20;        // extra buffer added on top of the estimated radius
-var HAZARD_TYPE_RADIUS_M = { school: 60, kindergarten: 40, hospital: 90, playground: 30 };
-var HAZARD_TYPE_LABEL = { school: 'School', kindergarten: 'Kindergarten', hospital: 'Hospital', playground: 'Playground', building: 'Tall building' };
+var HAZARD_TYPE_RADIUS_M = {
+  school: 60, kindergarten: 40, hospital: 90, playground: 30,
+  nursing_home: 40, university: 120, power: 30,
+  airport: 500, heliport: 50, prison: 100, embassy: 40, military: 150
+};
+var HAZARD_TYPE_LABEL = {
+  school: 'School', kindergarten: 'Kindergarten', hospital: 'Hospital', playground: 'Playground',
+  nursing_home: 'Nursing home', university: 'University/college', power: 'Power facility',
+  airport: 'Airport/airfield', heliport: 'Heliport', prison: 'Prison', embassy: 'Embassy', military: 'Military site',
+  building: 'Tall building'
+};
+
+// These aren't just "risky to overfly" like a school - flying at or
+// near them can be flatly illegal or require special authorization,
+// regardless of altitude or how wide a berth the route gives them.
+// We still avoid their mapped footprint like any other hazard, but
+// also raise a separate, much more prominent warning when the route
+// comes anywhere near one - the routing avoidance itself is capped
+// (HAZARD_ROUTING_RADIUS_CAP_M) so a huge real site (a whole airport
+// or military base) can't blow up the pathfinding, so the real extent
+// of the restriction has to be flagged, not just quietly routed
+// around as if a small detour made it fine.
+var NO_FLY_HAZARD_TYPES = { airport: true, heliport: true, prison: true, embassy: true, military: true };
+var HAZARD_ROUTING_RADIUS_CAP_M = 1000; // never ask the router to detour around more than this, even if the real site is bigger
+var NO_FLY_WARNING_DISTANCE_M = 2000;   // show the prominent warning if the route comes within this distance of the site's (real, uncapped) edge
+
 
 function rad2deg(rad){
   return rad * (180 / Math.PI);
@@ -323,6 +348,50 @@ function routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, halfWidthM){
   return [p1, p2, p3, p4];
 }
 
+// Flat-approximation bearing from (lat1,lng1) to (lat2,lng2), in the
+// same convention as offsetLatLng (0=north, clockwise). Fine for the
+// short, local distances this app deals with.
+function bearingBetween(lat1, lng1, lat2, lng2){
+  var b = Math.atan2(lng2 - lng1, lat2 - lat1) * 180 / Math.PI;
+  return (b + 360) % 360;
+}
+
+// Buffer polygon (roughly halfWidthM on each side) around an
+// arbitrary path - an array of {lat,lng} points, in order - not just
+// a straight line. Used to query buildings along the *actual* route
+// once it's known (which may already detour around hazards), instead
+// of only around the straight line between start and destination.
+function pathCorridorPolygon(path, halfWidthM){
+  if (path.length < 2){
+    var p0 = path[0];
+    var n = offsetLatLng(p0.lat, p0.lng, 0, halfWidthM);
+    var e = offsetLatLng(p0.lat, p0.lng, 90, halfWidthM);
+    var s = offsetLatLng(p0.lat, p0.lng, 180, halfWidthM);
+    var w = offsetLatLng(p0.lat, p0.lng, 270, halfWidthM);
+    return [n, e, s, w];
+  }
+  // Direction of travel at point i - the circular mean of the
+  // incoming and outgoing segment bearings where both exist, so the
+  // buffer doesn't pinch inward at a bend in the path.
+  function bearingAt(i){
+    var bIn = (i > 0) ? bearingBetween(path[i-1].lat, path[i-1].lng, path[i].lat, path[i].lng) : null;
+    var bOut = (i < path.length - 1) ? bearingBetween(path[i].lat, path[i].lng, path[i+1].lat, path[i+1].lng) : null;
+    if (bIn === null) return bOut;
+    if (bOut === null) return bIn;
+    var x = Math.cos(deg2rad(bIn)) + Math.cos(deg2rad(bOut));
+    var y = Math.sin(deg2rad(bIn)) + Math.sin(deg2rad(bOut));
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+  }
+  var left = [];
+  var right = [];
+  for (var i = 0; i < path.length; i++){
+    var b = bearingAt(i);
+    left.push(offsetLatLng(path[i].lat, path[i].lng, b + 90, halfWidthM));
+    right.push(offsetLatLng(path[i].lat, path[i].lng, b - 90, halfWidthM));
+  }
+  return left.concat(right.reverse());
+}
+
 function parseMetersTag(value){
   if (value === undefined || value === null) return null;
   var n = parseFloat(String(value).replace(',', '.'));
@@ -364,6 +433,14 @@ function classifyHazard(tags){
   if (tags.amenity === 'kindergarten') return 'kindergarten';
   if (tags.amenity === 'hospital') return 'hospital';
   if (tags.leisure === 'playground') return 'playground';
+  if (tags.social_facility === 'nursing_home' || tags.amenity === 'nursing_home') return 'nursing_home';
+  if (tags.amenity === 'university' || tags.amenity === 'college') return 'university';
+  if (tags.power === 'substation' || tags.power === 'plant') return 'power';
+  if (tags.aeroway === 'aerodrome') return 'airport';
+  if (tags.aeroway === 'heliport') return 'heliport';
+  if (tags.amenity === 'prison') return 'prison';
+  if (tags.diplomatic === 'embassy') return 'embassy';
+  if (tags.military || tags.landuse === 'military') return 'military';
   return null;
 }
 
@@ -471,44 +548,45 @@ async function fetchOverpass(query){
   throw lastErr || new Error('Overpass request failed');
 }
 
-async function getOsmDataNearRoute(lat1, lng1, lat2, lng2, bearingDeg){
+// Hazard zones (schools/kindergartens/hospitals/playgrounds) near the
+// straight start->destination line. These are looked up first,
+// before we know the final route, because they're what determines
+// the route's shape in the first place (buildings don't cause a
+// detour - see below).
+async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg){
   var distM = getDistanceFromLatLon(lat1, lng1, lat2, lng2);
-  var buildingHalfWidth = corridorHalfWidth(distM, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_CORRIDOR_MAX_HALF_WIDTH_M, BUILDING_CORRIDOR_DISTANCE_FRACTION);
   var hazardHalfWidth = corridorHalfWidth(distM, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_CORRIDOR_MAX_HALF_WIDTH_M, HAZARD_CORRIDOR_DISTANCE_FRACTION);
-  var buildingPoly = polygonToStr(routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, buildingHalfWidth));
   var hazardPoly = polygonToStr(routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, hazardHalfWidth));
 
-  var query = '[out:json][timeout:' + OVERPASS_QUERY_TIMEOUT_S + '];' +
-    'way["building"](poly:"' + buildingPoly + '")->.b;' +
-    '(' +
-    'node["amenity"~"^(school|kindergarten|hospital)$"](poly:"' + hazardPoly + '");' +
-    'way["amenity"~"^(school|kindergarten|hospital)$"](poly:"' + hazardPoly + '");' +
-    'relation["amenity"~"^(school|kindergarten|hospital)$"](poly:"' + hazardPoly + '");' +
+  var query = '[out:json][timeout:' + OVERPASS_QUERY_TIMEOUT_S + '];(' +
+    'node["amenity"~"^(school|kindergarten|hospital|university|college|prison)$"](poly:"' + hazardPoly + '");' +
+    'way["amenity"~"^(school|kindergarten|hospital|university|college|prison)$"](poly:"' + hazardPoly + '");' +
+    'relation["amenity"~"^(school|kindergarten|hospital|university|college|prison)$"](poly:"' + hazardPoly + '");' +
     'node["leisure"="playground"](poly:"' + hazardPoly + '");' +
     'way["leisure"="playground"](poly:"' + hazardPoly + '");' +
-    ')->.h;' +
-    '.b out tags center;' +
-    '.h out geom;';
+    'node["social_facility"="nursing_home"](poly:"' + hazardPoly + '");' +
+    'way["social_facility"="nursing_home"](poly:"' + hazardPoly + '");' +
+    'node["power"~"^(substation|plant)$"](poly:"' + hazardPoly + '");' +
+    'way["power"~"^(substation|plant)$"](poly:"' + hazardPoly + '");' +
+    'relation["power"~"^(substation|plant)$"](poly:"' + hazardPoly + '");' +
+    'node["aeroway"~"^(aerodrome|heliport)$"](poly:"' + hazardPoly + '");' +
+    'way["aeroway"~"^(aerodrome|heliport)$"](poly:"' + hazardPoly + '");' +
+    'relation["aeroway"~"^(aerodrome|heliport)$"](poly:"' + hazardPoly + '");' +
+    'node["diplomatic"="embassy"](poly:"' + hazardPoly + '");' +
+    'way["diplomatic"="embassy"](poly:"' + hazardPoly + '");' +
+    'node["military"](poly:"' + hazardPoly + '");' +
+    'way["military"](poly:"' + hazardPoly + '");' +
+    'relation["military"](poly:"' + hazardPoly + '");' +
+    'way["landuse"="military"](poly:"' + hazardPoly + '");' +
+    'relation["landuse"="military"](poly:"' + hazardPoly + '");' +
+    ');out geom;';
 
   var data = await fetchOverpass(query);
   var elements = data.elements || [];
-
-  var buildingCount = 0;
-  var maxHeight = 0;
-  var buildingList = [];
   var hazards = [];
 
   for (var i = 0; i < elements.length; i++){
     var tags = elements[i].tags || {};
-    if (tags.building){
-      buildingCount++;
-      var h = estimateBuildingHeight(tags);
-      if (h > maxHeight) maxHeight = h;
-      var bpos = elementLatLng(elements[i]);
-      if (bpos){
-        buildingList.push({ lat: bpos.lat, lng: bpos.lng, height: h, radius: estimateBuildingFootprintRadius(tags) });
-      }
-    }
     var hazardType = classifyHazard(tags);
     if (hazardType){
       var polygon = hazardPolygonFromElement(elements[i]);
@@ -526,16 +604,61 @@ async function getOsmDataNearRoute(lat1, lng1, lat2, lng2, bearingDeg){
         hazardRadius = HAZARD_TYPE_RADIUS_M[hazardType];
       }
       if (pos){
-        hazards.push({ lat: pos.lat, lng: pos.lng, type: hazardType, name: tags.name || null, radius: hazardRadius, clearance: hazardRadius + HAZARD_SAFETY_MARGIN_M, polygon: polygon });
+        // `radius` is the real (or best-guess) size, used for
+        // messaging and the no-fly warning distance. `clearance` is
+        // what the router actually avoids by, capped so a genuinely
+        // huge site (an airport, a military base) can't force an
+        // impossible detour - see HAZARD_ROUTING_RADIUS_CAP_M.
+        var routingRadius = Math.min(hazardRadius, HAZARD_ROUTING_RADIUS_CAP_M);
+        hazards.push({
+          lat: pos.lat, lng: pos.lng, type: hazardType, name: tags.name || null,
+          radius: hazardRadius, clearance: routingRadius + HAZARD_SAFETY_MARGIN_M,
+          polygon: polygon, noFly: !!NO_FLY_HAZARD_TYPES[hazardType]
+        });
+      }
+    }
+  }
+
+  return { hazards: hazards, hazardHalfWidthUsed: hazardHalfWidth };
+}
+
+// Buildings along the *actual* route: called once we already know the
+// hazard-avoidance path (see getHazardsNearRoute and the first
+// computeAvoidanceRoute pass in calcHeight), so a route that swings
+// wide around a cluster of hazards still gets building coverage along
+// that swing - not just along the straight line between start and
+// destination, which a big detour can leave far behind.
+async function getBuildingsNearPath(path, straightDistM){
+  var buildingHalfWidth = corridorHalfWidth(straightDistM, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_CORRIDOR_MAX_HALF_WIDTH_M, BUILDING_CORRIDOR_DISTANCE_FRACTION);
+  var buildingPoly = polygonToStr(pathCorridorPolygon(path, buildingHalfWidth));
+
+  var query = '[out:json][timeout:' + OVERPASS_QUERY_TIMEOUT_S + '];' +
+    'way["building"](poly:"' + buildingPoly + '");' +
+    'out tags center;';
+
+  var data = await fetchOverpass(query);
+  var elements = data.elements || [];
+
+  var buildingCount = 0;
+  var maxHeight = 0;
+  var buildingList = [];
+
+  for (var i = 0; i < elements.length; i++){
+    var tags = elements[i].tags || {};
+    if (tags.building){
+      buildingCount++;
+      var h = estimateBuildingHeight(tags);
+      if (h > maxHeight) maxHeight = h;
+      var bpos = elementLatLng(elements[i]);
+      if (bpos){
+        buildingList.push({ lat: bpos.lat, lng: bpos.lng, height: h, radius: estimateBuildingFootprintRadius(tags) });
       }
     }
   }
 
   return {
     buildings: { count: buildingCount, maxHeight: maxHeight, list: buildingList },
-    hazards: hazards,
-    buildingHalfWidthUsed: buildingHalfWidth,
-    hazardHalfWidthUsed: hazardHalfWidth
+    buildingHalfWidthUsed: buildingHalfWidth
   };
 }
 
@@ -728,23 +851,85 @@ function maxLateralDeviationM(path, lat1, lng1, lat2, lng2){
   return maxDev;
 }
 
+// Like maxLateralDeviationM, but measures deviation from an arbitrary
+// already-computed reference path instead of a straight line - used
+// to check whether a second avoidance pass (e.g. routing around
+// buildings after already routing around hazards) swings further than
+// the corridor that was actually queried around that first path.
+function maxPathDeviationM(path, referencePath){
+  var mPerDegLat = 110540;
+  var lat0 = referencePath[0].lat, lng0 = referencePath[0].lng;
+  var mPerDegLng = 111320 * Math.cos(deg2rad(lat0));
+  function toLocal(lat, lng){
+    return { x: (lng - lng0) * mPerDegLng, y: (lat - lat0) * mPerDegLat };
+  }
+  var refLocal = referencePath.map(function(p){ return toLocal(p.lat, p.lng); });
+  var maxDev = 0;
+  path.forEach(function(p){
+    var pl = toLocal(p.lat, p.lng);
+    var minDist = Infinity;
+    if (refLocal.length < 2){
+      var dx = pl.x - refLocal[0].x, dy = pl.y - refLocal[0].y;
+      minDist = Math.sqrt(dx * dx + dy * dy);
+    } else {
+      for (var i = 0; i < refLocal.length - 1; i++){
+        var d = distancePointToSegment(refLocal[i], refLocal[i+1], pl);
+        if (d < minDist) minDist = d;
+      }
+    }
+    if (minDist > maxDev) maxDev = minDist;
+  });
+  return maxDev;
+}
+
 // Which of the given buildings actually sit on (within marginM of)
 // the straight start->destination line, out of all the ones OSM
 // returned in the search corridor. The corridor is deliberately wider
 // than the route itself (see corridorHalfWidth), so most buildings it
 // finds are off to the side and shouldn't affect this particular
 // flight at all.
-function buildingsCrossingStraightLine(buildingList, lat1, lng1, lat2, lng2, marginM){
+// Which of the given buildings actually sit on (within marginM of)
+// the given path - an array of {lat,lng} points, in order. Passing a
+// 2-point [start, destination] path checks against the straight
+// line; passing an already-computed avoidance path checks against
+// the actual route instead, which matters once that route detours
+// away from the straight line to dodge a hazard.
+// Shortest distance (meters) from (lat,lng) to any point on the
+// given path. Used to check how close the route actually comes to a
+// legally-restricted site (airport, military, etc.), regardless of
+// the (capped) radius used for routing avoidance.
+function minDistanceFromPath(path, lat, lng){
   var mPerDegLat = 110540;
-  var mPerDegLng = 111320 * Math.cos(deg2rad(lat1));
-  function toLocal(lat, lng){
-    return { x: (lng - lng1) * mPerDegLng, y: (lat - lat1) * mPerDegLat };
+  var lat0 = path[0].lat, lng0 = path[0].lng;
+  var mPerDegLng = 111320 * Math.cos(deg2rad(lat0));
+  function toLocal(la, ln){ return { x: (ln - lng0) * mPerDegLng, y: (la - lat0) * mPerDegLat }; }
+  var pathLocal = path.map(function(p){ return toLocal(p.lat, p.lng); });
+  var target = toLocal(lat, lng);
+  if (pathLocal.length < 2){
+    var dx = target.x - pathLocal[0].x, dy = target.y - pathLocal[0].y;
+    return Math.sqrt(dx * dx + dy * dy);
   }
-  var p1 = toLocal(lat1, lng1);
-  var p2 = toLocal(lat2, lng2);
+  var minD = Infinity;
+  for (var i = 0; i < pathLocal.length - 1; i++){
+    var d = distancePointToSegment(pathLocal[i], pathLocal[i+1], target);
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+function buildingsCrossingPath(buildingList, path, marginM){
+  var mPerDegLat = 110540;
+  var mPerDegLng = 111320 * Math.cos(deg2rad(path[0].lat));
+  function toLocal(lat, lng){
+    return { x: (lng - path[0].lng) * mPerDegLng, y: (lat - path[0].lat) * mPerDegLat };
+  }
+  var pathLocal = path.map(function(p){ return toLocal(p.lat, p.lng); });
   return buildingList.filter(function(b){
     var c = toLocal(b.lat, b.lng);
-    return distancePointToSegment(p1, p2, c) < (b.radius + marginM);
+    for (var i = 0; i < pathLocal.length - 1; i++){
+      if (distancePointToSegment(pathLocal[i], pathLocal[i+1], c) < (b.radius + marginM)) return true;
+    }
+    return false;
   });
 }
 
@@ -984,19 +1169,35 @@ async function calcHeight() {
     var outboundHeading = (dronedegrees + 180) % 360;
     dist=getDistanceFromLatLon(startlat,startlng,destlat, destlng);
 
-    // Kick both network calls off together - wind from open-meteo, and
-    // nearby buildings + hazard zones from OpenStreetMap's Overpass
-    // API. A failed OSM lookup shouldn't block the wind calculation,
-    // so it's caught locally and treated as "no data".
+    // Wind and hazards can be looked up together - hazards only need
+    // the straight start->destination line. Buildings come later,
+    // once we know the hazard-avoidance path, so a route that swings
+    // wide around a cluster of hazards still gets building data along
+    // that swing (see getBuildingsNearPath below).
     const windPromise = this.getJSON();
-    const osmPromise = getOsmDataNearRoute(startlat, startlng, destlat, destlng, dronedegrees)
-        .catch(function(err){ console.warn('OSM lookup failed:', err); return null; });
+    const hazardsPromise = getHazardsNearRoute(startlat, startlng, destlat, destlng, dronedegrees)
+        .catch(function(err){ console.warn('Hazard lookup failed:', err); return null; });
+
+    const hazardData = await hazardsPromise;
+    const hazards = hazardData ? hazardData.hazards : [];
+    const hazardHalfWidthUsed = hazardData ? hazardData.hazardHalfWidthUsed : HAZARD_CORRIDOR_HALF_WIDTH_M;
+
+    const hazardObstacles = hazards.map(function(h){
+      return { lat: h.lat, lng: h.lng, clearance: h.clearance, kind: 'hazard', type: h.type, name: h.name };
+    });
+    // First pass: route around hazards only. This is also the final
+    // route if no buildings end up needing a detour of their own.
+    var avoidance = computeAvoidanceRoute(startlat, startlng, destlat, destlng, hazardObstacles);
+
+    const straightDistM = getDistanceFromLatLon(startlat, startlng, destlat, destlng);
+    const buildingPromise = getBuildingsNearPath(avoidance.path, straightDistM)
+        .catch(function(err){ console.warn('Building lookup failed:', err); return null; });
 
     const json = await windPromise;  // command waits until completion
-    const osmData = await osmPromise;
-    const buildings = osmData ? osmData.buildings : null;
-    const hazards = osmData ? osmData.hazards : [];
+    const buildingData = await buildingPromise;
+    const buildings = buildingData ? buildingData.buildings : null;
     const buildingList = buildings ? buildings.list : [];
+    const buildingHalfWidthUsed = buildingData ? buildingData.buildingHalfWidthUsed : BUILDING_CORRIDOR_HALF_WIDTH_M;
 
     const d = new Date();
     let hour = d.getUTCHours();
@@ -1097,12 +1298,13 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
     }
 
     // Only buildings that actually sit on (within a safety margin of)
-    // the straight route matter here - the search corridor is wider
-    // than that on purpose (see corridorHalfWidth) so we still catch
-    // buildings the route swings past once it detours around hazards,
-    // but a building elsewhere in that wide corridor isn't on this
-    // route and shouldn't push it higher or make it detour.
-    var onRouteBuildings = buildingsCrossingStraightLine(buildingList, startlat, startlng, destlat, destlng, BUILDING_LATERAL_SAFETY_MARGIN_M);
+    // the route matter here. This checks against the *actual*
+    // hazard-avoidance path computed above, not the straight line -
+    // otherwise a route that swings wide around a cluster of hazards
+    // could carry building height/detour requirements from a
+    // building nowhere near where the drone will really fly, or miss
+    // one that the swing brings it close to.
+    var onRouteBuildings = buildingsCrossingPath(buildingList, avoidance.path, BUILDING_LATERAL_SAFETY_MARGIN_M);
 
     var tooTallOnRoute = onRouteBuildings.filter(function(b){
       return b.height + BUILDING_HEIGHT_SAFETY_MARGIN_M > effectiveCeilingM;
@@ -1125,26 +1327,60 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
     var buildingsToAvoid = tooTallOnRoute.concat(avoidedForSimplicity);
     var maxBuildingHeight = climbedOver.reduce(function(m, b){ return Math.max(m, b.height); }, 0);
 
-    const obstacles = hazards.map(function(h){
-      return { lat: h.lat, lng: h.lng, clearance: h.clearance, kind: 'hazard', type: h.type, name: h.name };
-    }).concat(buildingsToAvoid.map(function(b){
-      return { lat: b.lat, lng: b.lng, clearance: b.radius + BUILDING_LATERAL_SAFETY_MARGIN_M, kind: 'building', type: 'building', name: null, height: b.height };
-    }));
-
-    const avoidance = computeAvoidanceRoute(startlat, startlng, destlat, destlng, obstacles);
+    // Second pass: only re-run the avoidance routing if a building
+    // actually needs to be routed around - otherwise the hazard-only
+    // route from above is already final, and re-running it would
+    // just recompute the same path.
+    var hazardOnlyPath = avoidance.path;
+    if (buildingsToAvoid.length > 0){
+      const combinedObstacles = hazardObstacles.concat(buildingsToAvoid.map(function(b){
+        return { lat: b.lat, lng: b.lng, clearance: b.radius + BUILDING_LATERAL_SAFETY_MARGIN_M, kind: 'building', type: 'building', name: null, height: b.height };
+      }));
+      avoidance = computeAvoidanceRoute(startlat, startlng, destlat, destlng, combinedObstacles);
+    }
     const routeDist = avoidance.distance;
     renderHazardsAndRoute(hazards, buildingList, avoidance.path);
+
+    // Airports, military sites, prisons and embassies aren't just
+    // "risky to overfly" like a school - flying near them can be
+    // flatly illegal or need special authorization, no matter how
+    // wide a berth the route gives them. The routing avoidance above
+    // only ever detours around a capped radius (so one huge site
+    // can't break the pathfinding), so that alone isn't enough of a
+    // check - this looks at actual distance to the real site instead
+    // and raises a hard, unmissable warning when the route comes
+    // anywhere close.
+    var noFlyWarningEl = document.getElementById('noFlyWarning')
+    var nearbyNoFlyHazards = hazards.filter(function(h){
+      if (!h.noFly) return false;
+      return minDistanceFromPath(avoidance.path, h.lat, h.lng) < (h.radius + NO_FLY_WARNING_DISTANCE_M)
+    })
+    if (nearbyNoFlyHazards.length > 0){
+        var noFlyNames = nearbyNoFlyHazards.map(function(h){
+            var label = HAZARD_TYPE_LABEL[h.type] || 'restricted site'
+            return h.name ? (label + ' (' + h.name + ')') : label
+        })
+        noFlyWarningEl.innerHTML = '\u26A0\uFE0F This route passes near: ' + noFlyNames.join(', ') +
+            '. Flying here may be illegal or require special authorization, regardless of the altitude or path shown above.' +
+            '<span class="no-fly-detail">This tool only checks OpenStreetMap\u2019s map data, not official controlled-airspace, no-fly-zone, or NOTAM data. Verify with your local civil aviation authority before flying.</span>'
+        noFlyWarningEl.style.display = 'block'
+    } else {
+        noFlyWarningEl.style.display = 'none'
+    }
 
     // The corridor width actually queried grows with route distance
     // (see corridorHalfWidth), but the avoidance routing itself can
     // still occasionally swing past it while dodging a cluster of
-    // hazards - flag that so the person knows that stretch wasn't
-    // fully checked, rather than silently trusting it.
-    const hazardHalfWidthUsed = osmData ? osmData.hazardHalfWidthUsed : HAZARD_CORRIDOR_HALF_WIDTH_M;
-    const buildingHalfWidthUsed = osmData ? osmData.buildingHalfWidthUsed : BUILDING_CORRIDOR_HALF_WIDTH_M;
+    // obstacles - flag that so the person knows that stretch wasn't
+    // fully checked, rather than silently trusting it. Hazards were
+    // checked around the straight line, so that comparison is
+    // against the final path directly; buildings were checked around
+    // the hazard-only path, so that comparison is against how far the
+    // *second* pass (adding building avoidance) swung from the first.
     const routeDeviationM = maxLateralDeviationM(avoidance.path, startlat, startlng, destlat, destlng);
-    const routeLeftCheckedArea = osmData !== null && routeDeviationM > hazardHalfWidthUsed;
-    const routeLeftCheckedBuildingArea = osmData !== null && routeDeviationM > buildingHalfWidthUsed;
+    const routeLeftCheckedArea = hazardData !== null && routeDeviationM > hazardHalfWidthUsed;
+    const buildingRouteDeviationM = maxPathDeviationM(avoidance.path, hazardOnlyPath);
+    const routeLeftCheckedBuildingArea = buildingData !== null && buildingRouteDeviationM > buildingHalfWidthUsed;
 
     // Now that we know the actual (possibly detoured) route length,
     // work out how long each leg takes at every height.
@@ -1287,7 +1523,7 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
         if (routeLeftCheckedBuildingArea){
             var buildingCorridorWarning = document.createElement('span')
             buildingCorridorWarning.className = 'warning-hint'
-            buildingCorridorWarning.innerHTML = ' The detour around nearby hazards swings about ' + routeDeviationM.toFixed(0) + ' m from the straight line \u2014 further than the ' + buildingHalfWidthUsed.toFixed(0) + ' m either side that was actually checked for buildings, so the recommended height may not account for a taller building further out along that swing.'
+            buildingCorridorWarning.innerHTML = ' Routing around a tall building swings the route about ' + buildingRouteDeviationM.toFixed(0) + ' m from the hazard-avoidance path \u2014 further than the ' + buildingHalfWidthUsed.toFixed(0) + ' m either side that was actually checked for buildings around it, so the recommended height may not account for a taller building further out along that swing.'
             buildingInfo.appendChild(buildingCorridorWarning)
         }
     }
@@ -1295,16 +1531,16 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
 
     var hazardInfo = document.getElementById('hazardInfo')
     hazardInfo.classList.remove('warning-hint')
-    if (osmData === null){
-        hazardInfo.innerHTML = "Couldn't load restricted-area data from OpenStreetMap, so schools, kindergartens, hospitals and playgrounds along this route aren't being checked right now."
+    if (hazardData === null){
+        hazardInfo.innerHTML = "Couldn't load restricted-area data from OpenStreetMap, so schools, hospitals, power infrastructure, airports and other restricted sites along this route aren't being checked right now."
         hazardInfo.classList.add('warning-hint')
     } else if (hazards.length === 0){
-        hazardInfo.innerHTML = "No schools, kindergartens, hospitals or playgrounds found near this route in OpenStreetMap."
+        hazardInfo.innerHTML = "No schools, hospitals, power infrastructure, airports or other restricted sites found near this route in OpenStreetMap."
     } else {
         var detourText = avoidance.hazardsAvoided > 0
             ? "The route on the map now detours around " + avoidance.hazardsAvoided + " of them."
             : "The straight-line route already clears all of them."
-        hazardInfo.innerHTML = "Found " + hazards.length + " restricted area" + (hazards.length===1?'':'s') + " (schools, kindergartens, hospitals, playgrounds) near this route, marked in red on the map. " + detourText
+        hazardInfo.innerHTML = "Found " + hazards.length + " restricted area" + (hazards.length===1?'':'s') + " (schools, hospitals, power infrastructure, airports and more) near this route, marked in red on the map. " + detourText
 
         var trappedList = avoidance.trapped || []
         if (trappedList.length > 0){
@@ -1429,12 +1665,10 @@ function renderHazardsAndRoute(hazards, buildings, path){
     var hz = hazards[i];
     var label = HAZARD_TYPE_LABEL[hz.type] || 'Restricted area';
     if (hz.name) label += ' \u2014 ' + hz.name;
-    var hazardStyle = {
-      color: '#e6484f',
-      weight: 2,
-      fillColor: '#e6484f',
-      fillOpacity: 0.22
-    };
+    var hazardStyle = hz.noFly
+      ? { color: '#7a1620', weight: 2, dashArray: '6 4', fillColor: '#7a1620', fillOpacity: 0.28 }
+      : { color: '#e6484f', weight: 2, fillColor: '#e6484f', fillOpacity: 0.22 };
+    if (hz.noFly) label = '\u26A0\uFE0F ' + label;
     var hazardShape = hz.polygon
       ? L.polygon(hz.polygon.map(function(p){ return [p.lat, p.lng]; }), hazardStyle)
       : L.circle([hz.lat, hz.lng], Object.assign({ radius: hz.radius }, hazardStyle));
