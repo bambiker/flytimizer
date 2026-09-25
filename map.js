@@ -12,6 +12,13 @@ var marker = 0; ////Has the user plotted their location marker?
 var lat1,lat2, lng1, lng2;
 var marker1, marker2, label1, label2;
 
+// Snapshot of the current outbound recommendation - path, altitude,
+// speed, drone model - populated at the end of a successful
+// calcHeight() run, and read by downloadWPML() when the person clicks
+// "Download flight plan". null whenever there's no flyable outbound
+// height to build a mission from.
+var lastRoute = null;
+
 // Formats a duration given in seconds as "M min S s" (or just "S s" under a minute).
 function formatDuration(totalSeconds, decimals){
   decimals = (typeof decimals === 'number') ? decimals : 0
@@ -275,7 +282,6 @@ var BUILDING_AVOID_MAX_COUNT = 4; // detour around this many (or fewer) building
 var HAZARD_CORRIDOR_HALF_WIDTH_M = 220; // floor - wide enough to see nearby hazards and have room to route around them
 var HAZARD_CORRIDOR_MAX_HALF_WIDTH_M = 700;
 var HAZARD_CORRIDOR_DISTANCE_FRACTION = 0.06; // +60 m of half-width per km of route - hazards get more headroom than buildings since the route actually swings sideways to dodge them
-var HAZARD_SAFETY_MARGIN_M = 20;        // extra buffer added on top of the estimated radius
 var HAZARD_TYPE_RADIUS_M = {
   school: 60, kindergarten: 40, hospital: 90, playground: 30,
   nursing_home: 40, university: 120, power: 30,
@@ -288,19 +294,37 @@ var HAZARD_TYPE_LABEL = {
   building: 'Tall building'
 };
 
-// These aren't just "risky to overfly" like a school - flying at or
-// near them can be flatly illegal or require special authorization,
-// regardless of altitude or how wide a berth the route gives them.
-// We still avoid their mapped footprint like any other hazard, but
+// Regulatory keep-out distance added on top of the site's own
+// physical size, per hazard type. Where we found a specific published
+// distance in Israeli civil aviation drone rules, we use it; where we
+// didn't, we default to 30 m (the same floor this app already uses as
+// its minimum flight altitude) rather than inventing a number. These
+// are a starting point for planning, not a substitute for checking
+// the official no-fly-zone map (רת"א / DronesIL) and current NOTAMs
+// before every flight - rules change, and vary in ways a fixed number
+// per category can't fully capture.
+var HAZARD_DEFAULT_REGULATORY_BUFFER_M = 30;
+var HAZARD_REGULATORY_BUFFER_M = {
+  airport: 2000,   // no closer than 2 km to any point of a runway or landing strip
+  heliport: 2000,  // same runway/landing-strip rule
+  military: 3000,  // no closer than 3 km to a military runway (small-UAS rule)
+  prison: 1000     // 1 km, based on the distance specified for a Prison Service site/event
+  // embassy, and the non-legal "safety" types below, fall back to
+  // HAZARD_DEFAULT_REGULATORY_BUFFER_M - we didn't find a specific
+  // published distance for them.
+};
+
+// Places where flying can be flatly illegal or need special
+// authorization, not just risky - a different kind of restriction
+// than "don't fly directly over a school". We still avoid their
+// mapped footprint plus regulatory buffer like any other hazard, but
 // also raise a separate, much more prominent warning when the route
-// comes anywhere near one - the routing avoidance itself is capped
-// (HAZARD_ROUTING_RADIUS_CAP_M) so a huge real site (a whole airport
-// or military base) can't blow up the pathfinding, so the real extent
-// of the restriction has to be flagged, not just quietly routed
-// around as if a small detour made it fine.
+// comes anywhere near one, since a quiet detour could otherwise read
+// as "this is handled" for something that really needs the person to
+// check official sources themselves.
 var NO_FLY_HAZARD_TYPES = { airport: true, heliport: true, prison: true, embassy: true, military: true };
-var HAZARD_ROUTING_RADIUS_CAP_M = 1000; // never ask the router to detour around more than this, even if the real site is bigger
-var NO_FLY_WARNING_DISTANCE_M = 2000;   // show the prominent warning if the route comes within this distance of the site's (real, uncapped) edge
+var HAZARD_ROUTING_RADIUS_CAP_M = 5000;  // sanity cap on the *total* clearance (real size + regulatory buffer) - guards against a data glitch producing an absurd radius, not meant to shrink a legitimately large site or its buffer
+var NO_FLY_WARNING_EXTRA_MARGIN_M = 100; // small margin on top of the real regulatory buffer, for map-data imprecision, when deciding whether to show the prominent warning
 
 
 function rad2deg(rad){
@@ -604,15 +628,18 @@ async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg){
         hazardRadius = HAZARD_TYPE_RADIUS_M[hazardType];
       }
       if (pos){
-        // `radius` is the real (or best-guess) size, used for
-        // messaging and the no-fly warning distance. `clearance` is
-        // what the router actually avoids by, capped so a genuinely
-        // huge site (an airport, a military base) can't force an
-        // impossible detour - see HAZARD_ROUTING_RADIUS_CAP_M.
-        var routingRadius = Math.min(hazardRadius, HAZARD_ROUTING_RADIUS_CAP_M);
+        // `radius` is the real (or best-guess) physical size, used
+        // for messaging and the no-fly warning distance. `buffer` is
+        // the regulatory keep-out distance added on top of that.
+        // `clearance` is what the router actually avoids by - the sum
+        // of the two, capped only against a data glitch producing an
+        // absurd radius (HAZARD_ROUTING_RADIUS_CAP_M), never shrinking
+        // a legitimately large site's own real footprint.
+        var buffer = (HAZARD_REGULATORY_BUFFER_M[hazardType] !== undefined) ? HAZARD_REGULATORY_BUFFER_M[hazardType] : HAZARD_DEFAULT_REGULATORY_BUFFER_M;
         hazards.push({
           lat: pos.lat, lng: pos.lng, type: hazardType, name: tags.name || null,
-          radius: hazardRadius, clearance: routingRadius + HAZARD_SAFETY_MARGIN_M,
+          radius: hazardRadius, buffer: buffer,
+          clearance: Math.min(hazardRadius + buffer, HAZARD_ROUTING_RADIUS_CAP_M),
           polygon: polygon, noFly: !!NO_FLY_HAZARD_TYPES[hazardType]
         });
       }
@@ -1353,16 +1380,19 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
     var noFlyWarningEl = document.getElementById('noFlyWarning')
     var nearbyNoFlyHazards = hazards.filter(function(h){
       if (!h.noFly) return false;
-      return minDistanceFromPath(avoidance.path, h.lat, h.lng) < (h.radius + NO_FLY_WARNING_DISTANCE_M)
+      return minDistanceFromPath(avoidance.path, h.lat, h.lng) < (h.radius + h.buffer + NO_FLY_WARNING_EXTRA_MARGIN_M)
     })
     if (nearbyNoFlyHazards.length > 0){
         var noFlyNames = nearbyNoFlyHazards.map(function(h){
             var label = HAZARD_TYPE_LABEL[h.type] || 'restricted site'
-            return h.name ? (label + ' (' + h.name + ')') : label
+            if (h.name) label += ' (' + h.name + ')'
+            var bufferKm = (h.buffer / 1000)
+            var bufferText = h.buffer >= 1000 ? (bufferKm.toFixed(bufferKm % 1 === 0 ? 0 : 1) + ' km') : (h.buffer.toFixed(0) + ' m')
+            return label + ' \u2014 keep-out distance around ' + bufferText
         })
-        noFlyWarningEl.innerHTML = '\u26A0\uFE0F This route passes near: ' + noFlyNames.join(', ') +
+        noFlyWarningEl.innerHTML = '\u26A0\uFE0F This route passes near: ' + noFlyNames.join('; ') +
             '. Flying here may be illegal or require special authorization, regardless of the altitude or path shown above.' +
-            '<span class="no-fly-detail">This tool only checks OpenStreetMap\u2019s map data, not official controlled-airspace, no-fly-zone, or NOTAM data. Verify with your local civil aviation authority before flying.</span>'
+            '<span class="no-fly-detail">Distances are drawn from published Israeli small-UAS rules where we found a specific figure, and a 30 m placeholder otherwise \u2014 they are a starting point, not a guarantee. This tool only checks OpenStreetMap\u2019s map data, not the official no-fly-zone map (רת"א / DronesIL) or current NOTAMs. Verify there before flying.</span>'
         noFlyWarningEl.style.display = 'block'
     } else {
         noFlyWarningEl.style.display = 'none'
@@ -1611,6 +1641,24 @@ crosswindOkBack[i] = speedhorizontalback > crosswind[i]
         flyWarning.style.display = 'block'
     }
 
+    // The WPML download only makes sense once there's an actual
+    // flyable outbound height and route to hand off - the mission is
+    // one-way (outbound leg), since that's the leg this app treats as
+    // the "delivery" direction with its own payload/speed settings.
+    var downloadWpmlBtn = document.getElementById('downloadWpmlBtn')
+    if (minhor !== -1){
+        lastRoute = {
+            path: avoidance.path,
+            altitudeM: heights[minhor],
+            speedMS: speedhorizontal,
+            droneModel: document.getElementById('droneModel').value
+        }
+        if (downloadWpmlBtn) downloadWpmlBtn.style.display = ''
+    } else {
+        lastRoute = null
+        if (downloadWpmlBtn) downloadWpmlBtn.style.display = 'none'
+    }
+
     document.getElementById('visibility').innerHTML = (visibility/1000).toFixed(0)
     document.getElementById('precipitation').innerHTML = precipitation.toFixed(1)
     document.getElementById('precipitation_probability').innerHTML = precipitation_probability.toFixed(0)
@@ -1727,4 +1775,187 @@ marker1.on('dragend', function(event) {
                 markerLocation(2, marker2);  
         }
         }
+}
+
+// ---------------------------------------------------------------
+// WPML flight-plan export
+//
+// Builds a DJI WPML waypoint mission (a .kmz archive containing
+// wpmz/template.kml and wpmz/waylines.wpml) from the current
+// recommendation, so it can be imported into DJI Pilot 2 rather than
+// having to re-enter the route and altitude by hand.
+//
+// IMPORTANT COMPATIBILITY NOTE: WPML/DJI Pilot 2 waypoint missions
+// are supported on DJI's enterprise line (Matrice 300/350 RTK, M30
+// series, M3E/M3T/M3M, M3D/M3TD). Consumer drones flown with DJI Fly
+// (Mavic 3 Classic, Mini 4 Pro, Air 3, Neo 2) generally do NOT import
+// WPML/KMZ waypoint missions the same way, if at all - this export is
+// really only expected to work end-to-end with the Matrice 300 RTK
+// preset (or another enterprise-line drone entered as Custom).
+// ---------------------------------------------------------------
+
+// DJI's droneEnumValue for the handful of models that actually
+// support WPML/DJI Pilot 2 waypoint missions. Everything else
+// (consumer drones in our own preset list included) has no valid
+// value here, so we fall back to the Matrice 300 RTK's code - the
+// field is required by the format, but for an unsupported drone the
+// exported file wasn't going to import into anything anyway.
+var WPML_DRONE_ENUM = {
+  matrice300: { droneEnumValue: 60, droneSubEnumValue: 0 }, // M300 RTK
+  m350: { droneEnumValue: 89, droneSubEnumValue: 0 },       // M350 RTK
+  m30: { droneEnumValue: 67, droneSubEnumValue: 0 },        // M30
+  m30t: { droneEnumValue: 67, droneSubEnumValue: 1 },       // M30T
+  m3e: { droneEnumValue: 77, droneSubEnumValue: 0 },        // Mavic 3E (enterprise)
+  m3t: { droneEnumValue: 77, droneSubEnumValue: 1 },        // Mavic 3T (enterprise)
+  m3m: { droneEnumValue: 77, droneSubEnumValue: 2 }         // Mavic 3M (enterprise)
+};
+var WPML_DEFAULT_DRONE_ENUM = WPML_DRONE_ENUM.matrice300;
+
+function wpmlDroneEnumFor(droneModelKey){
+  return WPML_DRONE_ENUM[droneModelKey] || WPML_DEFAULT_DRONE_ENUM;
+}
+
+function xmlEscape(s){
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// The mission-config block is identical in template.kml and
+// waylines.wpml (see the "common elements" section of DJI's WPML
+// spec), so it's built once and reused for both.
+function wpmlMissionConfigXml(droneEnum){
+  return '' +
+'  <wpml:missionConfig>\n' +
+'    <wpml:flyToWaylineMode>safely</wpml:flyToWaylineMode>\n' +
+'    <wpml:finishAction>goHome</wpml:finishAction>\n' +
+'    <wpml:exitOnRCLost>executeLostAction</wpml:exitOnRCLost>\n' +
+'    <wpml:executeRCLostAction>hover</wpml:executeRCLostAction>\n' +
+'    <wpml:takeOffSecurityHeight>20</wpml:takeOffSecurityHeight>\n' +
+'    <wpml:globalTransitionalSpeed>' + 6 + '</wpml:globalTransitionalSpeed>\n' +
+'    <wpml:droneInfo>\n' +
+'      <wpml:droneEnumValue>' + droneEnum.droneEnumValue + '</wpml:droneEnumValue>\n' +
+'      <wpml:droneSubEnumValue>' + droneEnum.droneSubEnumValue + '</wpml:droneSubEnumValue>\n' +
+'    </wpml:droneInfo>\n' +
+'  </wpml:missionConfig>\n';
+}
+
+// One <Placemark> per waypoint - the same shape is used in both
+// files (template.kml keeps it as the editable definition, and
+// waylines.wpml as the actual execution instructions).
+function wpmlPlacemarkXml(point, index, total, altitudeM, speedMS){
+  var name = (index === 0) ? 'Start' : (index === total - 1) ? 'Destination' : ('Waypoint ' + index);
+  return '' +
+'      <Placemark>\n' +
+'        <name>' + xmlEscape(name) + '</name>\n' +
+'        <Point>\n' +
+'          <coordinates>' + point.lng.toFixed(8) + ',' + point.lat.toFixed(8) + '</coordinates>\n' +
+'        </Point>\n' +
+'        <wpml:index>' + index + '</wpml:index>\n' +
+'        <wpml:executeHeight>' + altitudeM.toFixed(1) + '</wpml:executeHeight>\n' +
+'        <wpml:waypointSpeed>' + speedMS.toFixed(1) + '</wpml:waypointSpeed>\n' +
+'        <wpml:waypointHeadingParam>\n' +
+'          <wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode>\n' +
+'        </wpml:waypointHeadingParam>\n' +
+'        <wpml:waypointTurnParam>\n' +
+'          <wpml:waypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:waypointTurnMode>\n' +
+'          <wpml:waypointTurnDampingDist>0</wpml:waypointTurnDampingDist>\n' +
+'        </wpml:waypointTurnParam>\n' +
+'        <wpml:useStraightLine>1</wpml:useStraightLine>\n' +
+'      </Placemark>\n';
+}
+
+function buildTemplateKml(route){
+  var droneEnum = wpmlDroneEnumFor(route.droneModel);
+  var placemarks = route.path.map(function(p, i){
+    return wpmlPlacemarkXml(p, i, route.path.length, route.altitudeM, route.speedMS);
+  }).join('');
+
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' +
+'<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.2">\n' +
+'<Document>\n' +
+'  <wpml:author>Flytimizer</wpml:author>\n' +
+'  <wpml:createTime>' + Date.now() + '</wpml:createTime>\n' +
+'  <wpml:updateTime>' + Date.now() + '</wpml:updateTime>\n' +
+wpmlMissionConfigXml(droneEnum) +
+'  <Folder>\n' +
+'    <wpml:templateType>waypoint</wpml:templateType>\n' +
+'    <wpml:templateId>0</wpml:templateId>\n' +
+'    <wpml:waylineCoordinateSysParam>\n' +
+'      <wpml:coordinateMode>WGS84</wpml:coordinateMode>\n' +
+'      <wpml:heightMode>relativeToStartPoint</wpml:heightMode>\n' +
+'    </wpml:waylineCoordinateSysParam>\n' +
+'    <wpml:autoFlightSpeed>' + route.speedMS.toFixed(1) + '</wpml:autoFlightSpeed>\n' +
+'    <wpml:globalHeight>' + route.altitudeM.toFixed(1) + '</wpml:globalHeight>\n' +
+'    <wpml:globalWaypointHeadingParam>\n' +
+'      <wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode>\n' +
+'    </wpml:globalWaypointHeadingParam>\n' +
+'    <wpml:globalWaypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:globalWaypointTurnMode>\n' +
+'    <wpml:globalUseStraightLine>1</wpml:globalUseStraightLine>\n' +
+placemarks +
+'  </Folder>\n' +
+'</Document>\n' +
+'</kml>\n';
+}
+
+function buildWaylinesWpml(route, distanceM){
+  var droneEnum = wpmlDroneEnumFor(route.droneModel);
+  var placemarks = route.path.map(function(p, i){
+    return wpmlPlacemarkXml(p, i, route.path.length, route.altitudeM, route.speedMS);
+  }).join('');
+  var durationS = distanceM / Math.max(route.speedMS, 0.1);
+
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' +
+'<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.2">\n' +
+'<Document>\n' +
+wpmlMissionConfigXml(droneEnum) +
+'  <Folder>\n' +
+'    <wpml:templateId>0</wpml:templateId>\n' +
+'    <wpml:executeHeightMode>relativeToStartPoint</wpml:executeHeightMode>\n' +
+'    <wpml:waylineId>0</wpml:waylineId>\n' +
+'    <wpml:distance>' + distanceM.toFixed(1) + '</wpml:distance>\n' +
+'    <wpml:duration>' + durationS.toFixed(1) + '</wpml:duration>\n' +
+'    <wpml:autoFlightSpeed>' + route.speedMS.toFixed(1) + '</wpml:autoFlightSpeed>\n' +
+placemarks +
+'  </Folder>\n' +
+'</Document>\n' +
+'</kml>\n';
+}
+
+// Builds the .kmz (WPML) file for the current recommendation and
+// triggers a browser download. Called by the "Download flight plan"
+// button, which is only shown once calcHeight() has found a flyable
+// outbound height (see lastRoute above).
+async function downloadWPML(){
+  if (!lastRoute){
+    window.alert("There's no flyable route to export yet - calculate a route first.");
+    return;
+  }
+  if (typeof JSZip === 'undefined'){
+    window.alert("Couldn't load the file-packaging library (JSZip) - check your internet connection and try again.");
+    return;
+  }
+
+  var distanceM = 0;
+  for (var i = 0; i < lastRoute.path.length - 1; i++){
+    distanceM += getDistanceFromLatLon(lastRoute.path[i].lat, lastRoute.path[i].lng, lastRoute.path[i+1].lat, lastRoute.path[i+1].lng);
+  }
+
+  var zip = new JSZip();
+  var wpmz = zip.folder('wpmz');
+  wpmz.file('template.kml', buildTemplateKml(lastRoute));
+  wpmz.file('waylines.wpml', buildWaylinesWpml(lastRoute, distanceM));
+
+  try {
+    var blob = await zip.generateAsync({ type: 'blob' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'flytimizer-route.kmz';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 10000);
+  } catch (err){
+    console.error(err);
+    window.alert("Couldn't build the flight-plan file - please try again.");
+  }
 }
