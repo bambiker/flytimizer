@@ -13,6 +13,7 @@
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js" crossorigin=""></script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -718,6 +719,8 @@ details.panel + details.panel{
       </div>
     </div>
 
+    <button class="btn btn-ghost" id="downloadWpmlBtn" style="display:none; margin-bottom:16px" onclick="downloadWPML()">Download flight plan (WPML)</button>
+
     <p class="savings" id="savingsText">Flying the optimal heights saves
     <strong><span id="savesec"></span></strong>
     <span id="savepercent"></span> compared with holding 120m the whole
@@ -782,15 +785,19 @@ details.panel + details.panel{
         <li>Schools, kindergartens, hospitals, playgrounds, nursing
         homes, universities/colleges and power infrastructure are
         risky to fly over — we mark the ones OpenStreetMap knows about
-        in red on the map and route around them horizontally, since
-        altitude alone doesn't make overflying them safe.</li>
+        in red on the map and route around them by at least 30m (or
+        their real size, if bigger), since altitude alone doesn't
+        make overflying them safe.</li>
         <li>Airports, heliports, military sites, prisons and embassies
         are a different kind of risk — flying near them can be
         illegal or need special authorization no matter how you route
-        around them. We flag these with a separate, more prominent
-        warning, but we only check OpenStreetMap's map data, not
-        official controlled-airspace or no-fly-zone data — always
-        verify with your local aviation authority.</li>
+        around them. Where published Israeli small-UAS rules give a
+        specific distance, we use it (2km for airports/heliports,
+        3km for military runways, 1km for prisons); otherwise we fall
+        back to 30m. We flag these with a separate, more prominent
+        warning, but we only check OpenStreetMap's map data, not the
+        official no-fly-zone map or current NOTAMs — always verify
+        there before flying.</li>
         <li>Altitude choice matters most on long routes, with
         higher-drag drones, and when the wind runs roughly along your
         heading.</li>
