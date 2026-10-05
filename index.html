@@ -355,6 +355,50 @@ details.panel + details.panel{
 
 .btn-ghost:hover{ border-color: var(--accent-2); color: var(--accent-2); }
 
+/* ---------- progress ---------- */
+
+.progress{
+  margin: -12px 0 22px;
+}
+
+.progress[hidden]{ display: none; }
+
+.progress-track{
+  height: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill{
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.2s linear;
+}
+
+.progress-meta{
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.progress-meta #progressEta{
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+.btn-inline{
+  padding: 4px 10px;
+  font-size: 13px;
+  margin-left: 6px;
+}
+
 /* ---------- results ---------- */
 
 .results{
@@ -632,6 +676,16 @@ details.panel + details.panel{
 
   <button class="btn btn-primary" id="calcBtn" onclick="getHeight()">Find Optimal Route</button>
 
+  <div class="progress" id="calcProgress" hidden>
+    <div class="progress-track" id="progressTrack" role="progressbar" aria-label="Route calculation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div class="progress-meta" aria-live="polite">
+      <span id="progressLabel"></span>
+      <span id="progressEta"></span>
+    </div>
+  </div>
+
   <script>
      function getLocation() {
          if (navigator.geolocation) {
@@ -680,7 +734,7 @@ details.panel + details.panel{
       var originalLabel = btn.textContent;
 
       btn.disabled = true;
-      btn.textContent = 'Downloading wind, buildings & restricted areas\u2026';
+      btn.textContent = 'Calculating\u2026';
 
       try {
         await calcHeight();
@@ -691,6 +745,7 @@ details.panel + details.panel{
         console.error(err);
         window.alert('Something went wrong while calculating - please try again.');
       } finally {
+        if (typeof Progress !== 'undefined') Progress.finish(false); // no-op if it already finished
         btn.disabled = false;
         btn.textContent = originalLabel;
       }
