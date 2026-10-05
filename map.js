@@ -101,6 +101,7 @@ function markerLocation(sd, mark){
   var currentLocation = mark.getLatLng(); //getLatLng();  
   lat1 = currentLocation.lat; //latitude
   lng1 = currentLocation.lng; //longitude
+  if (typeof rememberStartPoint === 'function') rememberStartPoint(lat1, lng1);
         }
     else
         {
@@ -187,14 +188,20 @@ function drift(){
 // manufacturer's published spec sheet (sport/S-mode figures).
 // ---------------------------------------------------------------
 
+// batt = battery energy (Wh), ftime = rated max flight time (min),
+// mass = takeoff weight (kg) - all from the manufacturers' spec
+// sheets; used by the battery estimate.
 var DRONE_PRESETS = {
-  mavic3classic: { name: 'DJI Mavic 3 Classic', hor: 21, asc: 8, des: 6, windres: 12 },
-  mini4pro:      { name: 'DJI Mini 4 Pro',       hor: 16, asc: 5, des: 5, windres: 10.7 },
-  air3:          { name: 'DJI Air 3',            hor: 21, asc: 10, des: 10, windres: 12 },
-  matrice300:    { name: 'DJI Matrice 300 RTK',  hor: 23, asc: 6, des: 5, windres: 12 },
-  neo2:          { name: 'DJI Neo 2',            hor: 12, asc: 5, des: 3, windres: 10.7 },
-  evolite:       { name: 'Autel EVO Lite+',      hor: 18, asc: 5, des: 4, windres: 10.6 }
+  mavic3classic: { name: 'DJI Mavic 3 Classic', hor: 21, asc: 8, des: 6, windres: 12, batt: 77, ftime: 46, mass: 0.895 },
+  mini4pro:      { name: 'DJI Mini 4 Pro',       hor: 16, asc: 5, des: 5, windres: 10.7, batt: 18.96, ftime: 34, mass: 0.249 },
+  air3:          { name: 'DJI Air 3',            hor: 21, asc: 10, des: 10, windres: 12, batt: 62.6, ftime: 46, mass: 0.72 },
+  matrice300:    { name: 'DJI Matrice 300 RTK',  hor: 23, asc: 6, des: 5, windres: 12, batt: 548, ftime: 55, mass: 6.3 },
+  neo2:          { name: 'DJI Neo 2',            hor: 12, asc: 5, des: 3, windres: 10.7, batt: 11.5, ftime: 19, mass: 0.151 },
+  evolite:       { name: 'Autel EVO Lite+',      hor: 18, asc: 5, des: 4, windres: 10.6, batt: 68.7, ftime: 40, mass: 0.835 }
 };
+// Fields a preset fills in (the rest - payload, drag, battery health -
+// are the person's own).
+var PRESET_FIELDS = ['hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass'];
 
 function updateDroneSummary(){
   var sel = document.getElementById('droneModel');
@@ -208,10 +215,7 @@ function applyDronePreset(){
   var sel = document.getElementById('droneModel');
   var preset = DRONE_PRESETS[sel.value];
   if (preset){
-    document.getElementById('hor').value = preset.hor;
-    document.getElementById('asc').value = preset.asc;
-    document.getElementById('des').value = preset.des;
-    document.getElementById('windres').value = preset.windres;
+    PRESET_FIELDS.forEach(function(id){ document.getElementById(id).value = preset[id]; });
   }
   updateDroneSummary(); // "Custom" - leave whatever the user has typed, just relabel
 }
@@ -223,13 +227,10 @@ function checkCustom(){
   var sel = document.getElementById('droneModel');
   var preset = DRONE_PRESETS[sel.value];
   if (preset){
-    var hor = parseFloat(document.getElementById('hor').value);
-    var asc = parseFloat(document.getElementById('asc').value);
-    var des = parseFloat(document.getElementById('des').value);
-    var windres = parseFloat(document.getElementById('windres').value);
-    if (hor !== preset.hor || asc !== preset.asc || des !== preset.des || windres !== preset.windres){
-      sel.value = 'custom';
-    }
+    var differs = PRESET_FIELDS.some(function(id){
+      return parseFloat(document.getElementById(id).value) !== preset[id];
+    });
+    if (differs) sel.value = 'custom';
   }
   updateDroneSummary();
 }
@@ -337,37 +338,219 @@ var HAZARD_TYPE_LABEL = {
   building: 'Tall building'
 };
 
-// Regulatory keep-out distance added on top of the site's own
-// physical size, per hazard type. Where we found a specific published
-// distance in Israeli civil aviation drone rules, we use it; where we
-// didn't, we default to 30 m (the same floor this app already uses as
-// its minimum flight altitude) rather than inventing a number. These
-// are a starting point for planning, not a substitute for checking
-// the official no-fly-zone map (רת"א / DronesIL) and current NOTAMs
-// before every flight - rules change, and vary in ways a fixed number
-// per category can't fully capture.
-var HAZARD_DEFAULT_REGULATORY_BUFFER_M = 30;
-var HAZARD_REGULATORY_BUFFER_M = {
-  airport: 2000,   // no closer than 2 km to any point of a runway or landing strip
-  heliport: 2000,  // same runway/landing-strip rule
-  military: 3000,  // no closer than 3 km to a military runway (small-UAS rule)
-  prison: 1000     // 1 km, based on the distance specified for a Prison Service site/event
-  // embassy, and the non-legal "safety" types below, fall back to
-  // HAZARD_DEFAULT_REGULATORY_BUFFER_M - we didn't find a specific
-  // published distance for them.
-};
+var HAZARD_ROUTING_RADIUS_CAP_M = 5000;  // sanity cap on the *total* clearance (real size + keep-out buffer) - guards against a data glitch producing an absurd radius, not meant to shrink a legitimately large site or its buffer
 
-// Places where flying can be flatly illegal or need special
-// authorization, not just risky - a different kind of restriction
-// than "don't fly directly over a school". We still avoid their
-// mapped footprint plus regulatory buffer like any other hazard, but
-// also raise a separate, much more prominent warning when the route
-// comes anywhere near one, since a quiet detour could otherwise read
-// as "this is handled" for something that really needs the person to
-// check official sources themselves.
-var NO_FLY_HAZARD_TYPES = { airport: true, heliport: true, prison: true, embassy: true, military: true };
-var HAZARD_ROUTING_RADIUS_CAP_M = 5000;  // sanity cap on the *total* clearance (real size + regulatory buffer) - guards against a data glitch producing an absurd radius, not meant to shrink a legitimately large site or its buffer
-var NO_FLY_WARNING_EXTRA_MARGIN_M = 100; // small margin on top of the real regulatory buffer, for map-data imprecision, when deciding whether to show the prominent warning
+// ---------------------------------------------------------------
+// Country rules
+//
+// The rules applied to a route are those of the country its START
+// point is in (looked up with OpenStreetMap's Nominatim reverse
+// geocoder, with a rough bounding-box fallback if that fails).
+// Israel and the United States have their own rule sets; anywhere
+// else uses Israel's, which are the stricter of the two - a
+// conservative default, clearly labelled as such in the result.
+//
+// Per country:
+//  - maxAglM: legal height limit above ground. Heights above it are
+//    marked unflyable unless the person ticks "I have authorization".
+//  - bufferM / defaultBufferM: keep-out distance the ROUTE detours by,
+//    added to the site's own mapped size.
+//  - noFlyTypes: site types where flying may be illegal or need
+//    authorization - these raise the prominent red warning.
+//  - warnM: how far (beyond the site's own size) that warning reaches,
+//    when it should reach further than the detour itself (e.g. US
+//    controlled airspace around airports: you need authorization
+//    there, but the route can't sensibly detour 8 km around it).
+//  - noFlyNote: what to tell the person about each type.
+//  - specialZones: fixed areas with their own rules (Washington DC).
+//
+// These are a planning aid compiled from published summaries, not
+// legal advice. Rules change; every result links to the official
+// source to check before flying.
+// ---------------------------------------------------------------
+var MILE_M = 1609.344;
+
+var REGULATION_PROFILES = {
+  IL: {
+    code: 'IL',
+    country: 'Israel',
+    authority: 'CAAI',
+    maxAglM: 50,
+    maxAglLabel: '50 m',
+    defaultBufferM: 30,
+    bufferM: {
+      airport: 2000,   // no closer than 2 km to a runway or landing strip
+      heliport: 2000,  // same runway/landing-strip rule
+      military: 3000,  // 3 km from a military runway (small-UAS rule)
+      prison: 1000     // 1 km, distance specified for a Prison Service site
+    },
+    noFlyTypes: { airport: true, heliport: true, prison: true, embassy: true, military: true },
+    warnM: {},
+    noFlyNote: {},
+    notes: [
+      'Flying higher than 50 m needs a CAAI permit.',
+      'Keep well away from people, homes and gatherings (250 m is commonly cited), never fly over people, and keep the drone in visual line of sight.',
+      'Drones must be registered with CAAI.'
+    ],
+    checkLabel: 'CAAI no-fly-zone maps and current NOTAMs',
+    checkUrl: 'https://www.gov.il/en/departments/civil_aviation_authority_of_israel',
+    specialZones: []
+  },
+  US: {
+    code: 'US',
+    country: 'United States',
+    authority: 'FAA',
+    maxAglM: 400 * 0.3048,
+    maxAglLabel: '400 ft (122 m)',
+    defaultBufferM: 30,
+    bufferM: {},
+    // No fixed national distance from airports - the rule is about
+    // controlled airspace, which surrounds most airports out to
+    // roughly 5 miles. So: detour only around the field itself, but
+    // warn well beyond it.
+    noFlyTypes: { airport: true, military: true, prison: true },
+    warnM: { airport: 5 * MILE_M },
+    noFlyNote: {
+      airport: 'airspace near airports is usually controlled — you need LAANC authorization before flying',
+      military: 'many military sites have FAA drone restrictions over them (14 CFR 99.7)',
+      prison: 'some correctional facilities have FAA drone restrictions over them (14 CFR 99.7)'
+    },
+    notes: [
+      'Keep the drone in visual line of sight at all times.',
+      'Controlled airspace (around most airports) needs LAANC authorization; check for Temporary Flight Restrictions (TFRs), e.g. around stadiums during events.',
+      'Drones over 250 g must be registered and broadcast Remote ID.'
+    ],
+    checkLabel: 'B4UFLY / a LAANC app and current TFRs',
+    checkUrl: 'https://www.faa.gov/uas/getting_started/b4ufly',
+    specialZones: [
+      {
+        name: 'Washington DC Flight Restricted Zone',
+        lat: 38.8512, lng: -77.0377,          // Ronald Reagan Washington National Airport
+        radiusM: 15 * MILE_M,
+        noFly: true,
+        text: 'flying a drone within 15 miles of Reagan National Airport is prohibited without specific FAA authorization'
+      },
+      {
+        name: 'Washington DC Special Flight Rules Area',
+        lat: 38.8512, lng: -77.0377,
+        radiusM: 30 * MILE_M,
+        noFly: false,
+        text: 'within 30 miles of Reagan National Airport, recreational flights are allowed only under specific conditions and other flights need Part 107 compliance or authorization'
+      }
+    ]
+  }
+};
+var RULES_FALLBACK_CODE = 'IL';
+var NO_FLY_WARNING_EXTRA_MARGIN_M = 100; // map-data imprecision margin on top of the keep-out distance
+var countryCache = new Map();
+
+// Rough boxes used only if the reverse geocoder can't be reached.
+// They overlap neighbouring countries at the edges, which is
+// acceptable for a fallback (and anything unmatched gets Israel's
+// rules anyway).
+var COUNTRY_BOXES = [
+  { code: 'IL', s: 29.45, n: 33.35, w: 34.2, e: 35.9 },
+  { code: 'US', s: 24.4, n: 49.4, w: -125.0, e: -66.9 },   // contiguous states
+  { code: 'US', s: 51.0, n: 71.6, w: -170.0, e: -129.9 },  // Alaska
+  { code: 'US', s: 18.8, n: 22.3, w: -160.3, e: -154.7 },  // Hawaii
+  { code: 'US', s: 17.8, n: 18.6, w: -67.4, e: -65.2 }     // Puerto Rico
+];
+
+function countryFromBoxes(lat, lng){
+  for (var i = 0; i < COUNTRY_BOXES.length; i++){
+    var b = COUNTRY_BOXES[i];
+    if (lat >= b.s && lat <= b.n && lng >= b.w && lng <= b.e) return { code: b.code, name: null, source: 'approx' };
+  }
+  return { code: null, name: null, source: 'approx' };
+}
+
+async function detectCountry(lat, lng){
+  var key = lat.toFixed(2) + ',' + lng.toFixed(2);
+  if (countryCache.has(key)) return countryCache.get(key);
+  var result;
+  try {
+    var controller = new AbortController();
+    var timer = setTimeout(function(){ controller.abort(); }, 8000);
+    var url = 'https://nominatim.openstreetmap.org/reverse?format=json&zoom=3&accept-language=en&lat=' + lat.toFixed(5) + '&lon=' + lng.toFixed(5);
+    var response = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: controller.signal });
+    clearTimeout(timer);
+    if (!response.ok) throw new Error('Reverse geocode HTTP ' + response.status);
+    var json = await response.json();
+    var cc = json && json.address && json.address.country_code;
+    if (!cc) throw new Error('No country here');
+    result = { code: cc.toUpperCase(), name: json.address.country || null, source: 'geocoder' };
+  } catch (err){
+    console.warn('Country lookup failed, using approximate boxes:', err);
+    result = countryFromBoxes(lat, lng);
+  }
+  countryCache.set(key, result);
+  return result;
+}
+
+// {profile, detected:{code,name}, fallback:boolean}
+async function rulesForLocation(lat, lng){
+  var detected = await detectCountry(lat, lng);
+  var profile = REGULATION_PROFILES[detected.code];
+  return {
+    profile: profile || REGULATION_PROFILES[RULES_FALLBACK_CODE],
+    detected: detected,
+    fallback: !profile
+  };
+}
+
+function hazardBufferFor(profile, type){
+  return (profile.bufferM[type] !== undefined) ? profile.bufferM[type] : profile.defaultBufferM;
+}
+
+// Adds the rule-dependent fields to hazards found by
+// getHazardsNearRoute: buffer, routing clearance, whether it's a
+// no-fly type, and how far its warning reaches.
+function applyRulesToHazards(hazards, profile){
+  hazards.forEach(function(h){
+    h.buffer = hazardBufferFor(profile, h.type);
+    h.clearance = Math.min(h.radius + h.buffer, HAZARD_ROUTING_RADIUS_CAP_M);
+    h.noFly = !!profile.noFlyTypes[h.type];
+    h.warnM = Math.max(h.buffer, profile.warnM[h.type] || 0) + NO_FLY_WARNING_EXTRA_MARGIN_M;
+  });
+  return hazards;
+}
+
+function formatDistance(m){
+  if (typeof unitsImperial !== 'undefined' && unitsImperial) return fmtDist(m);
+  if (m >= 1000){
+    var km = m / 1000;
+    return km.toFixed(km % 1 === 0 ? 0 : 1) + ' km';
+  }
+  return m.toFixed(0) + ' m';
+}
+
+// Has the person said they're authorized to fly above the local limit?
+function altitudePermitChecked(){
+  var el = document.getElementById('altPermit');
+  return !!(el && el.checked);
+}
+
+function renderRulesInfo(rules, legalCapM, permit){
+  var el = document.getElementById('rulesInfo');
+  if (!el) return;
+  var p = rules.profile;
+  var where = rules.detected.name || (rules.detected.code ? rules.detected.code : 'this location');
+  var head;
+  if (rules.fallback){
+    head = '<strong>Rules: Israel (default).</strong> We don’t have a rule set for ' + where + ' yet, so we’re applying Israel’s, which are on the strict side — check your local regulations too.';
+  } else {
+    head = '<strong>Rules: ' + p.country + ' (' + p.authority + ').</strong> Height limit ' + p.maxAglLabel + ' above ground.';
+  }
+  if (permit && legalCapM > p.maxAglM){
+    head += ' You’ve indicated authorization to fly higher, so heights up to ' + legalCapM.toFixed(0) + ' m are allowed.';
+  }
+  var notes = p.notes.map(function(n){ return '<li>' + n + '</li>'; }).join('');
+  el.innerHTML = head + '<ul class="rules-notes">' + notes + '</ul>' +
+    'Before every flight, check <a href="' + p.checkUrl + '" target="_blank" rel="noopener">' + p.checkLabel + '</a>.' +
+    (rules.detected.source === 'approx' ? ' <span class="warning-hint">(Country detected approximately — the location service didn’t answer.)</span>' : '');
+  el.style.display = 'block';
+}
+
 
 
 function rad2deg(rad){
@@ -848,7 +1031,7 @@ var Progress = {
 // before we know the final route, because they're what determines
 // the route's shape in the first place (buildings don't cause a
 // detour - see below).
-async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg){
+async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg, rulesPromise){
   var distM = getDistanceFromLatLon(lat1, lng1, lat2, lng2);
   var hazardHalfWidth = corridorHalfWidth(distM, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_CORRIDOR_MAX_HALF_WIDTH_M, HAZARD_CORRIDOR_DISTANCE_FRACTION);
   // One global bounding box for the whole query (Overpass resolves a
@@ -893,29 +1076,27 @@ async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg){
         hazardRadius = HAZARD_TYPE_RADIUS_M[hazardType];
       }
       if (pos){
-        // `radius` is the real (or best-guess) physical size, used
-        // for messaging and the no-fly warning distance. `buffer` is
-        // the regulatory keep-out distance added on top of that.
-        // `clearance` is what the router actually avoids by - the sum
-        // of the two, capped only against a data glitch producing an
-        // absurd radius (HAZARD_ROUTING_RADIUS_CAP_M), never shrinking
-        // a legitimately large site's own real footprint.
-        var buffer = (HAZARD_REGULATORY_BUFFER_M[hazardType] !== undefined) ? HAZARD_REGULATORY_BUFFER_M[hazardType] : HAZARD_DEFAULT_REGULATORY_BUFFER_M;
+        // `radius` is the real (or best-guess) physical size. The
+        // rule-dependent fields (buffer, clearance, noFly, warnM) are
+        // added below by applyRulesToHazards, once the country is known.
         hazards.push({
           lat: pos.lat, lng: pos.lng, type: hazardType, name: tags.name || null,
-          radius: hazardRadius, buffer: buffer,
-          clearance: Math.min(hazardRadius + buffer, HAZARD_ROUTING_RADIUS_CAP_M),
-          polygon: polygon, noFly: !!NO_FLY_HAZARD_TYPES[hazardType]
+          radius: hazardRadius, polygon: polygon
         });
       }
     }
   }
 
+  var rules = await rulesPromise;
+  applyRulesToHazards(hazards, rules.profile);
+
   // The bbox is wider than the corridor on diagonal routes; drop
-  // sites whose clearance zone doesn't reach into the corridor at all.
+  // sites whose clearance zone doesn't reach into the corridor at all
+  // (no-fly sites are kept while their warning distance still does).
   var straightLine = [{ lat: lat1, lng: lng1 }, { lat: lat2, lng: lng2 }];
   hazards = hazards.filter(function(h){
-    return minDistanceFromPath(straightLine, h.lat, h.lng) <= hazardHalfWidth + h.clearance;
+    var reach = h.noFly ? Math.max(h.clearance, h.radius + h.warnM) : h.clearance;
+    return minDistanceFromPath(straightLine, h.lat, h.lng) <= hazardHalfWidth + reach;
   });
 
   return { hazards: hazards, hazardHalfWidthUsed: hazardHalfWidth };
@@ -1298,7 +1479,7 @@ function computeAvoidanceRoute(lat1, lng1, lat2, lng2, obstacles){
 
 async function getJSON() {
 
-   const apiUrl = 'https://api.open-meteo.com/v1/forecast?latitude='+lat1+'&longitude='+lng1+'&hourly=wind_speed_10m,wind_speed_80m,wind_speed_120m,wind_speed_180m,wind_direction_10m,wind_direction_80m,wind_direction_120m,wind_direction_180m,wind_gusts_10m,visibility,precipitation_probability,precipitation&forecast_days=2&timezone=GMT';
+   const apiUrl = 'https://api.open-meteo.com/v1/forecast?latitude='+lat1+'&longitude='+lng1+'&hourly=wind_speed_10m,wind_speed_80m,wind_speed_120m,wind_speed_180m,wind_direction_10m,wind_direction_80m,wind_direction_120m,wind_direction_180m,wind_gusts_10m,visibility,precipitation_probability,precipitation,temperature_2m&forecast_days=2&timezone=GMT';
 
     return fetch(apiUrl)
         .then((response)=>response.json())
@@ -1676,16 +1857,20 @@ function renderTerrainProfile(samples, prof, h){
 
   var mono = 'font-family="JetBrains Mono, monospace" font-size="10"';
   var ticks = '';
-  var step = (y1 - y0) > 300 ? 100 : (y1 - y0) > 120 ? 50 : 20;
-  for (var t = Math.ceil(y0 / step) * step; t <= y1; t += step){
+  // Gridlines at round numbers in the display unit (m or ft).
+  var uf = unitsImperial ? M_TO_FT : 1;
+  var spanU = (y1 - y0) * uf;
+  var step = spanU > 900 ? 300 : spanU > 300 ? 100 : spanU > 120 ? 50 : 20;
+  for (var tu = Math.ceil(y0 * uf / step) * step; tu <= y1 * uf; tu += step){
+    var t = tu / uf;
     ticks += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + Y(t) + '" y2="' + Y(t) + '" stroke="' + VIZ_COLORS.line + '" stroke-width="0.5"/>' +
-      '<text x="' + (padL - 6) + '" y="' + (Y(t) + 3) + '" text-anchor="end" ' + mono + ' fill="' + VIZ_COLORS.muted + '">' + t + '</text>';
+      '<text x="' + (padL - 6) + '" y="' + (Y(t) + 3) + '" text-anchor="end" ' + mono + ' fill="' + VIZ_COLORS.muted + '">' + tu + '</text>';
   }
-  var distLabel = total >= 1000 ? (total / 1000).toFixed(1) + ' km' : total.toFixed(0) + ' m';
+  var distLabel = fmtDist(total);
 
   el.innerHTML =
-    '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Side view of the route: ground elevation, the 120 metre above-ground ceiling, and the planned outbound altitude">' +
-      '<text x="' + padL + '" y="14" ' + mono + ' fill="' + VIZ_COLORS.muted + '">ALTITUDE ABOVE SEA LEVEL (m) — OUTBOUND</text>' +
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Side view of the route: ground elevation, the above-ground height limit, and the planned outbound altitude">' +
+      '<text x="' + padL + '" y="14" ' + mono + ' fill="' + VIZ_COLORS.muted + '">ALTITUDE ABOVE SEA LEVEL (' + lenUnit() + ') — OUTBOUND</text>' +
       ticks +
       '<path d="' + ground + '" fill="' + VIZ_COLORS.muted + '" fill-opacity="0.28" stroke="' + VIZ_COLORS.muted + '" stroke-width="1"/>' +
       '<path d="' + ceiling + '" fill="none" stroke="' + VIZ_COLORS.danger + '" stroke-width="1" stroke-dasharray="4 3"/>' +
@@ -1694,12 +1879,119 @@ function renderTerrainProfile(samples, prof, h){
       '<text x="' + (W - padR) + '" y="' + (H - 8) + '" text-anchor="end" ' + mono + ' fill="' + VIZ_COLORS.muted + '">' + distLabel + '</text>' +
       '<g ' + mono + '>' +
         '<line x1="' + (W - 250) + '" x2="' + (W - 236) + '" y1="11" y2="11" stroke="' + VIZ_COLORS.accent + '" stroke-width="2.2"/>' +
-        '<text x="' + (W - 232) + '" y="14" fill="' + VIZ_COLORS.muted + '">drone (≥' + h + ' m AGL)</text>' +
+        '<text x="' + (W - 232) + '" y="14" fill="' + VIZ_COLORS.muted + '">drone (≥' + fmtLen(h) + ' AGL)</text>' +
         '<line x1="' + (W - 112) + '" x2="' + (W - 98) + '" y1="11" y2="11" stroke="' + VIZ_COLORS.danger + '" stroke-dasharray="4 3"/>' +
-        '<text x="' + (W - 94) + '" y="14" fill="' + VIZ_COLORS.muted + '">120 m AGL</text>' +
+        '<text x="' + (W - 94) + '" y="14" fill="' + VIZ_COLORS.muted + '">' + fmtLen(MAX_AGL_M) + ' AGL limit</text>' +
       '</g>' +
     '</svg>';
   el.style.display = 'block';
+}
+
+// ---------------------------------------------------------------
+// Battery estimate
+//
+// A deliberately simple physical model, calibrated per drone from its
+// spec sheet - so treat the result as an estimate (roughly +-20%),
+// not a fuel gauge:
+//  - DJI measures "max flight time" flying at about 21.6 km/h (6 m/s)
+//    in still air. Battery energy / that time = average power at that
+//    speed, which pins down the power curve for this drone.
+//  - Power vs airspeed follows the usual multirotor shape: a little
+//    lower than hover at moderate speed, rising steeply near top
+//    speed (airspeedPowerFactor).
+//  - Climbing adds the work of lifting the drone (m*g*climb rate)
+//    divided by a propulsion efficiency; descending costs slightly
+//    less than hovering.
+//  - Payload: the app's payload coefficient multiplies weight, and
+//    lift power grows with weight^1.5 (rotor momentum theory).
+//  - Cold: below 15 C usable capacity drops (about 18% at 0 C).
+//  - Battery health (%) scales usable capacity - lower it for older
+//    packs.
+// Wind is included through time: the drone always flies at its set
+// airspeed, so a headwind leg simply takes longer at the same power.
+// ---------------------------------------------------------------
+var BATTERY_RESERVE_PCT = 20;
+var SPEC_TEST_SPEED_MS = 6;     // ~21.6 km/h, DJI's flight-time test speed
+var CLIMB_EFFICIENCY = 0.6;     // share of electrical power turned into climb work
+var DESCENT_POWER_FACTOR = 0.9; // descending vs hovering
+
+function airspeedPowerFactor(v, vmax){
+  var x = Math.min(Math.max(v / Math.max(vmax, 0.1), 0), 1.2);
+  return 1 - 0.2 * x + 0.5 * x * x * x;
+}
+
+function coldCapacityFactor(tempC){
+  if (typeof tempC !== 'number' || !isFinite(tempC) || tempC >= 15) return 1;
+  return Math.max(0.7, 1 - 0.012 * (15 - tempC));
+}
+
+function readBatteryModel(){
+  var wh = parseFloat(document.getElementById('batt').value);
+  var minutes = parseFloat(document.getElementById('ftime').value);
+  var massKg = parseFloat(document.getElementById('mass').value);
+  var health = parseFloat(document.getElementById('health').value);
+  var vmax = parseFloat(document.getElementById('hor').value);
+  if (!(wh > 0) || !(minutes > 0) || !(massKg > 0) || !(vmax > 0)) return null;
+  if (!(health > 0)) health = 100;
+  var specPowerW = wh * 60 / minutes;
+  return {
+    wh: wh,
+    usableFraction: Math.min(health, 100) / 100,
+    massKg: massKg,
+    vmax: vmax,
+    hoverW: specPowerW / airspeedPowerFactor(SPEC_TEST_SPEED_MS, vmax)
+  };
+}
+
+// Energy (Wh) for one leg.
+function legEnergyWh(model, payloadCoef, airspeed, horTimeS, climbUpM, climbDownM, upSpeed, downSpeed){
+  if (!isFinite(horTimeS)) return Infinity;
+  var baseW = model.hoverW * Math.pow(Math.max(payloadCoef, 0.1), 1.5);
+  var cruiseW = baseW * airspeedPowerFactor(airspeed, model.vmax);
+  var climbW = baseW + model.massKg * payloadCoef * 9.81 * upSpeed / CLIMB_EFFICIENCY;
+  var descW = baseW * DESCENT_POWER_FACTOR;
+  var joules = cruiseW * horTimeS + climbW * (climbUpM / upSpeed) + descW * (climbDownM / downSpeed);
+  return joules / 3600;
+}
+
+function batteryPct(model, energyWh, tempC){
+  var usableWh = model.wh * model.usableFraction * coldCapacityFactor(tempC);
+  return energyWh / usableWh * 100;
+}
+
+function fmtPct(p){
+  if (!isFinite(p)) return '—';
+  return (p < 1 ? '<1' : p.toFixed(0)) + '%';
+}
+
+// ---------------------------------------------------------------
+// Units
+//
+// Results show in imperial units (ft, mph, mi) for routes in the US
+// and metric elsewhere, unless the person picks one explicitly.
+// Inputs (drone speeds etc.) stay metric for now.
+// ---------------------------------------------------------------
+var unitsImperial = false;
+var UNITS_KEY = 'flytimizerUnits';
+var M_TO_FT = 3.28084;
+
+function chooseUnits(rules){
+  var sel = document.getElementById('unitsSelect');
+  var pref = sel ? sel.value : 'auto';
+  if (pref === 'metric') unitsImperial = false;
+  else if (pref === 'imperial') unitsImperial = true;
+  else unitsImperial = !rules.fallback && rules.profile.code === 'US';
+}
+
+function lenNum(m){ return Math.round(unitsImperial ? m * M_TO_FT : m); }
+function lenUnit(){ return unitsImperial ? 'ft' : 'm'; }
+function fmtLen(m){ return lenNum(m) + ' ' + lenUnit(); }
+function fmtSpeed(ms){ return unitsImperial ? (ms * 2.23694).toFixed(1) + ' mph' : ms.toFixed(1) + ' m/s'; }
+function fmtDist(m){
+  if (unitsImperial){
+    return m >= 0.25 * MILE_M ? (m / MILE_M).toFixed(2) + ' mi' : Math.round(m * M_TO_FT) + ' ft';
+  }
+  return m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m';
 }
 
 // ---------------------------------------------------------------
@@ -1880,10 +2172,21 @@ async function calcHeight() {
     // wide around a cluster of hazards still gets building data along
     // that swing (see getBuildingsNearPath below).
     const windPromise = this.getJSON();
-    const hazardsPromise = getHazardsNearRoute(startlat, startlng, destlat, destlng, dronedegrees)
+    // Country rules for the start point - looked up alongside the
+    // hazards (never fails: falls back to approximate boxes, then to
+    // Israel's rules).
+    const rulesPromise = rulesForLocation(startlat, startlng);
+    const hazardsPromise = getHazardsNearRoute(startlat, startlng, destlat, destlng, dronedegrees, rulesPromise)
         .catch(function(err){ console.warn('Hazard lookup failed:', err); return null; });
 
     const hazardData = await hazardsPromise;
+    const rules = await rulesPromise;
+    const altPermit = altitudePermitChecked();
+    // Legal height limit above ground for this route (the app never
+    // checks above MAX_FLIGHT_ALTITUDE_M, even with a permit).
+    const legalCapM = altPermit ? MAX_FLIGHT_ALTITUDE_M : Math.min(MAX_FLIGHT_ALTITUDE_M, rules.profile.maxAglM);
+    MAX_AGL_M = legalCapM;
+    chooseUnits(rules);
     const hazards = hazardData ? hazardData.hazards : [];
     const hazardHalfWidthUsed = hazardData ? hazardData.hazardHalfWidthUsed : HAZARD_CORRIDOR_HALF_WIDTH_M;
 
@@ -1924,6 +2227,7 @@ gust10=json.hourly.wind_gusts_10m[hour]/3.6;
 precipitation_probability=json.hourly.precipitation_probability[hour];
 precipitation=json.hourly.precipitation[hour];
 visibility=json.hourly.visibility[hour];
+var temperatureC = json.hourly.temperature_2m ? json.hourly.temperature_2m[hour] : null;
 
 // Gusts are only forecast at 10m. We estimate gusts at other heights
 // by applying the same gustiness ratio (gust/average at 10m) to the
@@ -2013,9 +2317,11 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     // once it's taller than whichever ceiling is actually flyable
     // right now (wind included), not a flat 120 m - otherwise we'd
     // recommend climbing to a height that the wind rules out anyway.
+    legalOk = []
+    for (i=0;i<heights.length; i++) legalOk[i] = heights[i] <= legalCapM + 0.01
     var effectiveCeilingM = 0;
     for (i=0;i<heights.length; i++) {
-        if (windResOk[i] && crosswindOkOut[i] && crosswindOkBack[i] && headwindOkOut[i] && headwindOkBack[i] && heights[i] > effectiveCeilingM){
+        if (legalOk[i] && windResOk[i] && crosswindOkOut[i] && crosswindOkBack[i] && headwindOkOut[i] && headwindOkBack[i] && heights[i] > effectiveCeilingM){
             effectiveCeilingM = heights[i]
         }
     }
@@ -2100,21 +2406,30 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     // and raises a hard, unmissable warning when the route comes
     // anywhere close.
     var noFlyWarningEl = document.getElementById('noFlyWarning')
-    var nearbyNoFlyHazards = hazards.filter(function(h){
+    var noFlyItems = hazards.filter(function(h){
       if (!h.noFly) return false;
-      return minDistanceFromPath(avoidance.path, h.lat, h.lng) < (h.radius + h.buffer + NO_FLY_WARNING_EXTRA_MARGIN_M)
+      return minDistanceFromPath(avoidance.path, h.lat, h.lng) < (h.radius + h.warnM)
+    }).map(function(h){
+      var label = HAZARD_TYPE_LABEL[h.type] || 'restricted site'
+      if (h.name) label += ' (' + h.name + ')'
+      var note = rules.profile.noFlyNote[h.type]
+      return label + ' — ' + (note || ('keep-out distance around ' + formatDistance(h.buffer)))
     })
-    if (nearbyNoFlyHazards.length > 0){
-        var noFlyNames = nearbyNoFlyHazards.map(function(h){
-            var label = HAZARD_TYPE_LABEL[h.type] || 'restricted site'
-            if (h.name) label += ' (' + h.name + ')'
-            var bufferKm = (h.buffer / 1000)
-            var bufferText = h.buffer >= 1000 ? (bufferKm.toFixed(bufferKm % 1 === 0 ? 0 : 1) + ' km') : (h.buffer.toFixed(0) + ' m')
-            return label + ' \u2014 keep-out distance around ' + bufferText
-        })
-        noFlyWarningEl.innerHTML = '\u26A0\uFE0F This route passes near: ' + noFlyNames.join('; ') +
-            '. Flying here may be illegal or require special authorization, regardless of the altitude or path shown above.' +
-            '<span class="no-fly-detail">Distances are drawn from published Israeli small-UAS rules where we found a specific figure, and a 30 m placeholder otherwise \u2014 they are a starting point, not a guarantee. This tool only checks OpenStreetMap\u2019s map data, not the official no-fly-zone map (רת"א / DronesIL) or current NOTAMs. Verify there before flying.</span>'
+    var zoneNotes = []
+    rules.profile.specialZones.forEach(function(z){
+      if (minDistanceFromPath(avoidance.path, z.lat, z.lng) >= z.radiusM) return
+      if (z.noFly) noFlyItems.push(z.name + ' — ' + z.text)
+      else zoneNotes.push(z.name + ': ' + z.text + '.')
+    })
+    // An inner no-fly zone already covers the outer ring's message.
+    if (noFlyItems.length > 0) zoneNotes = []
+    if (noFlyItems.length > 0 || zoneNotes.length > 0){
+        var lead = noFlyItems.length > 0
+            ? '⚠️ This route passes near: ' + noFlyItems.join('; ') + '. Flying here may be illegal or require authorization, regardless of the altitude or path shown above.'
+            : '⚠️ ' + zoneNotes.join(' ')
+        noFlyWarningEl.innerHTML = lead +
+            '<span class="no-fly-detail">Applying ' + (rules.fallback ? 'Israel’s rules (the default for this country)' : 'the rules for ' + rules.profile.country) +
+            '. Distances come from published rule summaries and OpenStreetMap’s map data — a starting point, not a guarantee. Check <a href="' + rules.profile.checkUrl + '" target="_blank" rel="noopener" style="color:inherit">' + rules.profile.checkLabel + '</a> before flying.</span>'
         noFlyWarningEl.style.display = 'block'
     } else {
         noFlyWarningEl.style.display = 'none'
@@ -2150,6 +2465,22 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         timehorb[i] = gsBack[i] > MIN_GROUND_SPEED_MS ? routeDist / gsBack[i] : Infinity
     }
 
+    // Battery for each leg at every height.
+    var battModel = readBatteryModel()
+    var payloadOut = parseFloat(document.getElementById('payload').value) || 1
+    var payloadBack = parseFloat(document.getElementById('payloadback').value) || 1
+    battOut = []
+    battBack = []
+    for (i=0;i<heights.length; i++) {
+        if (battModel){
+            battOut[i] = batteryPct(battModel, legEnergyWh(battModel, payloadOut, speedhorizontal, timehor[i], profOut[i].climbUp, profOut[i].climbDown, speedup, speeddown), temperatureC)
+            battBack[i] = batteryPct(battModel, legEnergyWh(battModel, payloadBack, speedhorizontalback, timehorb[i], profBack[i].climbUp, profBack[i].climbDown, speedupback, speeddownback), temperatureC)
+        } else {
+            battOut[i] = NaN
+            battBack[i] = NaN
+        }
+    }
+
     // A height isn't flyable if:
     //  - it's below the minimum clearance above the tallest *climbable*
     //    building OSM knows about near this route (buildings too tall
@@ -2167,8 +2498,8 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     buildingOk = []
     for (i=0;i<heights.length; i++) {
         buildingOk[i] = heights[i] >= minSafeAltitude
-        flyableOut[i] = buildingOk[i] && windResOk[i] && crosswindOkOut[i] && headwindOkOut[i] && terrainOkOut[i]
-        flyableBack[i] = buildingOk[i] && windResOk[i] && crosswindOkBack[i] && headwindOkBack[i] && terrainOkBack[i]
+        flyableOut[i] = legalOk[i] && buildingOk[i] && windResOk[i] && crosswindOkOut[i] && headwindOkOut[i] && terrainOkOut[i]
+        flyableBack[i] = legalOk[i] && buildingOk[i] && windResOk[i] && crosswindOkBack[i] && headwindOkBack[i] && terrainOkBack[i]
     }
 
     minhor = -1
@@ -2181,11 +2512,43 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     }
 
     tofixed=0
-    document.getElementById('heightfore').innerHTML = (minhor===-1) ? '&mdash;' : heights[minhor].toFixed(tofixed)
-    document.getElementById('heightback').innerHTML = (minhorb===-1) ? '&mdash;' : heights[minhorb].toFixed(tofixed)
+    document.getElementById('heightfore').innerHTML = (minhor===-1) ? '&mdash;' : lenNum(heights[minhor])
+    document.getElementById('heightback').innerHTML = (minhorb===-1) ? '&mdash;' : lenNum(heights[minhorb])
+    document.getElementById('unitFore').textContent = lenUnit()
+    document.getElementById('unitBack').textContent = lenUnit()
+
+    // Round-trip battery at the recommended heights.
+    var battReadout = document.getElementById('readoutBatt')
+    var battWarning = document.getElementById('batteryWarning')
+    var battUsed = (minhor !== -1 && minhorb !== -1) ? battOut[minhor] + battBack[minhorb] : NaN
+    if (isFinite(battUsed)){
+        var battLeft = 100 - battUsed
+        document.getElementById('battUsed').textContent = fmtPct(battUsed)
+        document.getElementById('battLeft').textContent = battLeft > 0 ? fmtPct(battLeft) + ' left' : 'not enough'
+        battReadout.classList.toggle('unsafe', battLeft < BATTERY_RESERVE_PCT)
+        battReadout.style.display = ''
+        if (battLeft < BATTERY_RESERVE_PCT){
+            battWarning.innerHTML = '\u26A0\uFE0F This round trip needs about ' + fmtPct(battUsed) + ' of a full battery' +
+                (battLeft > 0 ? ', leaving less than a ' + BATTERY_RESERVE_PCT + '% reserve' : ' \u2014 more than one charge') +
+                '. Shorten the route, lighten the payload, or wait for calmer wind.'
+            battWarning.style.display = 'block'
+        } else {
+            battWarning.style.display = 'none'
+        }
+    } else {
+        battReadout.style.display = 'none'
+        battWarning.style.display = 'none'
+    }
+    var battNote = document.getElementById('batteryNote')
+    if (battNote){
+        battNote.innerHTML = 'Battery figures are estimates from the drone\u2019s rated flight time, payload, climbs and wind (roughly \u00B120%)' +
+            (typeof temperatureC === 'number' && coldCapacityFactor(temperatureC) < 1 ? ', reduced for the cold (' + (unitsImperial ? (temperatureC * 9 / 5 + 32).toFixed(0) + '\u00B0F' : temperatureC.toFixed(0) + '\u00B0C') + ')' : '') +
+            '. Older packs hold less \u2014 set battery health in the drone settings.'
+        battNote.style.display = battModel ? 'block' : 'none'
+    }
     document.getElementById('readoutFore').classList.toggle('unsafe', minhor===-1)
     document.getElementById('readoutBack').classList.toggle('unsafe', minhorb===-1)
-    document.getElementById('distance').innerHTML = routeDist.toFixed(tofixed)
+    document.getElementById('distance').innerHTML = fmtDist(routeDist)
     var detourNote = document.getElementById('detourNote')
     var detourExtra = routeDist - dist
     var totalAvoided = avoidance.buildingsAvoided + avoidance.hazardsAvoided
@@ -2193,19 +2556,24 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         var avoidedParts = []
         if (avoidance.buildingsAvoided > 0) avoidedParts.push(avoidance.buildingsAvoided + ' building' + (avoidance.buildingsAvoided===1?'':'s'))
         if (avoidance.hazardsAvoided > 0) avoidedParts.push(avoidance.hazardsAvoided + ' restricted area' + (avoidance.hazardsAvoided===1?'':'s'))
-        detourNote.textContent = ' (+' + detourExtra.toFixed(0) + 'm detour around ' + avoidedParts.join(' and ') + ')'
+        detourNote.textContent = ' (+' + fmtDist(detourExtra) + ' detour around ' + avoidedParts.join(' and ') + ')'
     } else {
         detourNote.textContent = ''
     }
     document.getElementById('dronedir').innerHTML = outboundHeading.toFixed(tofixed)
     // document.getElementById('windrose').innerHTML = wd[0].toFixed(tofixed)
-    document.getElementById('timenowind').innerHTML = formatDuration(timeupdown[9]+timeupdownback[9]+(routeDist / speedhorizontal)+(routeDist / speedhorizontalback))
-    document.getElementById('ws30').innerHTML = (ws[0]).toFixed(1)
-    document.getElementById('ws80').innerHTML = (ws[5]).toFixed(1)
-    document.getElementById('ws120').innerHTML = (ws[9]).toFixed(1)
-    document.getElementById('gust30').innerHTML = (estgust[0]).toFixed(1)
-    document.getElementById('gust80').innerHTML = (estgust[5]).toFixed(1)
-    document.getElementById('gust120').innerHTML = (estgust[9]).toFixed(1)
+    document.getElementById('ws30').innerHTML = fmtSpeed(ws[0])
+    document.getElementById('alt30').innerHTML = fmtLen(30)
+    document.getElementById('batt30').innerHTML = fmtPct(battOut[0] + battBack[0])
+    document.getElementById('ws80').innerHTML = fmtSpeed(ws[5])
+    document.getElementById('alt80').innerHTML = fmtLen(80)
+    document.getElementById('batt80').innerHTML = fmtPct(battOut[5] + battBack[5])
+    document.getElementById('ws120').innerHTML = fmtSpeed(ws[9])
+    document.getElementById('alt120').innerHTML = fmtLen(120)
+    document.getElementById('batt120').innerHTML = fmtPct(battOut[9] + battBack[9])
+    document.getElementById('gust30').innerHTML = fmtSpeed(estgust[0])
+    document.getElementById('gust80').innerHTML = fmtSpeed(estgust[5])
+    document.getElementById('gust120').innerHTML = fmtSpeed(estgust[9])
     document.getElementById('wd30').innerHTML = (wd[0]).toFixed(0)
     document.getElementById('wd80').innerHTML = (wd[5]).toFixed(0)
     document.getElementById('wd120').innerHTML = (wd[9]).toFixed(0)
@@ -2216,13 +2584,15 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     document.getElementById('timefore120').innerHTML = formatDuration(timeupdown[9]+timehor[9])
     document.getElementById('timeback120').innerHTML = formatDuration(timeupdownback[9]+timehorb[9])
 
-    var unsafeReasonBuilding = "Below the minimum safe height above buildings on this route (min " + minSafeAltitude.toFixed(0) + " m).";
-    var unsafeReasonGust = "Estimated gust here is at or above this drone's rated wind resistance (" + windResistance.toFixed(1) + " m/s).";
+    var unsafeReasonBuilding = "Below the minimum safe height above buildings on this route (min " + fmtLen(minSafeAltitude) + ").";
+    var unsafeReasonGust = "Estimated gust here is at or above this drone's rated wind resistance (" + fmtSpeed(windResistance) + ").";
     var unsafeReasonCrossOut = "The crosswind component here is at or above this drone's outbound speed - it couldn't hold this course.";
     var unsafeReasonCrossBack = "The crosswind component here is at or above this drone's return speed - it couldn't hold this course.";
     var unsafeReasonHead = "The headwind here is at or above this drone's speed for this leg - it would barely move forward, if at all.";
-    var unsafeReasonTerrain = "Holding this height above the terrain would take the drone more than " + MAX_AGL_M + " m above the ground somewhere on this route (the ground drops away faster than it can descend).";
+    var unsafeReasonTerrain = "Holding this height above the terrain would take the drone more than " + fmtLen(MAX_AGL_M) + " above the ground somewhere on this route (the ground drops away faster than it can descend).";
+    var unsafeReasonLegal = "Above the legal height limit here (" + rules.profile.maxAglLabel + " above ground in " + (rules.fallback ? "Israel's rules, used as the default" : rules.profile.country) + "). Tick \"I have authorization to fly higher\" in the drone settings if you have a permit.";
     function cellReason(idx, crosswindOk, crossMsg, headwindOk, terrainOk){
+        if (!legalOk[idx]) return unsafeReasonLegal;
         if (!buildingOk[idx]) return unsafeReasonBuilding;
         if (!windResOk[idx]) return unsafeReasonGust;
         if (!crosswindOk) return crossMsg;
@@ -2245,6 +2615,8 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     markUnsafe('gust80', !windResOk[5], unsafeReasonGust)
     markUnsafe('gust120', !windResOk[9], unsafeReasonGust)
 
+    renderRulesInfo(rules, legalCapM, altPermit)
+
     var terrainInfo = document.getElementById('terrainInfo')
     terrainInfo.classList.remove('warning-hint')
     if (!terrainAvailable){
@@ -2255,12 +2627,12 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         var gMin = Infinity, gMax = -Infinity
         terrainSamples.forEach(function(p){ gMin = Math.min(gMin, p.g); gMax = Math.max(gMax, p.g) })
         var gStart = terrainSamples[0].g, gEnd = terrainSamples[terrainSamples.length - 1].g
-        var terrainText = "Ground along the route: " + gMin.toFixed(0) + "\u2013" + gMax.toFixed(0) + " m above sea level (start " + gStart.toFixed(0) + " m, destination " + gEnd.toFixed(0) + " m). Heights here are above the ground: the drone follows the terrain, staying at least that high above it and never more than " + MAX_AGL_M + " m above it."
+        var terrainText = "Ground along the route: " + fmtLen(gMin) + "\u2013" + fmtLen(gMax) + " above sea level (start " + fmtLen(gStart) + ", destination " + fmtLen(gEnd) + "). Heights here are above the ground: the drone follows the terrain, staying at least that high above it and never more than " + fmtLen(MAX_AGL_M) + " above it."
         if (minhor !== -1){
             var po = profOut[minhor]
             var peakRel = -Infinity
             po.pts.forEach(function(p){ peakRel = Math.max(peakRel, p.alt - gStart) })
-            terrainText += " On the outbound leg it climbs " + po.climbUp.toFixed(0) + " m and descends " + po.climbDown.toFixed(0) + " m in total, peaking about " + peakRel.toFixed(0) + " m above the takeoff point, and is at most " + po.maxAGL.toFixed(0) + " m above the ground."
+            terrainText += " On the outbound leg it climbs " + fmtLen(po.climbUp) + " and descends " + fmtLen(po.climbDown) + " in total, peaking about " + fmtLen(peakRel) + " above the takeoff point, and is at most " + fmtLen(po.maxAGL) + " above the ground."
             renderTerrainProfile(terrainSamples, po, heights[minhor])
         } else {
             renderTerrainProfile(null)
@@ -2280,31 +2652,31 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, but none of them are actually on the direct line, so none affect this route's altitude or path. Buildings are shown in faint orange on the map for reference."
     } else {
         if (maxBuildingHeight > 0){
-            buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, " + onRouteBuildings.length + " of which " + (onRouteBuildings.length===1?'sits':'sit') + " on the direct line &mdash; the tallest one we still climb over is about " + maxBuildingHeight.toFixed(0) + " m, so we won't recommend flying below " + minSafeAltitude.toFixed(0) + " m. Buildings are shown in faint orange on the map for reference."
+            buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, " + onRouteBuildings.length + " of which " + (onRouteBuildings.length===1?'sits':'sit') + " on the direct line &mdash; the tallest one we still climb over is about " + fmtLen(maxBuildingHeight) + ", so we won't recommend flying below " + fmtLen(minSafeAltitude) + ". Buildings are shown in faint orange on the map for reference."
         } else {
             buildingInfo.innerHTML = "Checked " + buildings.count + " building" + (buildings.count===1?'':'s') + " from OpenStreetMap near this route, " + onRouteBuildings.length + " of which " + (onRouteBuildings.length===1?'sits':'sit') + " on the direct line &mdash; none of them need extra height, since the route detours around " + (onRouteBuildings.length===1?'it':'them') + " instead. Buildings are shown in faint orange on the map for reference."
         }
 
         if (avoidedForSimplicity.length > 0){
             var simplicityNote = document.createElement('span')
-            simplicityNote.innerHTML = ' ' + avoidedForSimplicity.length + ' building' + (avoidedForSimplicity.length===1?' is':'s are') + ' directly on the route and could be climbed over, but with only ' + onRouteBuildings.length + ' on the direct line it\'s simpler (and lets you fly lower) to detour sideways around ' + (avoidedForSimplicity.length===1?'it':'them') + " instead, with a " + BUILDING_LATERAL_SAFETY_MARGIN_M + ' m clearance.'
+            simplicityNote.innerHTML = ' ' + avoidedForSimplicity.length + ' building' + (avoidedForSimplicity.length===1?' is':'s are') + ' directly on the route and could be climbed over, but with only ' + onRouteBuildings.length + ' on the direct line it\'s simpler (and lets you fly lower) to detour sideways around ' + (avoidedForSimplicity.length===1?'it':'them') + " instead, with a " + fmtLen(BUILDING_LATERAL_SAFETY_MARGIN_M) + ' clearance.'
             buildingInfo.appendChild(simplicityNote)
         }
 
         if (tooTallOnRoute.length > 0){
             var tallestTooTall = tooTallOnRoute.reduce(function(m, b){ return Math.max(m, b.height); }, 0)
-            var ceilingNote = (effectiveCeilingM < MAX_FLIGHT_ALTITUDE_M)
-                ? (' the ' + effectiveCeilingM.toFixed(0) + ' m ceiling that today\'s wind allows (below the usual ' + MAX_FLIGHT_ALTITUDE_M + ' m limit)')
-                : (' the ' + MAX_FLIGHT_ALTITUDE_M + ' m ceiling')
+            var ceilingNote = (effectiveCeilingM < legalCapM)
+                ? (' the ' + fmtLen(effectiveCeilingM) + ' ceiling that today\'s wind allows (below the ' + fmtLen(legalCapM) + ' height limit)')
+                : (' the ' + fmtLen(legalCapM) + ' height limit')
             var tooTallNote = document.createElement('span')
-            tooTallNote.innerHTML = ' ' + tooTallOnRoute.length + ' building' + (tooTallOnRoute.length===1?' is':'s are') + ' taller than' + ceilingNote + ' (up to about ' + tallestTooTall.toFixed(0) + ' m) \u2014 climbing over ' + (tooTallOnRoute.length===1?'it':'them') + " isn't possible within that limit, so the route is detoured sideways around " + (tooTallOnRoute.length===1?'it':'them') + ' instead, with a ' + BUILDING_LATERAL_SAFETY_MARGIN_M + ' m clearance.'
+            tooTallNote.innerHTML = ' ' + tooTallOnRoute.length + ' building' + (tooTallOnRoute.length===1?' is':'s are') + ' taller than' + ceilingNote + ' (up to about ' + fmtLen(tallestTooTall) + ') \u2014 climbing over ' + (tooTallOnRoute.length===1?'it':'them') + " isn't possible within that limit, so the route is detoured sideways around " + (tooTallOnRoute.length===1?'it':'them') + ' instead, with a ' + fmtLen(BUILDING_LATERAL_SAFETY_MARGIN_M) + ' clearance.'
             buildingInfo.appendChild(tooTallNote)
         }
 
         if (routeLeftCheckedBuildingArea){
             var buildingCorridorWarning = document.createElement('span')
             buildingCorridorWarning.className = 'warning-hint'
-            buildingCorridorWarning.innerHTML = ' Routing around a tall building swings the route about ' + buildingRouteDeviationM.toFixed(0) + ' m from the hazard-avoidance path \u2014 further than the ' + buildingHalfWidthUsed.toFixed(0) + ' m either side that was actually checked for buildings around it, so the recommended height may not account for a taller building further out along that swing.'
+            buildingCorridorWarning.innerHTML = ' Routing around a tall building swings the route about ' + fmtLen(buildingRouteDeviationM) + ' from the hazard-avoidance path \u2014 further than the ' + fmtLen(buildingHalfWidthUsed) + ' either side that was actually checked for buildings around it, so the recommended height may not account for a taller building further out along that swing.'
             buildingInfo.appendChild(buildingCorridorWarning)
         }
     }
@@ -2340,7 +2712,7 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         if (routeLeftCheckedArea){
             var corridorWarning = document.createElement('span')
             corridorWarning.className = 'warning-hint'
-            corridorWarning.innerHTML = ' To dodge these, the route swings about ' + routeDeviationM.toFixed(0) + ' m from the straight line \u2014 further than the ' + hazardHalfWidthUsed.toFixed(0) + ' m either side that was actually checked, so schools/hospitals/etc. further out along that swing may not be accounted for. Double-check that stretch of the route yourself before flying it.'
+            corridorWarning.innerHTML = ' To dodge these, the route swings about ' + fmtLen(routeDeviationM) + ' from the straight line \u2014 further than the ' + fmtLen(hazardHalfWidthUsed) + ' either side that was actually checked, so schools/hospitals/etc. further out along that swing may not be accounted for. Double-check that stretch of the route yourself before flying it.'
             hazardInfo.appendChild(corridorWarning)
         }
     }
@@ -2352,10 +2724,19 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     if (minhor!==-1 && minhorb!==-1){
         flyWarning.style.display = 'none'
 
-        travel120=timeupdown[9]+timeupdownback[9]+timehor[9]+timehorb[9]
+        // Baseline: the highest height that's legal and flyable on both
+        // legs - the "just go high" choice most pilots would make.
+        var baseIdx = -1
+        for (i=0;i<heights.length; i++) if (flyableOut[i] && flyableBack[i]) baseIdx = i
+        travel120 = baseIdx === -1 ? Infinity : timeupdown[baseIdx]+timeupdownback[baseIdx]+timehor[baseIdx]+timehorb[baseIdx]
         travelopt=timeupdown[minhor]+timehor[minhor]+timeupdownback[minhorb]+timehorb[minhorb]
-        // No baseline to compare against if 120 m itself can't be flown.
         savingsText.style.display = isFinite(travel120) ? '' : 'none'
+        if (baseIdx !== -1){
+            document.getElementById('baselineHeight').textContent = fmtLen(heights[baseIdx])
+            var battSave = (battOut[baseIdx] + battBack[baseIdx]) - (battOut[minhor] + battBack[minhorb])
+            document.getElementById('battSaving').textContent = (isFinite(battSave) && battSave >= 0.5) ? ' and about ' + battSave.toFixed(0) + '% of a battery' : ''
+            document.getElementById('timenowind').innerHTML = formatDuration(timeupdown[baseIdx]+timeupdownback[baseIdx]+(routeDist / speedhorizontal)+(routeDist / speedhorizontalback))
+        }
 
         document.getElementById('savesec').innerHTML = formatDuration(travel120-travelopt, 1)
         document.getElementById('totaltime120').innerHTML = formatDuration(travel120)
@@ -2367,15 +2748,15 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         if (minhorb===-1) legs.push('return')
 
         var reasonBits = []
-        if (minSafeAltitude > 120){
-            reasonBits.push("buildings along the route need about " + minSafeAltitude.toFixed(0) + " m of clearance, above the 120 m ceiling we check")
+        if (minSafeAltitude > legalCapM){
+            reasonBits.push("buildings along the route need about " + fmtLen(minSafeAltitude) + " of clearance, above the " + fmtLen(legalCapM) + " height limit")
         }
         var gustBlocksAll = true
         for (i=0;i<heights.length; i++){
             if (windResOk[i]) gustBlocksAll = false
         }
         if (gustBlocksAll){
-            reasonBits.push("estimated gusts meet or beat this drone's " + windResistance.toFixed(1) + " m/s wind resistance at every height we can still check")
+            reasonBits.push("estimated gusts meet or beat this drone's " + fmtSpeed(windResistance) + " wind resistance at every height we can still check")
         }
         var crosswindBlocksOut = true, crosswindBlocksBack = true
         for (i=0;i<heights.length; i++){
@@ -2399,7 +2780,7 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
             if (terrainOkBack[i]) terrainBlocksBack = false
         }
         if ((legs.indexOf('outbound')>-1 && terrainBlocksOut) || (legs.indexOf('return')>-1 && terrainBlocksBack)){
-            reasonBits.push("the terrain changes too steeply to stay between the minimum clearance and " + MAX_AGL_M + " m above ground")
+            reasonBits.push("the terrain changes too steeply to stay between the minimum clearance and " + fmtLen(MAX_AGL_M) + " above ground")
         }
         if (reasonBits.length===0){
             reasonBits.push("no height between 30 and 120 m clears the buildings, the gusts, and the crosswind on this route")
@@ -2430,8 +2811,9 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         if (downloadWpmlBtn) downloadWpmlBtn.style.display = 'none'
     }
 
-    document.getElementById('visibility').innerHTML = (visibility/1000).toFixed(0)
-    document.getElementById('precipitation').innerHTML = precipitation.toFixed(1)
+    document.getElementById('visibility').innerHTML = unitsImperial ? (visibility / MILE_M).toFixed(0) + ' mi' : (visibility/1000).toFixed(0) + ' km'
+    document.getElementById('precipitation').innerHTML = unitsImperial ? (precipitation / 25.4).toFixed(2) + ' in' : precipitation.toFixed(1) + ' mm'
+    document.getElementById('temperature').innerHTML = (typeof temperatureC === 'number') ? (unitsImperial ? (temperatureC * 9 / 5 + 32).toFixed(0) + '\u00B0F' : temperatureC.toFixed(0) + '\u00B0C') : '\u2014'
     document.getElementById('precipitation_probability').innerHTML = precipitation_probability.toFixed(0)
 
     var rainWarning = document.getElementById('rainWarning')
@@ -2451,6 +2833,8 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         {h: 120, wd: wd[9]}
     ]);
 
+    updateUrlForRoute();
+
     // Only learn timings from fully successful lookups.
     Progress.finish(hazardData !== null && buildingData !== null && terrainAvailable);
     return;
@@ -2464,13 +2848,28 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
 
 const map = L.map('map').setView([40.375540905462294, -74.601920573035], 14);
 
-const tiles = L.tileLayer('https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}',{
-maxZoom: 20,
-attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'        ,
-subdomains:['mt0','mt1','mt2','mt3']
-}).addTo(map);
-
-map.attributionControl.setPrefix('Google map image') //remove flag
+// Base maps: Esri World Imagery (satellite) with Esri's place-name
+// overlay by default, or the standard OpenStreetMap map. The old
+// direct Google tile URL wasn't a licensed way to use Google's tiles.
+// OpenStreetMap is credited in every view because the buildings,
+// restricted areas and place search all come from its data (ODbL).
+var OSM_DATA_CREDIT = 'Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
+var satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 19,
+  attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+});
+var satelliteLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 19,
+  attribution: 'Labels &copy; Esri'
+});
+var satelliteGroup = L.layerGroup([satelliteLayer, satelliteLabels]);
+var streetLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap'
+});
+satelliteGroup.addTo(map);
+L.control.layers({ 'Satellite': satelliteGroup, 'Map': streetLayer }, null, { position: 'topright' }).addTo(map);
+map.attributionControl.setPrefix(OSM_DATA_CREDIT);
 
 // Buildings, hazard zones (schools/kindergartens/hospitals/playgrounds)
 // and the route around them. Cleared and redrawn on every calculation
@@ -2503,7 +2902,7 @@ function renderHazardsAndRoute(hazards, buildings, path){
       weight: 1.5,
       fillColor: '#f2994a',
       fillOpacity: 0.16
-    }).bindTooltip('Building \u2014 ~' + b.height.toFixed(0) + 'm tall').addTo(buildingLayer);
+    }).bindTooltip('Building \u2014 ~' + fmtLen(b.height) + ' tall').addTo(buildingLayer);
   }
   routeLine.setLatLngs(path.map(function(p){ return [p.lat, p.lng]; }));
 }
@@ -2733,3 +3132,180 @@ async function downloadWPML(){
     window.alert("Couldn't build the flight-plan file - please try again.");
   }
 }
+
+// ---------------------------------------------------------------
+// Shareable routes & remembered settings
+//
+// Every successful calculation writes the route into the address bar
+// (?from=lat,lng&to=lat,lng&drone=...), so copying the URL - or the
+// "Share this route" button - reproduces it exactly. Opening such a
+// link places both markers, loads the drone settings and runs the
+// calculation straight away.
+//
+// Separately, the drone settings and the last start point are kept in
+// localStorage, so a returning visitor lands where they left off
+// (unless they arrived through a shared link, which always wins).
+// ---------------------------------------------------------------
+var SETTINGS_KEY = 'flytimizerSettings';
+var LAST_PLACE_KEY = 'flytimizerLastPlace';
+var SETTING_FIELDS = ['hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
+
+function storageGet(key){
+  try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e){ return null; }
+}
+function storageSet(key, value){
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e){}
+}
+
+function readSettings(){
+  var out = { drone: document.getElementById('droneModel').value };
+  SETTING_FIELDS.forEach(function(id){ out[id] = document.getElementById(id).value; });
+  return out;
+}
+
+function applySettings(st){
+  if (!st) return;
+  var sel = document.getElementById('droneModel');
+  var isPreset = st.drone && Object.prototype.hasOwnProperty.call(DRONE_PRESETS, st.drone);
+  if (isPreset || st.drone === 'custom') sel.value = st.drone;
+  if (isPreset) applyDronePreset(); // load the preset's own numbers first
+  SETTING_FIELDS.forEach(function(id){
+    var v = st[id];
+    if (v === undefined || v === null || v === '' || isNaN(parseFloat(v))) return;
+    // For a preset only the payload/drag fields are personal; the
+    // speeds come from the preset itself.
+    if (isPreset && PRESET_FIELDS.indexOf(id) !== -1) return;
+    document.getElementById(id).value = v;
+  });
+  updateDroneSummary();
+}
+
+function saveSettings(){
+  storageSet(SETTINGS_KEY, readSettings());
+}
+
+function rememberStartPoint(lat, lng){
+  storageSet(LAST_PLACE_KEY, { lat: lat, lng: lng });
+}
+
+// Places (or moves) the destination marker - the programmatic twin
+// of the second map click in addMarker().
+function setDestination(lat, lng){
+  if (marker === 0) return;
+  if (marker === 1){
+    marker = 2;
+    marker2 = new L.marker([lat, lng], { draggable: true, autoPan: true }).addTo(map);
+    marker2.bindTooltip('Destination');
+    marker2.on('dragend', function(){ markerLocation(2, marker2); });
+  } else {
+    marker2.setLatLng([lat, lng]);
+  }
+  markerLocation(2, marker2);
+}
+
+function routeUrl(){
+  var params = new URLSearchParams();
+  if (marker >= 1) params.set('from', lat1.toFixed(5) + ',' + lng1.toFixed(5));
+  if (marker === 2) params.set('to', lat2.toFixed(5) + ',' + lng2.toFixed(5));
+  var st = readSettings();
+  params.set('drone', st.drone);
+  SETTING_FIELDS.forEach(function(id){
+    var speedField = PRESET_FIELDS.indexOf(id) !== -1;
+    if (st.drone === 'custom' || !speedField) params.set(id, st[id]);
+  });
+  return location.origin + location.pathname + '?' + params.toString().replace(/%2C/g, ',');
+}
+
+function updateUrlForRoute(){
+  try { history.replaceState(null, '', routeUrl()); } catch (e){}
+}
+
+async function shareRoute(){
+  var url = routeUrl();
+  var btn = document.getElementById('shareRouteBtn');
+  if (navigator.share){
+    try {
+      await navigator.share({ title: 'Flytimizer route', text: 'Optimal drone altitude for this route, with live wind and terrain:', url: url });
+      return;
+    } catch (e){
+      if (e && e.name === 'AbortError') return; // person closed the share sheet
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    if (btn){
+      var label = btn.textContent;
+      btn.textContent = 'Link copied ✓';
+      setTimeout(function(){ btn.textContent = label; }, 2000);
+    }
+  } catch (e){
+    window.prompt('Copy this link to share the route:', url);
+  }
+}
+
+function parseLatLngParam(v){
+  if (!v) return null;
+  var parts = v.split(',').map(parseFloat);
+  if (parts.length !== 2 || parts.some(isNaN)) return null;
+  if (Math.abs(parts[0]) > 90 || Math.abs(parts[1]) > 180) return null;
+  return { lat: parts[0], lng: parts[1] };
+}
+
+// Returns 'route' when the URL carried a full route (so it should be
+// calculated right away), 'start' for a start point only, or null.
+function restoreFromUrl(){
+  var params = new URLSearchParams(location.search);
+  var from = parseLatLngParam(params.get('from'));
+  if (!from) return null;
+  var st = { drone: params.get('drone') };
+  SETTING_FIELDS.forEach(function(id){ if (params.has(id)) st[id] = params.get(id); });
+  applySettings(st);
+  setstartloc(from.lat, from.lng);
+  var to = parseLatLngParam(params.get('to'));
+  if (to){
+    setDestination(to.lat, to.lng);
+    map.fitBounds([[from.lat, from.lng], [to.lat, to.lng]], { padding: [40, 40], maxZoom: 16 });
+    return 'route';
+  }
+  map.setView([from.lat, from.lng], 14);
+  return 'start';
+}
+
+(function initSharedState(){
+  var restored = restoreFromUrl();
+  if (!restored){
+    applySettings(storageGet(SETTINGS_KEY));
+    var last = storageGet(LAST_PLACE_KEY);
+    if (last && typeof last.lat === 'number' && typeof last.lng === 'number'){
+      map.setView([last.lat, last.lng], 14);
+    }
+  }
+
+  var permitEl = document.getElementById('altPermit');
+  if (permitEl){
+    permitEl.checked = storageGet('flytimizerAltPermit') === true;
+    permitEl.addEventListener('change', function(){ storageSet('flytimizerAltPermit', permitEl.checked); });
+  }
+
+  var unitsEl = document.getElementById('unitsSelect');
+  if (unitsEl){
+    var savedUnits = storageGet(UNITS_KEY);
+    if (savedUnits === 'metric' || savedUnits === 'imperial') unitsEl.value = savedUnits;
+    unitsEl.addEventListener('change', function(){
+      storageSet(UNITS_KEY, unitsEl.value);
+      // Re-run so every number re-renders (lookups come from cache).
+      if (marker > 0 && document.getElementById('result').style.display === 'block' && typeof getHeight === 'function') getHeight();
+    });
+  }
+
+  document.getElementById('droneModel').addEventListener('change', saveSettings);
+  SETTING_FIELDS.forEach(function(id){
+    document.getElementById(id).addEventListener('input', saveSettings);
+  });
+
+  if (restored === 'route'){
+    window.addEventListener('load', function(){
+      if (typeof getHeight === 'function') getHeight();
+    });
+  }
+})();
