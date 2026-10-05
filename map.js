@@ -571,49 +571,277 @@ function polygonToStr(polygon){
   return polygon.map(function(p){ return p.lat + ' ' + p.lng; }).join(' ');
 }
 
-// One Overpass call for both building heights and hazard zones, each
-// with its own (differently sized) corridor, tags + center only - no
-// full geometries - so the download stays small and quick even when
-// the route is long.
-// overpass-api.de (the main public instance) can be slow when the
-// query area is large - since we now widen the search corridor for
-// longer routes, that made 504s from the frontend proxy more common.
-// [timeout:N] below asks Overpass itself for a bigger execution
-// budget, OVERPASS_FETCH_TIMEOUT_MS gives the fetch a little more
-// headroom than that so we don't cut it off first, and a second
-// public mirror is tried if the first one fails or times out.
+// ---------------------------------------------------------------
+// Overpass access
+//
+// Public Overpass servers are often overloaded, so every lookup goes
+// through fetchOverpass(), which:
+//  - tries several public mirrors in turn, starting with whichever
+//    one answered last time (overpass.kumi.systems, used before, is
+//    no longer listed as a public instance);
+//  - retries the same server once after a short pause when it says
+//    it's temporarily overloaded (503/504), but moves straight on to
+//    the next mirror on 429 (rate limited) or a network error;
+//  - treats Overpass's own "runtime error" remark as a failure. On a
+//    server-side timeout Overpass still answers HTTP 200, just with a
+//    remark and partial (often empty) data - taken at face value that
+//    reads as "no hazards on this route", which is the worst possible
+//    silent failure for a safety check;
+//  - caches successful answers per exact query, so "Try again" after
+//    a partial failure only re-downloads the part that failed.
+// ---------------------------------------------------------------
 var OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter'
+  'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
 ];
-var OVERPASS_QUERY_TIMEOUT_S = 45;
-var OVERPASS_FETCH_TIMEOUT_MS = (OVERPASS_QUERY_TIMEOUT_S + 15) * 1000;
+var OVERPASS_QUERY_TIMEOUT_S = 40;
+var OVERPASS_FETCH_TIMEOUT_MS = (OVERPASS_QUERY_TIMEOUT_S + 10) * 1000;
+var OVERPASS_RETRY_DELAY_MS = 2000;
+var OVERPASS_CACHE_MAX = 20;
+var overpassCache = new Map();
+var overpassPreferred = 0;
+
+function sleep(ms){
+  return new Promise(function(resolve){ setTimeout(resolve, ms); });
+}
+
+function overpassHost(url){
+  return url.split('/')[2];
+}
+
+async function overpassAttempt(url, query){
+  var controller = new AbortController();
+  var timer = setTimeout(function(){ controller.abort(); }, OVERPASS_FETCH_TIMEOUT_MS);
+  try {
+    var response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'data=' + encodeURIComponent(query),
+      signal: controller.signal
+    });
+    if (!response.ok){
+      var httpErr = new Error('Overpass HTTP ' + response.status + ' from ' + overpassHost(url));
+      httpErr.status = response.status;
+      throw httpErr;
+    }
+    var data = await response.json();
+    if (data.remark && /runtime error|timed out|out of memory/i.test(data.remark)){
+      var remarkErr = new Error('Overpass error from ' + overpassHost(url) + ': ' + data.remark);
+      remarkErr.status = 'remark';
+      throw remarkErr;
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function fetchOverpass(query){
+  if (overpassCache.has(query)) return overpassCache.get(query);
+
   var lastErr = null;
-  for (var i = 0; i < OVERPASS_ENDPOINTS.length; i++){
-    var controller = new AbortController();
-    var timer = setTimeout(function(){ controller.abort(); }, OVERPASS_FETCH_TIMEOUT_MS);
-    try {
-      var response = await fetch(OVERPASS_ENDPOINTS[i], {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query),
-        signal: controller.signal
-      });
-      clearTimeout(timer);
-      if (!response.ok){
-        lastErr = new Error('Overpass request failed: ' + response.status);
-        continue; // try the next mirror
+  for (var k = 0; k < OVERPASS_ENDPOINTS.length; k++){
+    var idx = (overpassPreferred + k) % OVERPASS_ENDPOINTS.length;
+    var url = OVERPASS_ENDPOINTS[idx];
+    for (var attempt = 0; attempt < 2; attempt++){
+      if (k > 0 || attempt > 0){
+        Progress.retrying('Map server busy — trying ' + (attempt > 0 ? 'again' : 'a backup server') + ' (' + overpassHost(url) + ')…');
       }
-      return await response.json();
-    } catch (err){
-      clearTimeout(timer);
-      lastErr = err; // network error or our own abort - try the next mirror
+      try {
+        var data = await overpassAttempt(url, query);
+        overpassPreferred = idx;
+        overpassCache.set(query, data);
+        if (overpassCache.size > OVERPASS_CACHE_MAX){
+          overpassCache.delete(overpassCache.keys().next().value);
+        }
+        return data;
+      } catch (err){
+        console.warn(err);
+        lastErr = err;
+        var transient = err.status === 503 || err.status === 504;
+        if (transient && attempt === 0){
+          await sleep(OVERPASS_RETRY_DELAY_MS);
+          continue;
+        }
+        break; // next mirror
+      }
     }
   }
   throw lastErr || new Error('Overpass request failed');
 }
+
+// Lat/lng bounding box of a polygon, as {s, w, n, e}.
+function polygonBBox(poly){
+  var bb = { s: Infinity, w: Infinity, n: -Infinity, e: -Infinity };
+  poly.forEach(function(p){
+    bb.s = Math.min(bb.s, p.lat); bb.n = Math.max(bb.n, p.lat);
+    bb.w = Math.min(bb.w, p.lng); bb.e = Math.max(bb.e, p.lng);
+  });
+  return bb;
+}
+
+function bboxAreaKm2(bb){
+  var wKm = (bb.e - bb.w) * 111.32 * Math.cos(deg2rad((bb.s + bb.n) / 2));
+  var hKm = (bb.n - bb.s) * 110.54;
+  return Math.abs(wKm * hKm);
+}
+
+// ---------------------------------------------------------------
+// Progress bar
+//
+// Each calculation is split into stages with an estimated duration
+// (restricted areas, buildings, the calculation itself). The bar
+// moves steadily through a stage's estimate, then slows to a crawl
+// instead of stopping or jumping to 100%, so it never claims to be
+// done before it is. After every successful run, the real duration
+// of each stage is compared to its estimate and a per-stage
+// correction factor is kept in localStorage, so estimates adapt to
+// how fast the map servers actually are for this person.
+// ---------------------------------------------------------------
+var PROGRESS_FACTORS_KEY = 'flytimizerTimingFactors';
+
+function loadTimingFactors(){
+  try {
+    var raw = localStorage.getItem(PROGRESS_FACTORS_KEY);
+    return raw ? (JSON.parse(raw) || {}) : {};
+  } catch (e){ return {}; }
+}
+
+function saveTimingFactors(f){
+  try { localStorage.setItem(PROGRESS_FACTORS_KEY, JSON.stringify(f)); } catch (e){}
+}
+
+// Rough first guess, in seconds, before any learning: restricted areas
+// scale with the area of the box we query, buildings with the area of
+// the corridor around the route (buildings are far more numerous).
+function estimateLookupSeconds(lat1, lng1, lat2, lng2, bearingDeg){
+  var distM = getDistanceFromLatLon(lat1, lng1, lat2, lng2);
+  var hazHalf = corridorHalfWidth(distM, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_CORRIDOR_MAX_HALF_WIDTH_M, HAZARD_CORRIDOR_DISTANCE_FRACTION);
+  var hazAreaKm2 = bboxAreaKm2(polygonBBox(routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, hazHalf)));
+  var bldHalf = corridorHalfWidth(distM, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_CORRIDOR_MAX_HALF_WIDTH_M, BUILDING_CORRIDOR_DISTANCE_FRACTION);
+  var bldAreaKm2 = (2 * bldHalf * Math.max(distM, 2 * bldHalf)) / 1e6;
+  return {
+    hazards: Math.min(45, 1.5 + 0.6 * hazAreaKm2),
+    buildings: Math.min(60, 1.5 + 3 * bldAreaKm2)
+  };
+}
+
+var Progress = {
+  active: false,
+  stages: [],
+  idx: -1,
+  stageStart: 0,
+  frac: 0,
+  timer: null,
+  factors: {},
+
+  el: function(id){ return document.getElementById(id); },
+
+  start: function(stages){
+    this.factors = loadTimingFactors();
+    var self = this;
+    this.stages = stages.map(function(st){
+      var f = self.factors[st.key] || 1;
+      return { key: st.key, label: st.label, rawEst: st.est, est: Math.max(0.3, st.est * f), actual: null, retried: false };
+    });
+    this.idx = -1;
+    this.frac = 0;
+    this.active = true;
+    var box = this.el('calcProgress');
+    if (box) box.hidden = false;
+    clearInterval(this.timer);
+    this.timer = setInterval(function(){ self.render(); }, 200);
+  },
+
+  stage: function(key){
+    if (!this.active) return;
+    var now = performance.now();
+    if (this.idx >= 0 && this.stages[this.idx].actual === null){
+      this.stages[this.idx].actual = (now - this.stageStart) / 1000;
+    }
+    for (var i = 0; i < this.stages.length; i++){
+      if (this.stages[i].key === key){ this.idx = i; break; }
+    }
+    this.stageStart = now;
+    this.note = null;
+    this.render();
+  },
+
+  // A retry restarts the current stage's clock (the new server needs
+  // its own full estimate) and swaps in an explanatory label. The
+  // bar itself never moves backwards.
+  retrying: function(text){
+    if (!this.active || this.idx < 0) return;
+    this.stages[this.idx].retried = true;
+    this.stageStart = performance.now();
+    this.note = text;
+    this.render();
+  },
+
+  render: function(){
+    if (!this.active || this.idx < 0) return;
+    var total = 0, before = 0, after = 0;
+    for (var i = 0; i < this.stages.length; i++){
+      total += this.stages[i].est;
+      if (i < this.idx) before += this.stages[i].est;
+      if (i > this.idx) after += this.stages[i].est;
+    }
+    var cur = this.stages[this.idx];
+    var elapsed = (performance.now() - this.stageStart) / 1000;
+    var f = elapsed < cur.est
+      ? 0.9 * elapsed / cur.est
+      : 0.9 + 0.09 * (1 - Math.exp(-(elapsed - cur.est) / cur.est));
+    this.frac = Math.max(this.frac, Math.min(0.99, (before + f * cur.est) / total));
+
+    var remaining = Math.max(cur.est - elapsed, 0) + after;
+    var eta;
+    if (elapsed > cur.est * 1.3) eta = 'taking longer than usual…';
+    else if (remaining >= 1.5) eta = '~' + Math.ceil(remaining) + ' s left';
+    else eta = 'almost done…';
+
+    var fill = this.el('progressFill');
+    var track = this.el('progressTrack');
+    var label = this.el('progressLabel');
+    var etaEl = this.el('progressEta');
+    var pct = Math.round(this.frac * 100);
+    if (fill) fill.style.width = pct + '%';
+    if (track) track.setAttribute('aria-valuenow', pct);
+    if (label) label.textContent = this.note || cur.label;
+    if (etaEl) etaEl.textContent = eta;
+  },
+
+  // success=true learns from this run's timings; either way the bar
+  // completes and hides. Safe to call more than once.
+  finish: function(success){
+    if (!this.active) return;
+    var now = performance.now();
+    if (this.idx >= 0 && this.stages[this.idx].actual === null){
+      this.stages[this.idx].actual = (now - this.stageStart) / 1000;
+    }
+    if (success){
+      var factors = this.factors;
+      this.stages.forEach(function(st){
+        // Runs that hit a retry, or came from cache (near-instant),
+        // say nothing about normal server speed - skip them.
+        if (st.actual === null || st.retried || st.actual < 0.15 || st.rawEst <= 0) return;
+        var ratio = Math.min(5, Math.max(0.2, st.actual / st.rawEst));
+        var old = factors[st.key] || 1;
+        factors[st.key] = 0.7 * old + 0.3 * ratio;
+      });
+      saveTimingFactors(factors);
+    }
+    this.active = false;
+    clearInterval(this.timer);
+    var fill = this.el('progressFill');
+    if (fill) fill.style.width = '100%';
+    var box = this.el('calcProgress');
+    setTimeout(function(){
+      if (box && !Progress.active) box.hidden = true;
+      if (fill && !Progress.active) fill.style.width = '0%';
+    }, 400);
+  }
+};
 
 // Hazard zones (schools/kindergartens/hospitals/playgrounds) near the
 // straight start->destination line. These are looked up first,
@@ -623,29 +851,23 @@ async function fetchOverpass(query){
 async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg){
   var distM = getDistanceFromLatLon(lat1, lng1, lat2, lng2);
   var hazardHalfWidth = corridorHalfWidth(distM, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_CORRIDOR_MAX_HALF_WIDTH_M, HAZARD_CORRIDOR_DISTANCE_FRACTION);
-  var hazardPoly = polygonToStr(routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, hazardHalfWidth));
+  // One global bounding box for the whole query (Overpass resolves a
+  // bbox from its spatial index, far cheaper than evaluating the same
+  // polygon filter in ~20 separate statements), then trimmed back to
+  // the corridor below.
+  var hazardCorridor = routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, hazardHalfWidth);
+  var bb = polygonBBox(hazardCorridor);
+  var bboxStr = bb.s + ',' + bb.w + ',' + bb.n + ',' + bb.e;
 
-  var query = '[out:json][timeout:' + OVERPASS_QUERY_TIMEOUT_S + '];(' +
-    'node["amenity"~"^(school|kindergarten|hospital|university|college|prison)$"](poly:"' + hazardPoly + '");' +
-    'way["amenity"~"^(school|kindergarten|hospital|university|college|prison)$"](poly:"' + hazardPoly + '");' +
-    'relation["amenity"~"^(school|kindergarten|hospital|university|college|prison)$"](poly:"' + hazardPoly + '");' +
-    'node["leisure"="playground"](poly:"' + hazardPoly + '");' +
-    'way["leisure"="playground"](poly:"' + hazardPoly + '");' +
-    'node["social_facility"="nursing_home"](poly:"' + hazardPoly + '");' +
-    'way["social_facility"="nursing_home"](poly:"' + hazardPoly + '");' +
-    'node["power"~"^(substation|plant)$"](poly:"' + hazardPoly + '");' +
-    'way["power"~"^(substation|plant)$"](poly:"' + hazardPoly + '");' +
-    'relation["power"~"^(substation|plant)$"](poly:"' + hazardPoly + '");' +
-    'node["aeroway"~"^(aerodrome|heliport)$"](poly:"' + hazardPoly + '");' +
-    'way["aeroway"~"^(aerodrome|heliport)$"](poly:"' + hazardPoly + '");' +
-    'relation["aeroway"~"^(aerodrome|heliport)$"](poly:"' + hazardPoly + '");' +
-    'node["diplomatic"="embassy"](poly:"' + hazardPoly + '");' +
-    'way["diplomatic"="embassy"](poly:"' + hazardPoly + '");' +
-    'node["military"](poly:"' + hazardPoly + '");' +
-    'way["military"](poly:"' + hazardPoly + '");' +
-    'relation["military"](poly:"' + hazardPoly + '");' +
-    'way["landuse"="military"](poly:"' + hazardPoly + '");' +
-    'relation["landuse"="military"](poly:"' + hazardPoly + '");' +
+  var query = '[out:json][timeout:' + OVERPASS_QUERY_TIMEOUT_S + '][bbox:' + bboxStr + '];(' +
+    'nwr["amenity"~"^(school|kindergarten|hospital|university|college|prison|nursing_home)$"];' +
+    'nwr["leisure"="playground"];' +
+    'nwr["social_facility"="nursing_home"];' +
+    'nwr["power"~"^(substation|plant)$"];' +
+    'nwr["aeroway"~"^(aerodrome|heliport)$"];' +
+    'nwr["diplomatic"="embassy"];' +
+    'nwr["military"];' +
+    'nwr["landuse"="military"];' +
     ');out geom;';
 
   var data = await fetchOverpass(query);
@@ -688,6 +910,13 @@ async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg){
       }
     }
   }
+
+  // The bbox is wider than the corridor on diagonal routes; drop
+  // sites whose clearance zone doesn't reach into the corridor at all.
+  var straightLine = [{ lat: lat1, lng: lng1 }, { lat: lat2, lng: lng2 }];
+  hazards = hazards.filter(function(h){
+    return minDistanceFromPath(straightLine, h.lat, h.lng) <= hazardHalfWidth + h.clearance;
+  });
 
   return { hazards: hazards, hazardHalfWidthUsed: hazardHalfWidth };
 }
@@ -1240,6 +1469,14 @@ async function calcHeight() {
     var outboundHeading = (dronedegrees + 180) % 360;
     dist=getDistanceFromLatLon(startlat,startlng,destlat, destlng);
 
+    var lookupEst = estimateLookupSeconds(startlat, startlng, destlat, destlng, dronedegrees);
+    Progress.start([
+      { key: 'hazards', label: 'Checking restricted areas (schools, airports…)', est: lookupEst.hazards },
+      { key: 'buildings', label: 'Checking buildings along the route', est: lookupEst.buildings },
+      { key: 'compute', label: 'Calculating optimal heights', est: 0.5 }
+    ]);
+    Progress.stage('hazards');
+
     // Wind and hazards can be looked up together - hazards only need
     // the straight start->destination line. Buildings come later,
     // once we know the hazard-avoidance path, so a route that swings
@@ -1261,6 +1498,7 @@ async function calcHeight() {
     var avoidance = computeAvoidanceRoute(startlat, startlng, destlat, destlng, hazardObstacles);
 
     const straightDistM = getDistanceFromLatLon(startlat, startlng, destlat, destlng);
+    Progress.stage('buildings');
     const buildingPromise = getBuildingsNearPath(avoidance.path, straightDistM)
         .catch(function(err){ console.warn('Building lookup failed:', err); return null; });
 
@@ -1269,6 +1507,7 @@ async function calcHeight() {
     const buildings = buildingData ? buildingData.buildings : null;
     const buildingList = buildings ? buildings.list : [];
     const buildingHalfWidthUsed = buildingData ? buildingData.buildingHalfWidthUsed : BUILDING_CORRIDOR_HALF_WIDTH_M;
+    Progress.stage('compute');
 
     const d = new Date();
     let hour = hourIndexNow(json.hourly.time);
@@ -1577,7 +1816,7 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     var buildingInfo = document.getElementById('buildingInfo')
     buildingInfo.classList.remove('warning-hint')
     if (buildings === null){
-        buildingInfo.innerHTML = "Couldn't load building data from OpenStreetMap for this route, so only wind is being checked right now &mdash; heights below 30 m above nearby buildings might not actually be safe."
+        buildingInfo.innerHTML = "Couldn't load building data from OpenStreetMap for this route, so only wind is being checked right now &mdash; heights below 30 m above nearby buildings might not actually be safe. <button class=\"btn btn-ghost btn-inline\" onclick=\"getHeight()\">Try again</button>"
         buildingInfo.classList.add('warning-hint')
     } else if (buildings.count === 0){
         buildingInfo.innerHTML = "No buildings found near this route in OpenStreetMap, so no extra height is needed for obstacle clearance."
@@ -1618,7 +1857,7 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     var hazardInfo = document.getElementById('hazardInfo')
     hazardInfo.classList.remove('warning-hint')
     if (hazardData === null){
-        hazardInfo.innerHTML = "Couldn't load restricted-area data from OpenStreetMap, so schools, hospitals, power infrastructure, airports and other restricted sites along this route aren't being checked right now."
+        hazardInfo.innerHTML = "Couldn't load restricted-area data from OpenStreetMap, so schools, hospitals, power infrastructure, airports and other restricted sites along this route aren't being checked right now. The map servers may be busy - trying again in a minute usually works. <button class=\"btn btn-ghost btn-inline\" onclick=\"getHeight()\">Try again</button>"
         hazardInfo.classList.add('warning-hint')
     } else if (hazards.length === 0){
         hazardInfo.innerHTML = "No schools, hospitals, power infrastructure, airports or other restricted sites found near this route in OpenStreetMap."
@@ -1745,6 +1984,8 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         {h: 120, wd: wd[9]}
     ]);
 
+    // Only learn timings from fully successful lookups.
+    Progress.finish(hazardData !== null && buildingData !== null);
     return;
 }
 
