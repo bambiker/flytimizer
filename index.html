@@ -508,6 +508,153 @@ details.panel + details.panel{
 #heightfore{ color: var(--accent); }
 #heightback{ color: var(--accent-2); }
 
+.mission-grid{
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 520px){
+  .mission-grid{ grid-template-columns: 1fr; }
+}
+
+.wpml-buttons{ display: contents; }
+
+/* ---------- 48-hour outlook ---------- */
+
+.forecast{
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 12px 6px;
+  margin-bottom: 16px;
+}
+
+.forecast-head{
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.forecast-head strong{ font-weight: 600; }
+
+.forecast-legend{
+  display: flex;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.forecast-legend span:first-child{ flex-basis: 100%; }
+
+.forecast-legend i{
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+.fc-bars{
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 64px;
+  padding-bottom: 16px;
+}
+
+.fc-bar{
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-end;
+}
+
+.fc-fill{
+  display: block;
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+}
+
+.fc-good .fc-fill{ background: var(--accent-2); }
+.fc-fair .fc-fill{ background: #d9a400; }
+.fc-bad .fc-fill{ background: var(--danger); }
+.fc-bar:hover .fc-fill{ opacity: 0.75; }
+
+.fc-selected::after{
+  content: "";
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: 0;
+  bottom: 0;
+  border: 1.5px solid var(--ink);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.fc-tick{
+  position: absolute;
+  bottom: -15px;
+  left: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.plan-tabs{
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.plan-tab{
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 12px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--sans);
+}
+
+.plan-tab:hover{ border-color: var(--accent-2); }
+
+.plan-tab.active{
+  border-color: var(--accent);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.plan-title{
+  display: block;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.plan-detail{
+  display: block;
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
 .readout-sub{
   display: block;
   font-family: var(--mono);
@@ -745,6 +892,25 @@ details.panel + details.panel{
     </div>
   </section>
 
+  <section class="panel">
+    <div class="mission-grid">
+      <label class="field">
+        Mission
+        <div class="field-input">
+          <select id="mission" onchange="onMissionChange()">
+            <option value="delivery">Delivery — land or drop at the destination</option>
+            <option value="photo">Photo / inspection — there and back</option>
+          </select>
+        </div>
+      </label>
+      <label class="field">
+        Time at destination
+        <div class="field-input"><input type="text" id="dwell" value="30"><span class="unit">s</span></div>
+      </label>
+    </div>
+    <p class="field-note" id="missionNote"></p>
+  </section>
+
   <details class="panel" id="droneConfigPanel">
       <summary>Drone: <span id="droneSummaryName">DJI Neo 2</span></summary>
       <div class="disclosure-body">
@@ -800,10 +966,10 @@ details.panel + details.panel{
           <div class="field-input"><input type="text" id="drag" value="1.0"><span class="unit">&nbsp;</span></div>
         </label>
         <label class="field">
-          Payload coefficient (outbound)
+          <span id="payloadLabel">Payload coefficient (outbound)</span>
           <div class="field-input"><input type="text" id="payload" value="2"><span class="unit">&times;</span></div>
         </label>
-        <label class="field">
+        <label class="field" id="payloadBackField">
           Payload coefficient (return)
           <div class="field-input"><input type="text" id="payloadback" value="1"><span class="unit">&times;</span></div>
         </label>
@@ -921,14 +1087,36 @@ details.panel + details.panel{
     <div class="fly-warning" id="rainWarning" style="display:none"></div>
     <div class="fly-warning" id="batteryWarning" style="display:none"></div>
 
+    <div class="forecast">
+      <div class="forecast-head">
+        <strong id="forecastSelected">Planning for now</strong>
+        <button class="btn btn-ghost btn-inline" id="forecastNowBtn" style="display:none" onclick="setForecastOffset(0)">Back to now</button>
+      </div>
+      <div id="forecastStrip"></div>
+      <div class="forecast-legend">
+        <span>Next 48 h &middot; bar = wind at 80m</span>
+        <span><i style="background:var(--accent-2)"></i>good</span>
+        <span><i style="background:#d9a400"></i>marginal</span>
+        <span><i style="background:var(--danger)"></i>not recommended</span>
+      </div>
+    </div>
+
+    <div class="plan-tabs" id="planTabs" role="tablist" aria-label="Route plan" style="display:none">
+      <button class="plan-tab active" id="planFastBtn" role="tab" aria-selected="true" onclick="selectPlan('fast')"><span class="plan-title">Fastest</span></button>
+      <button class="plan-tab" id="planEcoBtn" role="tab" aria-selected="false" onclick="selectPlan('eco')"><span class="plan-title">Least battery</span></button>
+    </div>
+    <p class="hint" id="planNote" style="display:none; margin-bottom:12px"></p>
+
     <div class="result-headline">
       <div class="readout" id="readoutFore">
         <span class="readout-label">Outbound height above ground</span>
         <span class="readout-value"><span id="heightfore"></span><small id="unitFore">m</small></span>
+        <span class="readout-sub" id="styleFore"></span>
       </div>
       <div class="readout" id="readoutBack">
         <span class="readout-label">Return height above ground</span>
         <span class="readout-value"><span id="heightback"></span><small id="unitBack">m</small></span>
+        <span class="readout-sub" id="styleBack"></span>
       </div>
       <div class="readout" id="readoutBatt" style="display:none">
         <span class="readout-label">Battery, round trip</span>
@@ -939,7 +1127,7 @@ details.panel + details.panel{
 
     <div class="result-actions">
       <button class="btn btn-ghost" id="shareRouteBtn" onclick="shareRoute()">Share this route</button>
-      <button class="btn btn-ghost" id="downloadWpmlBtn" style="display:none" onclick="downloadWPML()">Download flight plan (WPML)</button>
+      <span class="wpml-buttons" id="wpmlButtons"></span>
     </div>
 
     <p class="savings" id="savingsText">Flying the optimal heights saves
@@ -999,6 +1187,16 @@ details.panel + details.panel{
     <div class="disclosure-body">
       <p class="changelog-date">5 Oct 2026</p>
       <ul>
+        <li>48-hour outlook: see the wind and rain for every hour ahead
+        and tap an hour to plan the route for that time.</li>
+        <li>Mission types: <b>Delivery</b> (land or drop at the
+        destination, lighter on the way back, one flight plan each way)
+        and <b>Photo / inspection</b> (stay airborne at the destination,
+        same weight both ways, one round-trip flight plan), each with a
+        time at the destination.</li>
+        <li>Two plans for every route: <b>Fastest</b>, and <b>Least
+        battery</b>, which can hold its altitude over rolling terrain
+        instead of following every hill, to avoid costly climbs.</li>
         <li>Battery estimate: round-trip battery use for the recommended
         heights (and every row of the table), from each drone's rated
         flight time, payload, climbs, wind and temperature &mdash; with
