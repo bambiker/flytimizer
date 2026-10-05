@@ -2,8 +2,39 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Flytimizer</title>
+<title>Flytimizer — Fastest, Safest Drone Altitude for Your Route</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Free drone flight planner: finds the altitude that saves the most flight time and battery on your route, using live wind forecasts, terrain, buildings and no-fly areas. Export DJI waypoint missions.">
+<link rel="canonical" href="https://bambiker.github.io/flytimizer/">
+<meta name="theme-color" content="#0a0f1a">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Flytimizer">
+<meta property="og:url" content="https://bambiker.github.io/flytimizer/">
+<meta property="og:title" content="Flytimizer — Fastest, Safest Drone Altitude for Your Route">
+<meta property="og:description" content="Live wind, terrain, buildings and no-fly areas — find the altitude that saves the most flight time and battery.">
+<meta property="og:image" content="https://bambiker.github.io/flytimizer/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Flytimizer: a drone route's altitude profile over terrain, with live wind">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Flytimizer — Fastest, Safest Drone Altitude for Your Route">
+<meta name="twitter:description" content="Live wind, terrain, buildings and no-fly areas — find the altitude that saves the most flight time and battery.">
+<meta name="twitter:image" content="https://bambiker.github.io/flytimizer/og-image.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "Flytimizer",
+  "url": "https://bambiker.github.io/flytimizer/",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Any (web browser)",
+  "description": "Drone flight planner that finds the altitude saving the most flight time and battery on a route, using live wind forecasts, terrain elevation, buildings and restricted areas.",
+  "dateModified": "2026-10-05",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
 <base target="_top">
 <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
@@ -137,6 +168,22 @@ h1 i{
   flex-wrap: wrap;
   column-gap: 10px;
   row-gap: 2px;
+}
+
+.updated{
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+  font-family: var(--mono);
+}
+
+.updated a{ text-decoration: none; border-bottom: 1px dotted currentColor; }
+
+.changelog-date{
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent-2);
+  margin: 0 0 6px !important;
 }
 
 .lede{
@@ -315,6 +362,27 @@ details.panel + details.panel{
   color: var(--ink);
 }
 
+.field-check{
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.field-check input{
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.rules-notes{
+  margin: 6px 0 6px;
+  padding-left: 18px;
+}
+
+.rules-notes li{ margin-bottom: 2px; }
+
 .field-note{
   color: var(--muted);
   font-size: 12px;
@@ -440,6 +508,36 @@ details.panel + details.panel{
 #heightfore{ color: var(--accent); }
 #heightback{ color: var(--accent-2); }
 
+.readout-sub{
+  display: block;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+#battUsed{ color: var(--ink); }
+
+.result-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.result-head .panel-label{ margin-bottom: 0; }
+
+.units-select{
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
 .readout-value small{
   font-size: 14px;
   color: var(--muted);
@@ -515,6 +613,13 @@ details.panel + details.panel{
   width: 100%;
   height: auto;
   display:block;
+}
+
+.result-actions{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
 .terrain-profile{
@@ -615,6 +720,13 @@ details.panel + details.panel{
       <h1><i class="fas fa-drone"></i> Flytimizer</h1>
       <p class="subtitle">Fly (Time & Battery) Optimizer</p>
     </div>
+    <!-- Bump data-updated (and the What's new list) on every release.
+         If the GitHub repo is reachable, the latest commit date
+         replaces it automatically when it's newer. -->
+    <p class="updated" id="lastUpdated" data-updated="2026-10-05">
+      Updated <time id="lastUpdatedDate" datetime="2026-10-05">5 Oct 2026</time>
+      &middot; <a href="#whatsNew" id="whatsNewLink">What's new</a>
+    </p>
   </header>
 
   <p class="lede">Click or search to set the start point. Click again
@@ -668,6 +780,22 @@ details.panel + details.panel{
           <div class="field-input"><input type="text" id="windres" value="10.7" oninput="checkCustom()"><span class="unit">m/s</span></div>
         </label>
         <label class="field">
+          Battery energy
+          <div class="field-input"><input type="text" id="batt" value="11.5" oninput="checkCustom()"><span class="unit">Wh</span></div>
+        </label>
+        <label class="field">
+          Rated flight time
+          <div class="field-input"><input type="text" id="ftime" value="19" oninput="checkCustom()"><span class="unit">min</span></div>
+        </label>
+        <label class="field">
+          Takeoff weight
+          <div class="field-input"><input type="text" id="mass" value="0.151" oninput="checkCustom()"><span class="unit">kg</span></div>
+        </label>
+        <label class="field">
+          Battery health
+          <div class="field-input"><input type="text" id="health" value="100"><span class="unit">%</span></div>
+        </label>
+        <label class="field">
           Drag coefficient
           <div class="field-input"><input type="text" id="drag" value="1.0"><span class="unit">&nbsp;</span></div>
         </label>
@@ -679,12 +807,20 @@ details.panel + details.panel{
           Payload coefficient (return)
           <div class="field-input"><input type="text" id="payloadback" value="1"><span class="unit">&times;</span></div>
         </label>
+        <label class="field-check">
+          <input type="checkbox" id="altPermit">
+          <span>I have authorization to fly above the local height limit
+          (e.g. a CAAI permit or FAA waiver) &mdash; allow up to 120&nbsp;m
+          above ground.</span>
+        </label>
       </div>
       <p class="field-note">Pick your drone to load its speeds and
       wind resistance rating, or enter your own — editing a value
       switches the picker to "Custom". A payload coefficient of 2
       means you're carrying the drone's own weight again, which
-      halves that leg's speed.</p>
+      halves that leg's speed. Battery energy, rated flight time and
+      weight drive the battery estimate; lower battery health for
+      older packs.</p>
       </div>
     </details>
 
@@ -771,29 +907,46 @@ details.panel + details.panel{
   </script>
 
   <section class="panel results" id="result" style="display:none">
-    <div class="panel-label">Result</div>
+    <div class="result-head">
+      <div class="panel-label">Result</div>
+      <select id="unitsSelect" class="units-select" aria-label="Units">
+        <option value="auto">Units: auto</option>
+        <option value="metric">Metric</option>
+        <option value="imperial">Imperial</option>
+      </select>
+    </div>
 
     <div class="no-fly-warning" id="noFlyWarning" style="display:none"></div>
     <div class="fly-warning" id="flyWarning" style="display:none"></div>
     <div class="fly-warning" id="rainWarning" style="display:none"></div>
+    <div class="fly-warning" id="batteryWarning" style="display:none"></div>
 
     <div class="result-headline">
       <div class="readout" id="readoutFore">
         <span class="readout-label">Outbound height above ground</span>
-        <span class="readout-value"><span id="heightfore"></span><small>m</small></span>
+        <span class="readout-value"><span id="heightfore"></span><small id="unitFore">m</small></span>
       </div>
       <div class="readout" id="readoutBack">
         <span class="readout-label">Return height above ground</span>
-        <span class="readout-value"><span id="heightback"></span><small>m</small></span>
+        <span class="readout-value"><span id="heightback"></span><small id="unitBack">m</small></span>
+      </div>
+      <div class="readout" id="readoutBatt" style="display:none">
+        <span class="readout-label">Battery, round trip</span>
+        <span class="readout-value"><span id="battUsed"></span></span>
+        <span class="readout-sub" id="battLeft"></span>
       </div>
     </div>
 
-    <button class="btn btn-ghost" id="downloadWpmlBtn" style="display:none; margin-bottom:16px" onclick="downloadWPML()">Download flight plan (WPML)</button>
+    <div class="result-actions">
+      <button class="btn btn-ghost" id="shareRouteBtn" onclick="shareRoute()">Share this route</button>
+      <button class="btn btn-ghost" id="downloadWpmlBtn" style="display:none" onclick="downloadWPML()">Download flight plan (WPML)</button>
+    </div>
 
     <p class="savings" id="savingsText">Flying the optimal heights saves
     <strong><span id="savesec"></span></strong>
-    <span id="savepercent"></span> compared with holding 120m the whole
-    way (<span id="totaltime120"></span> total,
+    <span id="savepercent"></span><span id="battSaving"></span> compared
+    with flying at <span id="baselineHeight"></span>, the highest allowed
+    height that's flyable today (<span id="totaltime120"></span> total,
     <span id="timenowind"></span> with no wind at all).</p>
 
     <div class="terrain-profile" id="terrainProfile" style="display:none"></div>
@@ -805,37 +958,75 @@ details.panel + details.panel{
     <div class="table-scroll">
     <table class="wind-table">
       <thead>
-        <tr><th>Altitude</th><th>Wind</th><th>Gust (est.)</th><th>Heading</th><th>Outbound</th><th>Return</th></tr>
+        <tr><th>Height</th><th>Wind</th><th>Gust (est.)</th><th>Heading</th><th>Outbound</th><th>Return</th><th>Battery</th></tr>
       </thead>
       <tbody>
-        <tr><td>30 m</td><td><span id="ws30"></span> m/s</td><td><span id="gust30"></span> m/s</td><td><span id="wd30"></span>&deg;</td><td><span id="timefore30"></span></td><td><span id="timeback30"></span></td></tr>
-        <tr><td>80 m</td><td><span id="ws80"></span> m/s</td><td><span id="gust80"></span> m/s</td><td><span id="wd80"></span>&deg;</td><td><span id="timefore80"></span></td><td><span id="timeback80"></span></td></tr>
-        <tr><td>120 m</td><td><span id="ws120"></span> m/s</td><td><span id="gust120"></span> m/s</td><td><span id="wd120"></span>&deg;</td><td><span id="timefore120"></span></td><td><span id="timeback120"></span></td></tr>
+        <tr><td id="alt30">30 m</td><td><span id="ws30"></span></td><td><span id="gust30"></span></td><td><span id="wd30"></span>&deg;</td><td><span id="timefore30"></span></td><td><span id="timeback30"></span></td><td><span id="batt30"></span></td></tr>
+        <tr><td id="alt80">80 m</td><td><span id="ws80"></span></td><td><span id="gust80"></span></td><td><span id="wd80"></span>&deg;</td><td><span id="timefore80"></span></td><td><span id="timeback80"></span></td><td><span id="batt80"></span></td></tr>
+        <tr><td id="alt120">120 m</td><td><span id="ws120"></span></td><td><span id="gust120"></span></td><td><span id="wd120"></span>&deg;</td><td><span id="timefore120"></span></td><td><span id="timeback120"></span></td><td><span id="batt120"></span></td></tr>
       </tbody>
     </table>
     </div>
 
     <p class="hint" id="unsafeReasonNote" style="display:none"></p>
+    <p class="hint" id="batteryNote" style="display:none; margin-bottom:10px"></p>
 
+    <p class="hint" id="rulesInfo" style="display:none; margin-bottom:10px"></p>
     <p class="hint" id="terrainInfo" style="display:none"></p>
     <p class="hint" id="buildingInfo" style="display:none"></p>
     <p class="hint" id="hazardInfo" style="display:none"></p>
 
     <div class="meta-row">
-      <span>Distance <span id="distance"></span> m<span id="detourNote"></span></span>
+      <span>Distance <span id="distance"></span><span id="detourNote"></span></span>
       <span>Drone heading <span id="dronedir"></span>&deg;</span>
       <span>Rain chance <span id="precipitation_probability"></span>%</span>
-      <span>Precipitation <span id="precipitation"></span> mm</span>
-      <span>Visibility <span id="visibility"></span> km</span>
+      <span>Precipitation <span id="precipitation"></span></span>
+      <span>Visibility <span id="visibility"></span></span>
+      <span>Temperature <span id="temperature"></span></span>
     </div>
 
     <p class="hint" style="margin-top:12px">We only check heights
-    between 30m and 120m above the ground.</p>
+    between 30m and 120m above the ground, and never above the local
+    legal limit.</p>
   </section>
 
-  <p class="credit">Wind and elevation data from <a href="https://open-meteo.com" target="_blank">open-meteo.com</a> (elevation: Copernicus DEM GLO-90).</p>
+  <p class="credit">Imagery &copy; Esri, Maxar, Earthstar Geographics. Map data &copy; OpenStreetMap contributors. Wind and elevation data from <a href="https://open-meteo.com" target="_blank">open-meteo.com</a> (elevation: Copernicus DEM GLO-90).</p>
 
   <script type="text/javascript" src="map.js"></script>
+
+  <details class="panel" id="whatsNew">
+    <summary>What's new</summary>
+    <div class="disclosure-body">
+      <p class="changelog-date">5 Oct 2026</p>
+      <ul>
+        <li>Battery estimate: round-trip battery use for the recommended
+        heights (and every row of the table), from each drone's rated
+        flight time, payload, climbs, wind and temperature &mdash; with
+        a warning when less than a 20% reserve would be left.</li>
+        <li>Imperial units (ft, mph, mi) for routes in the US, or
+        pick your units next to the result.</li>
+        <li>New satellite map with place names, plus a street-map
+        option.</li>
+        <li>Country-specific rules: the route now follows the drone
+        rules of the country it starts in (Israel and the US so far),
+        including height limits, airport distances and Washington DC's
+        no-drone zone.</li>
+        <li>Terrain-aware routes: heights are now above the ground, so
+        over hills like the Carmel the drone climbs and descends with
+        the terrain and never goes above 120m over the ground. New side
+        view of the route under the result.</li>
+        <li>Flight plans (WPML) now carry a separate height for every
+        waypoint, following the terrain.</li>
+        <li>Progress bar with an estimated time left, which learns from
+        your previous calculations.</li>
+        <li>More reliable restricted-area and building lookups: backup
+        map servers, automatic retries, and a "Try again" button.</li>
+        <li>More accurate wind model: crosswind correction, strong
+        headwinds flagged as unflyable, fixes to the forecast hour and
+        to wind direction between altitudes.</li>
+      </ul>
+    </div>
+  </details>
 
   <details class="panel">
     <summary>Why altitude matters</summary>
@@ -854,10 +1045,15 @@ details.panel + details.panel{
         knows about near your route, shown in faint orange on the map —
         climbing over buildings is simpler and safer than weaving
         between them at low level.</li>
+        <li>We apply the drone rules of the country your route starts
+        in &mdash; currently Israel (CAAI, 50m height limit) and the
+        United States (FAA, 400ft / 122m). Anywhere else we fall back to
+        Israel's rules, which are on the strict side. If you hold a
+        permit to fly higher, tick the box in the drone settings.</li>
         <li>Heights are above the ground, not above takeoff: over hills
-        (the Carmel, say) the drone climbs and descends with the
-        terrain, stays at least the chosen height above it, and never
-        goes more than 120m above it. The side view under the result
+        the drone climbs and descends with the terrain, stays at least
+        the chosen height above it, and never goes above the local
+        height limit over it. The side view under the result
         shows the planned altitude against the ground, from Copernicus
         GLO-90 elevation data (~90m resolution).</li>
         <li>Schools, kindergartens, hospitals, playgrounds, nursing
@@ -866,16 +1062,16 @@ details.panel + details.panel{
         in red on the map and route around them by at least 30m (or
         their real size, if bigger), since altitude alone doesn't
         make overflying them safe.</li>
-        <li>Airports, heliports, military sites, prisons and embassies
-        are a different kind of risk — flying near them can be
-        illegal or need special authorization no matter how you route
-        around them. Where published Israeli small-UAS rules give a
-        specific distance, we use it (2km for airports/heliports,
-        3km for military runways, 1km for prisons); otherwise we fall
-        back to 30m. We flag these with a separate, more prominent
-        warning, but we only check OpenStreetMap's map data, not the
-        official no-fly-zone map or current NOTAMs — always verify
-        there before flying.</li>
+        <li>Airports, military sites, prisons and similar sites are a
+        different kind of risk — flying near them can be illegal or
+        need authorization no matter how you route around them. We use
+        each country's own distances (in Israel, for example, 2km from
+        airports; in the US, controlled airspace around airports needs
+        LAANC authorization, and Washington DC has its own no-drone
+        zone) and flag them with a separate, more prominent warning.
+        We only check OpenStreetMap's map data, not official
+        no-fly-zone maps or current NOTAMs/TFRs — always verify there
+        before flying.</li>
         <li>Altitude choice matters most on long routes, with
         higher-drag drones, and when the wind runs roughly along your
         heading.</li>
@@ -906,6 +1102,49 @@ details.panel + details.panel{
   <a class="feedback-link" href="https://docs.google.com/forms/d/e/1FAIpQLScucpTGf_6hN_e8NQMgTJqoPX7q7B1HavnFdywewEtgMXFuNA/viewform?usp=sf_link" target="_blank">Contact us for questions and improvement suggestions</a>
   <span style="color:var(--muted); margin:0 8px;">&middot;</span>
   <a class="feedback-link" href="terms.html">Terms of Use</a>
+
+  <script>
+    // "Updated" date: start from the date written in the page, and
+    // replace it with the repo's latest commit date when that's newer
+    // (so it can't go stale if someone forgets to bump it). Any
+    // failure - offline, GitHub rate limit - just keeps the written date.
+    (function(){
+      var box = document.getElementById('lastUpdated');
+      var timeEl = document.getElementById('lastUpdatedDate');
+      if (!box || !timeEl) return;
+
+      function show(date){
+        var formatted = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        var days = Math.floor((Date.now() - date.getTime()) / 86400000);
+        var rel = days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 30 ? days + ' days ago' : null;
+        timeEl.textContent = rel ? formatted + ' (' + rel + ')' : formatted;
+        timeEl.setAttribute('datetime', date.toISOString().slice(0, 10));
+      }
+
+      var written = new Date(box.getAttribute('data-updated') + 'T12:00:00Z');
+      if (!isNaN(written)) show(written);
+
+      fetch('https://api.github.com/repos/bambiker/flytimizer/commits?per_page=1', { headers: { 'Accept': 'application/vnd.github+json' } })
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(commits){
+          var iso = commits && commits[0] && commits[0].commit && commits[0].commit.committer && commits[0].commit.committer.date;
+          var latest = iso ? new Date(iso) : null;
+          if (latest && !isNaN(latest) && (isNaN(written) || latest > written)) show(latest);
+        })
+        .catch(function(){});
+
+      // The "What's new" link opens the panel instead of just jumping to it.
+      var link = document.getElementById('whatsNewLink');
+      var panel = document.getElementById('whatsNew');
+      if (link && panel){
+        link.addEventListener('click', function(e){
+          e.preventDefault();
+          panel.open = true;
+          panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
+    })();
+  </script>
 
   <!-- AddToAny BEGIN -->
   <div class="a2a_kit a2a_kit_size_32 a2a_default_style" data-a2a-url="https://bambiker.github.io/flytimizer/" data-a2a-title="Flytimizer">
