@@ -1477,13 +1477,24 @@ function computeAvoidanceRoute(lat1, lng1, lat2, lng2, obstacles){
   return { path: path, distance: totalDist, buildingsAvoided: crossedBuildings, hazardsAvoided: crossedHazards, trapped: trapped };
 }
 
+// Hourly forecast for the start point, three days from midnight GMT
+// (so the next 48 hours are always covered). Cached for 10 minutes
+// per place, so picking another hour in the 48-hour strip doesn't
+// download it again.
+var forecastCache = new Map();
+var FORECAST_CACHE_MS = 10 * 60 * 1000;
+
 async function getJSON() {
+   var key = lat1.toFixed(3) + ',' + lng1.toFixed(3);
+   var hit = forecastCache.get(key);
+   if (hit && Date.now() - hit.at < FORECAST_CACHE_MS) return hit.json;
 
-   const apiUrl = 'https://api.open-meteo.com/v1/forecast?latitude='+lat1+'&longitude='+lng1+'&hourly=wind_speed_10m,wind_speed_80m,wind_speed_120m,wind_speed_180m,wind_direction_10m,wind_direction_80m,wind_direction_120m,wind_direction_180m,wind_gusts_10m,visibility,precipitation_probability,precipitation,temperature_2m&forecast_days=2&timezone=GMT';
-
-    return fetch(apiUrl)
-        .then((response)=>response.json())
-        .then((responseJson)=>{return responseJson});
+   const apiUrl = 'https://api.open-meteo.com/v1/forecast?latitude='+lat1+'&longitude='+lng1+'&hourly=wind_speed_10m,wind_speed_80m,wind_speed_120m,wind_speed_180m,wind_direction_10m,wind_direction_80m,wind_direction_120m,wind_direction_180m,wind_gusts_10m,visibility,precipitation_probability,precipitation,temperature_2m&forecast_days=3&timezone=GMT';
+   const response = await fetch(apiUrl);
+   if (!response.ok) throw new Error('Forecast HTTP ' + response.status);
+   const json = await response.json();
+   forecastCache.set(key, { at: Date.now(), json: json });
+   return json;
 }
 
 // ---------------------------------------------------------------
@@ -1698,13 +1709,16 @@ function profileTransitions(segs, climbRun, descRun){
 }
 
 function checkProfile(samples, R, pts){
-  var minClear = Infinity, maxAGL = -Infinity;
+  var minClear = Infinity, maxAGL = -Infinity, minAGL = Infinity, sumAGL = 0;
   for (var k = 0; k < samples.length; k++){
     var alt = profileAltAt(pts, samples[k].s);
+    var agl = alt - samples[k].g;
     minClear = Math.min(minClear, alt - R[k]);
-    maxAGL = Math.max(maxAGL, alt - samples[k].g);
+    maxAGL = Math.max(maxAGL, agl);
+    minAGL = Math.min(minAGL, agl);
+    sumAGL += agl;
   }
-  return { minClear: minClear, maxAGL: maxAGL };
+  return { minClear: minClear, maxAGL: maxAGL, minAGL: minAGL, meanAGL: sumAGL / samples.length };
 }
 
 // Drops profile points that aren't needed: a straight line from an
@@ -1744,12 +1758,33 @@ function simplifyProfile(samples, R, pts){
 // Altitude profile (metres above sea level along the route) for
 // target height-above-ground h. reqAlt: per-sample minimum altitude
 // from buildings (see buildingAltitudeRequirements).
-function buildAltitudeProfile(samples, h, reqAlt, climbRun, descRun){
+//
+// mode 'follow' (default): terrain following, as described above.
+// mode 'level': hold altitude - stay level until the ground or a
+// building forces a climb, or the height limit over lower ground
+// forces a descent. This "lazy" rule gives the least total climbing
+// possible between the clearance floor and the legal ceiling.
+function buildAltitudeProfile(samples, h, reqAlt, climbRun, descRun, mode){
   var n = samples.length;
   var R = samples.map(function(p, k){ return Math.max(p.g + h, reqAlt[k]); });
   var T = Math.max(0, Math.min(TERRAIN_LEVEL_TOLERANCE_M, MAX_AGL_M - h));
 
   var segs = [];
+  if (mode === 'level'){
+    var cur = R[0];
+    var feasible = true;
+    for (var k = 0; k < n; k++){
+      var ceil = samples[k].g + MAX_AGL_M;
+      if (R[k] > ceil + 0.01) feasible = false;
+      if (cur < R[k]) cur = R[k];
+      else if (cur > ceil) cur = Math.max(ceil, R[k]);
+      var last = segs[segs.length - 1];
+      if (last && Math.abs(last.alt - cur) < 0.01) last.E = samples[k].s;
+      else segs.push({ S: samples[k].s, E: samples[k].s, alt: cur });
+    }
+    return finishAltitudeProfile(samples, R, segs, climbRun, descRun, feasible);
+  }
+
   var a = 0;
   while (a < n){
     var maxR = R[a], minG = samples[a].g, b = a;
@@ -1766,7 +1801,14 @@ function buildAltitudeProfile(samples, h, reqAlt, climbRun, descRun){
     }
     a = b + 1;
   }
+  return finishAltitudeProfile(samples, R, segs, climbRun, descRun, true);
+}
 
+// Shared tail: transitions between level stretches (steepening them
+// if needed to respect the ceiling), verification, simplification
+// and climb/descent totals.
+function finishAltitudeProfile(samples, R, segs, climbRun, descRun, feasible){
+  var n = samples.length;
   var pts = null, check = null;
   var steepness = [1, 0.5, 0.25, 0];
   for (var si = 0; si < steepness.length; si++){
@@ -1787,7 +1829,9 @@ function buildAltitudeProfile(samples, h, reqAlt, climbRun, descRun){
     pts: pts,
     maxAGL: check.maxAGL,
     minClear: check.minClear,
-    ok: check.maxAGL <= MAX_AGL_M + 0.5 && check.minClear >= -0.5,
+    minAGL: check.minAGL,
+    meanAGL: check.meanAGL,
+    ok: feasible && check.maxAGL <= MAX_AGL_M + 0.5 && check.minClear >= -0.5,
     climbUp: climbUp,
     climbDown: climbDown
   };
@@ -1954,6 +1998,41 @@ function legEnergyWh(model, payloadCoef, airspeed, horTimeS, climbUpM, climbDown
   return joules / 3600;
 }
 
+// Time split for flying an altitude profile at ground speed gs: the
+// drone climbs and descends while it travels, so each stretch takes
+// whichever is longer - covering the distance, or the height change
+// at the climb/descent rate. Takeoff and landing are purely vertical.
+function profileTiming(prof, samples, gs, upSpeed, downSpeed, opts){
+  opts = opts || {};
+  var pts = prof.pts;
+  var takeoff = opts.skipTakeoff ? 0 : Math.max(0, pts[0].alt - samples[0].g) / upSpeed;
+  var landing = opts.skipLanding ? 0 : Math.max(0, pts[pts.length - 1].alt - samples[samples.length - 1].g) / downSpeed;
+  var cruise = 0, climb = takeoff, desc = landing;
+  for (var i = 1; i < pts.length; i++){
+    var th = (pts[i].s - pts[i-1].s) / gs;
+    var dz = pts[i].alt - pts[i-1].alt;
+    var tv = dz > 0 ? dz / upSpeed : -dz / downSpeed;
+    if (tv > th){
+      // Height change sets the pace on this stretch.
+      if (dz > 0) climb += tv; else desc += tv;
+    } else {
+      // Mostly cruising; the climbing share still costs extra power.
+      if (dz > 0){ climb += tv; cruise += th - tv; }
+      else { desc += tv; cruise += th - tv; }
+    }
+  }
+  return { total: cruise + climb + desc, cruise: cruise, climb: climb, desc: desc };
+}
+
+function legEnergyFromTiming(model, payloadCoef, airspeed, timing, upSpeed){
+  if (!timing || !isFinite(timing.total)) return Infinity;
+  var baseW = model.hoverW * Math.pow(Math.max(payloadCoef, 0.1), 1.5);
+  var cruiseW = baseW * airspeedPowerFactor(airspeed, model.vmax);
+  var climbW = baseW + model.massKg * payloadCoef * 9.81 * upSpeed / CLIMB_EFFICIENCY;
+  var descW = baseW * DESCENT_POWER_FACTOR;
+  return (cruiseW * timing.cruise + climbW * timing.climb + descW * timing.desc) / 3600;
+}
+
 function batteryPct(model, energyWh, tempC){
   var usableWh = model.wh * model.usableFraction * coldCapacityFactor(tempC);
   return energyWh / usableWh * 100;
@@ -1992,6 +2071,277 @@ function fmtDist(m){
     return m >= 0.25 * MILE_M ? (m / MILE_M).toFixed(2) + ' mi' : Math.round(m * M_TO_FT) + ' ft';
   }
   return m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m';
+}
+
+
+// ---------------------------------------------------------------
+// Two plans: fastest and least battery
+//
+// "Fastest" follows the terrain at the height that gets there
+// soonest. "Least battery" also considers a second profile style for
+// every height - "hold altitude": climb only when the ground (or a
+// building) forces it, descend only when the legal height limit
+// forces it, otherwise stay level. Over rolling terrain that avoids
+// the up-and-down of terrain following, and climbing is the expensive
+// part. It isn't always better - holding altitude over a valley puts
+// the drone higher, where the wind is usually stronger - so each
+// candidate (height x style) is scored with the battery model and the
+// cheapest flyable one wins, separately for each leg.
+// ---------------------------------------------------------------
+var selectedPlan = 'fast';
+var currentCalc = null;
+
+function planLegLabel(leg){
+  if (!leg) return '—';
+  return leg.mode === 'level' ? 'holds altitude' : 'follows terrain';
+}
+
+function renderPlanTabs(){
+  var c = currentCalc;
+  var tabs = document.getElementById('planTabs');
+  if (!tabs || !c) return;
+  var eco = c.plans.eco;
+  tabs.style.display = eco ? '' : 'none';
+  ['fast', 'eco'].forEach(function(key){
+    var btn = document.getElementById(key === 'fast' ? 'planFastBtn' : 'planEcoBtn');
+    var plan = c.plans[key];
+    if (!btn) return;
+    btn.classList.toggle('active', selectedPlan === key);
+    btn.setAttribute('aria-selected', selectedPlan === key ? 'true' : 'false');
+    var title = key === 'fast' ? 'Fastest' : 'Least battery';
+    var detail = '';
+    if (plan && plan.out && plan.back && isFinite(plan.totalTime)){
+      detail = formatDuration(plan.totalTime) + (isFinite(plan.totalBatt) ? ' · ' + fmtPct(plan.totalBatt) : '');
+    }
+    btn.innerHTML = '<span class="plan-title">' + title + '</span><span class="plan-detail">' + (detail || 'no safe option') + '</span>';
+  });
+  var note = document.getElementById('planNote');
+  if (note){
+    var same = eco && c.plans.fast.out && eco.out && c.plans.fast.back && eco.back &&
+      c.plans.fast.out.i === eco.out.i && c.plans.fast.out.mode === eco.out.mode &&
+      c.plans.fast.back.i === eco.back.i && c.plans.fast.back.mode === eco.back.mode;
+    note.textContent = same ? 'On this route the fastest plan is also the most battery-efficient.' : '';
+    note.style.display = same ? 'block' : 'none';
+  }
+}
+
+function selectPlan(key){
+  if (!currentCalc || !currentCalc.plans[key]) return;
+  selectedPlan = key;
+  renderPlan();
+}
+
+// Everything that depends on which plan is shown: headline heights,
+// battery, the side view, the terrain sentence and the WPML export.
+function renderPlan(){
+  var c = currentCalc;
+  if (!c) return;
+  if (!c.plans[selectedPlan]) selectedPlan = 'fast';
+  var plan = c.plans[selectedPlan];
+  var out = plan.out, back = plan.back;
+
+  document.getElementById('heightfore').innerHTML = out ? lenNum(c.heights[out.i]) : '&mdash;';
+  document.getElementById('heightback').innerHTML = back ? lenNum(c.heights[back.i]) : '&mdash;';
+  document.getElementById('unitFore').textContent = lenUnit();
+  document.getElementById('unitBack').textContent = lenUnit();
+  document.getElementById('styleFore').textContent = out ? 'min. above ground, ' + planLegLabel(out) : '';
+  document.getElementById('styleBack').textContent = back ? 'min. above ground, ' + planLegLabel(back) : '';
+  document.getElementById('readoutFore').classList.toggle('unsafe', !out);
+  document.getElementById('readoutBack').classList.toggle('unsafe', !back);
+
+  // Round-trip battery for this plan.
+  var battReadout = document.getElementById('readoutBatt');
+  var battWarning = document.getElementById('batteryWarning');
+  var battUsed = (out && back) ? plan.totalBatt : NaN;
+  if (isFinite(battUsed)){
+    var battLeft = 100 - battUsed;
+    document.getElementById('battUsed').textContent = fmtPct(battUsed);
+    document.getElementById('battLeft').textContent = battLeft > 0 ? fmtPct(battLeft) + ' left' : 'not enough';
+    battReadout.classList.toggle('unsafe', battLeft < BATTERY_RESERVE_PCT);
+    battReadout.style.display = '';
+    if (battLeft < BATTERY_RESERVE_PCT){
+      battWarning.innerHTML = '⚠️ This round trip needs about ' + fmtPct(battUsed) + ' of a full battery' +
+        (battLeft > 0 ? ', leaving less than a ' + BATTERY_RESERVE_PCT + '% reserve' : ' — more than one charge') +
+        '. Shorten the route, lighten the payload, or wait for calmer wind.';
+      battWarning.style.display = 'block';
+    } else {
+      battWarning.style.display = 'none';
+    }
+  } else {
+    battReadout.style.display = 'none';
+    battWarning.style.display = 'none';
+  }
+
+  // Terrain sentence + side view (outbound leg).
+  var terrainInfo = document.getElementById('terrainInfo');
+  if (c.terrainAvailable){
+    var text = c.terrainBaseText;
+    if (out){
+      var po = out.prof;
+      var peakRel = -Infinity;
+      po.pts.forEach(function(p){ peakRel = Math.max(peakRel, p.alt - c.terrainSamples[0].g); });
+      text += ' Outbound (' + planLegLabel(out) + '): climbs ' + fmtLen(po.climbUp) + ' and descends ' + fmtLen(po.climbDown) +
+        ' in total, peaking about ' + fmtLen(peakRel) + ' above the takeoff point, between ' + fmtLen(Math.max(0, po.minAGL)) +
+        ' and ' + fmtLen(po.maxAGL) + ' above the ground.';
+      renderTerrainProfile(c.terrainSamples, po, c.heights[out.i]);
+    } else {
+      renderTerrainProfile(null);
+    }
+    terrainInfo.innerHTML = text + ' Elevation: Copernicus GLO-90 (~90 m cells), which smooths out narrow cliffs — keep visual line of sight.';
+  }
+
+  // Flight-plan exports for this plan: delivery = one mission each
+  // way, landing at the end of each; photo = one round trip.
+  var missions = [];
+  if (out && c.terrainAvailable){
+    if (c.mission === 'photo'){
+      missions.push({
+        label: back ? 'Download flight plan (round trip)' : 'Download flight plan (outbound)',
+        filename: back ? 'flytimizer-round-trip.kmz' : 'flytimizer-outbound.kmz',
+        waypoints: back ? roundTripWaypoints(c.terrainSamples, out.prof, c.terrainBack, back.prof) : profileWaypoints(c.terrainSamples, out.prof),
+        speedMS: c.speedOut,
+        finishAction: 'goHome'
+      });
+    } else {
+      missions.push({ label: 'Download outbound mission', filename: 'flytimizer-outbound.kmz', waypoints: profileWaypoints(c.terrainSamples, out.prof), speedMS: c.speedOut, finishAction: 'autoLand' });
+      if (back) missions.push({ label: 'Download return mission', filename: 'flytimizer-return.kmz', waypoints: profileWaypoints(c.terrainBack, back.prof), speedMS: c.speedBack, finishAction: 'autoLand' });
+    }
+  }
+  lastRoute = missions.length ? { missions: missions, droneModel: c.droneModel } : null;
+  var wpmlBox = document.getElementById('wpmlButtons');
+  if (wpmlBox){
+    wpmlBox.innerHTML = missions.map(function(m, k){
+      return '<button class="btn btn-ghost" onclick="downloadWPML(' + k + ')">' + m.label + '</button>';
+    }).join('');
+  }
+
+  renderPlanTabs();
+}
+
+
+// ---------------------------------------------------------------
+// 48-hour outlook
+//
+// A strip of 48 hourly bars under the result: bar height = wind at
+// 80 m, colour = a quick go/no-go from the same rules the full
+// calculation uses (estimated gusts vs the drone's wind rating, and
+// rain). Tapping an hour re-plans the route for that hour - the map
+// lookups are cached, so only the numbers change.
+// ---------------------------------------------------------------
+var forecastOffsetH = 0;
+var FORECAST_HOURS = 48;
+
+function forecastHourInfo(json, idx, windres){
+  var H = json.hourly;
+  var w10 = H.wind_speed_10m[idx] / 3.6, w80 = H.wind_speed_80m[idx] / 3.6, w120 = H.wind_speed_120m[idx] / 3.6;
+  var g10 = H.wind_gusts_10m[idx] / 3.6;
+  var gf = w10 > 0.1 ? Math.min(Math.max(g10 / w10, 1), 3) : 1;
+  var w30 = w10 * 50 / 70 + w80 * 20 / 70; // same interpolation as the main calculation
+  var gustLow = w30 * gf, gustHigh = w120 * gf;
+  var pp = H.precipitation_probability[idx] || 0, pr = H.precipitation[idx] || 0;
+  var status = 'good';
+  if (gustLow >= windres || pp >= 50 || pr > 0.2) status = 'bad';
+  else if (gustHigh >= windres || pp >= 20 || pr > 0) status = 'fair';
+  return { status: status, w80: w80, gustLow: gustLow, gustHigh: gustHigh, pp: pp, time: new Date(H.time[idx] + 'Z') };
+}
+
+function forecastTimeLabel(d, withDay){
+  var now = new Date();
+  var tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  var day = d.toDateString() === now.toDateString() ? 'Today'
+    : d.toDateString() === tomorrow.toDateString() ? 'Tomorrow'
+    : d.toLocaleDateString([], { weekday: 'short' });
+  var t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return withDay ? day + ' ' + t : t;
+}
+
+function renderForecastStrip(json, nowIdx){
+  var box = document.getElementById('forecastStrip');
+  if (!box || !json || !json.hourly) return;
+  var windres = parseFloat(document.getElementById('windres').value) || 10;
+  var n = Math.min(FORECAST_HOURS, json.hourly.time.length - nowIdx);
+  var infos = [];
+  var maxW = 1;
+  for (var k = 0; k < n; k++){
+    infos.push(forecastHourInfo(json, nowIdx + k, windres));
+    maxW = Math.max(maxW, infos[k].w80);
+  }
+  var bars = infos.map(function(f, k){
+    var label = forecastTimeLabel(f.time, true) + ': wind ' + fmtSpeed(f.w80) + ' at ' + fmtLen(80) +
+      ', gusts ' + fmtSpeed(f.gustLow) + '–' + fmtSpeed(f.gustHigh) + ', rain ' + f.pp.toFixed(0) + '%' +
+      (f.status === 'bad' ? ' — not recommended' : f.status === 'fair' ? ' — marginal' : ' — good');
+    var h = Math.max(8, Math.round(f.w80 / maxW * 100));
+    var tick = (f.time.getHours() % 6 === 0) ? '<span class="fc-tick">' + (f.time.getHours() === 0 ? f.time.toLocaleDateString([], { weekday: 'short' }) : String(f.time.getHours()).padStart(2, '0')) + '</span>' : '';
+    return '<button type="button" class="fc-bar fc-' + f.status + (k === forecastOffsetH ? ' fc-selected' : '') + '" title="' + label + '" aria-label="' + label + '" onclick="setForecastOffset(' + k + ')">' +
+      '<span class="fc-fill" style="height:' + h + '%"></span>' + tick + '</button>';
+  }).join('');
+  box.innerHTML = '<div class="fc-bars">' + bars + '</div>';
+
+  var sel = infos[Math.min(forecastOffsetH, infos.length - 1)];
+  var head = document.getElementById('forecastSelected');
+  if (head && sel){
+    head.textContent = 'Planning for ' + forecastTimeLabel(sel.time, true) + (forecastOffsetH === 0 ? ' (now)' : '');
+  }
+  var nowBtn = document.getElementById('forecastNowBtn');
+  if (nowBtn) nowBtn.style.display = forecastOffsetH === 0 ? 'none' : '';
+}
+
+function setForecastOffset(k){
+  forecastOffsetH = Math.max(0, Math.min(FORECAST_HOURS - 1, k));
+  if (typeof getHeight === 'function') getHeight();
+}
+
+// ---------------------------------------------------------------
+// Mission type
+//
+// Delivery: land (or lower the parcel) at the destination, then fly
+// back - the return leg can carry a different payload, and each leg
+// is its own mission (takeoff and landing at both ends).
+// Photo / inspection: fly to the destination, stay airborne there for
+// the time set, and come straight back at the same weight - no
+// landing or takeoff at the destination, one round-trip mission.
+// ---------------------------------------------------------------
+var DWELL_DEFAULTS = { delivery: 30, photo: 60 };
+var PAYLOAD_DEFAULTS = { delivery: 2, photo: 1 };
+
+function currentMission(){
+  var el = document.getElementById('mission');
+  return (el && el.value === 'photo') ? 'photo' : 'delivery';
+}
+
+function onMissionChange(){
+  var m = currentMission();
+  var backField = document.getElementById('payloadBackField');
+  if (backField) backField.style.display = m === 'photo' ? 'none' : '';
+  var lbl = document.getElementById('payloadLabel');
+  if (lbl) lbl.textContent = m === 'photo' ? 'Payload coefficient' : 'Payload coefficient (outbound)';
+  var d = document.getElementById('dwell');
+  var other = m === 'photo' ? 'delivery' : 'photo';
+  if (d && parseFloat(d.value) === DWELL_DEFAULTS[other]) d.value = DWELL_DEFAULTS[m];
+  // Photo flights usually carry nothing extra; swap the default payload
+  // too, but leave any value the person typed themselves.
+  var pl = document.getElementById('payload');
+  if (pl && parseFloat(pl.value) === PAYLOAD_DEFAULTS[other]) pl.value = PAYLOAD_DEFAULTS[m];
+  var note = document.getElementById('missionNote');
+  if (note){
+    note.textContent = m === 'photo'
+      ? 'Flies to the destination, stays in the air there for the time you set, and comes straight back at the same weight. Flight plan: one round-trip mission.'
+      : 'Lands or lowers the parcel at the destination (time at destination = hovering time; set 0 if it lands and waits powered down), then flies back with the return payload. Flight plans: one mission each way.';
+  }
+  if (typeof saveSettings === 'function') saveSettings();
+}
+
+// One continuous waypoint list out and back, all heights relative to
+// the start point (the outbound takeoff).
+function roundTripWaypoints(outSamples, outProf, backSamples, backProf){
+  var outW = profileWaypoints(outSamples, outProf);
+  var offset = backSamples[0].g - outSamples[0].g;
+  var backW = profileWaypoints(backSamples, backProf).map(function(w){
+    return { lat: w.lat, lng: w.lng, heightRel: w.heightRel + offset };
+  });
+  // Turn around at the destination at whichever leg's height is higher.
+  outW[outW.length - 1].heightRel = Math.max(outW[outW.length - 1].heightRel, backW[0].heightRel);
+  return outW.concat(backW.slice(1));
 }
 
 // ---------------------------------------------------------------
@@ -2214,7 +2564,8 @@ async function calcHeight() {
     Progress.stage('compute');
 
     const d = new Date();
-    let hour = hourIndexNow(json.hourly.time);
+    const nowHourIdx = hourIndexNow(json.hourly.time);
+    let hour = Math.min(nowHourIdx + forecastOffsetH, json.hourly.time.length - 1);
     var mydata = JSON.stringify(json, null, 2);
 
 ws10=json.hourly.wind_speed_10m[hour]/3.6;
@@ -2242,12 +2593,16 @@ gustFactor = Math.min(Math.max(gustFactor, 1), 3);
 //// time to go to 20m + time to go horizontaly
 //    window.alert(ws80+ ' m/s '+ wd80 + ' de2222grees');
 
+    var mission = currentMission();
+    var dwellS = Math.max(0, parseFloat(document.getElementById('dwell').value) || 0);
+    // Photo missions carry the same load both ways.
+    var payloadBackCoef = mission === 'photo' ? document.getElementById('payload').value : document.getElementById('payloadback').value;
     speedup=document.getElementById('asc').value/document.getElementById('payload').value;
     speeddown=document.getElementById('des').value/document.getElementById('payload').value;
     speedhorizontal=document.getElementById('hor').value/document.getElementById('payload').value;
-    speedupback=document.getElementById('asc').value/document.getElementById('payloadback').value;
-    speeddownback=document.getElementById('des').value/document.getElementById('payloadback').value;
-    speedhorizontalback=document.getElementById('hor').value/document.getElementById('payloadback').value;
+    speedupback=document.getElementById('asc').value/payloadBackCoef;
+    speeddownback=document.getElementById('des').value/payloadBackCoef;
+    speedhorizontalback=document.getElementById('hor').value/payloadBackCoef;
 
     drag=document.getElementById('drag').value
     var windResistance = parseFloat(document.getElementById('windres').value);
@@ -2455,26 +2810,32 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     timeupdownback = []
     timehor = []
     timehorb = []
+    timingOut = []
+    timingBack = []
+    var timingOptsOut = { skipLanding: mission === 'photo' }
+    var timingOptsBack = { skipTakeoff: mission === 'photo' }
     for (i=0;i<heights.length; i++) {
-        // Takeoff + every climb/descent along the terrain-following
-        // profile + landing (no climbing-while-cruising credit, so on
-        // the conservative side).
-        timeupdown[i] = profOut[i].climbUp/speedup + profOut[i].climbDown/speeddown
-        timeupdownback[i] = profBack[i].climbUp/speedupback + profBack[i].climbDown/speeddownback
-        timehor[i] = gsOut[i] > MIN_GROUND_SPEED_MS ? routeDist / gsOut[i] : Infinity
-        timehorb[i] = gsBack[i] > MIN_GROUND_SPEED_MS ? routeDist / gsBack[i] : Infinity
+        // timehor = time to cover the distance; timeupdown = everything
+        // the climbs and descents add on top (takeoff, landing, and any
+        // stretch where the height change is slower than the distance).
+        timingOut[i] = gsOut[i] > MIN_GROUND_SPEED_MS ? profileTiming(profOut[i], terrainSamples, gsOut[i], speedup, speeddown, timingOptsOut) : null
+        timingBack[i] = gsBack[i] > MIN_GROUND_SPEED_MS ? profileTiming(profBack[i], terrainBack, gsBack[i], speedupback, speeddownback, timingOptsBack) : null
+        timehor[i] = timingOut[i] ? routeDist / gsOut[i] : Infinity
+        timehorb[i] = timingBack[i] ? routeDist / gsBack[i] : Infinity
+        timeupdown[i] = timingOut[i] ? timingOut[i].total - timehor[i] : 0
+        timeupdownback[i] = timingBack[i] ? timingBack[i].total - timehorb[i] : 0
     }
 
     // Battery for each leg at every height.
     var battModel = readBatteryModel()
     var payloadOut = parseFloat(document.getElementById('payload').value) || 1
-    var payloadBack = parseFloat(document.getElementById('payloadback').value) || 1
+    var payloadBack = parseFloat(payloadBackCoef) || 1
     battOut = []
     battBack = []
     for (i=0;i<heights.length; i++) {
         if (battModel){
-            battOut[i] = batteryPct(battModel, legEnergyWh(battModel, payloadOut, speedhorizontal, timehor[i], profOut[i].climbUp, profOut[i].climbDown, speedup, speeddown), temperatureC)
-            battBack[i] = batteryPct(battModel, legEnergyWh(battModel, payloadBack, speedhorizontalback, timehorb[i], profBack[i].climbUp, profBack[i].climbDown, speedupback, speeddownback), temperatureC)
+            battOut[i] = batteryPct(battModel, legEnergyFromTiming(battModel, payloadOut, speedhorizontal, timingOut[i], speedup), temperatureC)
+            battBack[i] = batteryPct(battModel, legEnergyFromTiming(battModel, payloadBack, speedhorizontalback, timingBack[i], speedupback), temperatureC)
         } else {
             battOut[i] = NaN
             battBack[i] = NaN
@@ -2512,33 +2873,7 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
     }
 
     tofixed=0
-    document.getElementById('heightfore').innerHTML = (minhor===-1) ? '&mdash;' : lenNum(heights[minhor])
-    document.getElementById('heightback').innerHTML = (minhorb===-1) ? '&mdash;' : lenNum(heights[minhorb])
-    document.getElementById('unitFore').textContent = lenUnit()
-    document.getElementById('unitBack').textContent = lenUnit()
 
-    // Round-trip battery at the recommended heights.
-    var battReadout = document.getElementById('readoutBatt')
-    var battWarning = document.getElementById('batteryWarning')
-    var battUsed = (minhor !== -1 && minhorb !== -1) ? battOut[minhor] + battBack[minhorb] : NaN
-    if (isFinite(battUsed)){
-        var battLeft = 100 - battUsed
-        document.getElementById('battUsed').textContent = fmtPct(battUsed)
-        document.getElementById('battLeft').textContent = battLeft > 0 ? fmtPct(battLeft) + ' left' : 'not enough'
-        battReadout.classList.toggle('unsafe', battLeft < BATTERY_RESERVE_PCT)
-        battReadout.style.display = ''
-        if (battLeft < BATTERY_RESERVE_PCT){
-            battWarning.innerHTML = '\u26A0\uFE0F This round trip needs about ' + fmtPct(battUsed) + ' of a full battery' +
-                (battLeft > 0 ? ', leaving less than a ' + BATTERY_RESERVE_PCT + '% reserve' : ' \u2014 more than one charge') +
-                '. Shorten the route, lighten the payload, or wait for calmer wind.'
-            battWarning.style.display = 'block'
-        } else {
-            battWarning.style.display = 'none'
-        }
-    } else {
-        battReadout.style.display = 'none'
-        battWarning.style.display = 'none'
-    }
     var battNote = document.getElementById('batteryNote')
     if (battNote){
         battNote.innerHTML = 'Battery figures are estimates from the drone\u2019s rated flight time, payload, climbs and wind (roughly \u00B120%)' +
@@ -2546,8 +2881,6 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
             '. Older packs hold less \u2014 set battery health in the drone settings.'
         battNote.style.display = battModel ? 'block' : 'none'
     }
-    document.getElementById('readoutFore').classList.toggle('unsafe', minhor===-1)
-    document.getElementById('readoutBack').classList.toggle('unsafe', minhorb===-1)
     document.getElementById('distance').innerHTML = fmtDist(routeDist)
     var detourNote = document.getElementById('detourNote')
     var detourExtra = routeDist - dist
@@ -2627,17 +2960,9 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         var gMin = Infinity, gMax = -Infinity
         terrainSamples.forEach(function(p){ gMin = Math.min(gMin, p.g); gMax = Math.max(gMax, p.g) })
         var gStart = terrainSamples[0].g, gEnd = terrainSamples[terrainSamples.length - 1].g
-        var terrainText = "Ground along the route: " + fmtLen(gMin) + "\u2013" + fmtLen(gMax) + " above sea level (start " + fmtLen(gStart) + ", destination " + fmtLen(gEnd) + "). Heights here are above the ground: the drone follows the terrain, staying at least that high above it and never more than " + fmtLen(MAX_AGL_M) + " above it."
-        if (minhor !== -1){
-            var po = profOut[minhor]
-            var peakRel = -Infinity
-            po.pts.forEach(function(p){ peakRel = Math.max(peakRel, p.alt - gStart) })
-            terrainText += " On the outbound leg it climbs " + fmtLen(po.climbUp) + " and descends " + fmtLen(po.climbDown) + " in total, peaking about " + fmtLen(peakRel) + " above the takeoff point, and is at most " + fmtLen(po.maxAGL) + " above the ground."
-            renderTerrainProfile(terrainSamples, po, heights[minhor])
-        } else {
-            renderTerrainProfile(null)
-        }
-        terrainInfo.innerHTML = terrainText + " Elevation: Copernicus GLO-90 (~90 m cells), which smooths out narrow cliffs \u2014 keep visual line of sight."
+        // The plan-specific sentence and the side view are added by
+        // renderPlan(), so switching plans doesn't need a recalculation.
+        var terrainBaseText = "Ground along the route: " + fmtLen(gMin) + "\u2013" + fmtLen(gMax) + " above sea level (start " + fmtLen(gStart) + ", destination " + fmtLen(gEnd) + "). Heights are above the ground: the drone always stays at least that high above it and never more than " + fmtLen(MAX_AGL_M) + " above it."
     }
     terrainInfo.style.display = 'block'
 
@@ -2790,27 +3115,6 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         flyWarning.style.display = 'block'
     }
 
-    // The WPML download only makes sense once there's an actual
-    // flyable outbound height and route to hand off - the mission is
-    // one-way (outbound leg), since that's the leg this app treats as
-    // the "delivery" direction with its own payload/speed settings.
-    var downloadWpmlBtn = document.getElementById('downloadWpmlBtn')
-    // Without terrain data the exported mission would hold one
-    // altitude above takeoff with no idea of the hills in between, so
-    // it isn't offered at all in that case.
-    if (minhor !== -1 && terrainAvailable){
-        lastRoute = {
-            path: avoidance.path,
-            waypoints: profileWaypoints(terrainSamples, profOut[minhor]),
-            speedMS: speedhorizontal,
-            droneModel: document.getElementById('droneModel').value
-        }
-        if (downloadWpmlBtn) downloadWpmlBtn.style.display = ''
-    } else {
-        lastRoute = null
-        if (downloadWpmlBtn) downloadWpmlBtn.style.display = 'none'
-    }
-
     document.getElementById('visibility').innerHTML = unitsImperial ? (visibility / MILE_M).toFixed(0) + ' mi' : (visibility/1000).toFixed(0) + ' km'
     document.getElementById('precipitation').innerHTML = unitsImperial ? (precipitation / 25.4).toFixed(2) + ' in' : precipitation.toFixed(1) + ' mm'
     document.getElementById('temperature').innerHTML = (typeof temperatureC === 'number') ? (unitsImperial ? (temperatureC * 9 / 5 + 32).toFixed(0) + '\u00B0F' : temperatureC.toFixed(0) + '\u00B0C') : '\u2014'
@@ -2832,6 +3136,133 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         {h: 80, wd: wd[5]},
         {h: 120, wd: wd[9]}
     ]);
+
+    // ---- Plans: fastest (above) and least battery.
+    var climbRunOut = speedhorizontal / speedup, descRunOut = speedhorizontal / speeddown
+    var climbRunBack = speedhorizontalback / speedupback, descRunBack = speedhorizontalback / speeddownback
+    var legSpecs = {
+      out: { prof: profOut, flyable: flyableOut, timeV: timeupdown, timeH: timehor, batt: battOut, gs: gsOut, cross: crosswindOkOut, head: headwindOkOut,
+             payload: payloadOut, hs: speedhorizontal, up: speedup, down: speeddown, samples: terrainSamples, req: reqOut, climbRun: climbRunOut, descRun: descRunOut, timingOpts: timingOptsOut },
+      back: { prof: profBack, flyable: flyableBack, timeV: timeupdownback, timeH: timehorb, batt: battBack, gs: gsBack, cross: crosswindOkBack, head: headwindOkBack,
+             payload: payloadBack, hs: speedhorizontalback, up: speedupback, down: speeddownback, samples: terrainBack, req: reqBack, climbRun: climbRunBack, descRun: descRunBack, timingOpts: timingOptsBack }
+    }
+    function nearestHeightIdx(m){
+      var best = 0
+      for (var j = 0; j < heights.length; j++) if (Math.abs(heights[j] - m) < Math.abs(heights[best] - m)) best = j
+      return best
+    }
+    function evalLeg(L, idx, mode){
+      if (mode === 'follow'){
+        return { i: idx, mode: 'follow', prof: L.prof[idx], time: L.timeV[idx] + L.timeH[idx], batt: L.batt[idx], ok: L.flyable[idx] }
+      }
+      var prof = buildAltitudeProfile(L.samples, heights[idx], L.req, L.climbRun, L.descRun, 'level')
+      // Holding altitude puts the drone higher above lower ground, so
+      // wind limits are checked at every height it reaches, and the
+      // leg's speed uses the wind at its average height.
+      var top = nearestHeightIdx(Math.min(prof.maxAGL, heights[heights.length - 1]))
+      if (heights[top] < prof.maxAGL - 0.5 && top < heights.length - 1) top++
+      var windOk = true
+      for (var j = idx; j <= top; j++) if (!(windResOk[j] && L.cross[j] && L.head[j])) windOk = false
+      var w = nearestHeightIdx(prof.meanAGL)
+      var timing = L.gs[w] > MIN_GROUND_SPEED_MS ? profileTiming(prof, L.samples, L.gs[w], L.up, L.down, L.timingOpts) : null
+      var batt = (battModel && timing) ? batteryPct(battModel, legEnergyFromTiming(battModel, L.payload, L.hs, timing, L.up), temperatureC) : NaN
+      return { i: idx, mode: 'level', prof: prof, time: timing ? timing.total : Infinity, batt: batt, ok: legalOk[idx] && buildingOk[idx] && prof.ok && windOk && !!timing }
+    }
+    // Every flyable (height x style) candidate per leg, scored once.
+    function legCandidates(L){
+      var list = []
+      for (var j = 0; j < heights.length; j++){
+        list.push(evalLeg(L, j, 'follow'))
+        if (terrainAvailable) list.push(evalLeg(L, j, 'level'))
+      }
+      return list.filter(function(c){ return c.ok && isFinite(c.time) })
+    }
+    function pickBest(list, primary, secondary){
+      var best = null
+      list.forEach(function(c){
+        if (!isFinite(c[primary])) return
+        var tol = primary === 'batt' ? 0.05 : 0.5
+        if (!best || c[primary] < best[primary] - tol || (Math.abs(c[primary] - best[primary]) <= tol && c[secondary] < best[secondary])) best = c
+      })
+      return best
+    }
+    var candOut = legCandidates(legSpecs.out), candBack = legCandidates(legSpecs.back)
+    // What a pair of legs adds at the destination: the time spent
+    // there (hovering, at the outbound weight), and for photo missions
+    // the climb or descent between the two legs' heights.
+    function pairExtras(co, cb){
+      var t = dwellS
+      var wh = battModel ? battModel.hoverW * Math.pow(payloadOut, 1.5) * dwellS / 3600 : NaN
+      if (mission === 'photo'){
+        var dz = cb.prof.pts[0].alt - co.prof.pts[co.prof.pts.length - 1].alt
+        var baseBackW = battModel ? battModel.hoverW * Math.pow(payloadBack, 1.5) : NaN
+        if (dz > 0){
+          var tc = dz / speedupback
+          t += tc
+          if (battModel) wh += (baseBackW + battModel.massKg * payloadBack * 9.81 * speedupback / CLIMB_EFFICIENCY) * tc / 3600
+        } else if (dz < 0){
+          var td = -dz / speeddownback
+          t += td
+          if (battModel) wh += baseBackW * DESCENT_POWER_FACTOR * td / 3600
+        }
+      }
+      return { time: t, batt: battModel ? batteryPct(battModel, wh, temperatureC) : NaN }
+    }
+    // Both legs are chosen together, since the turnaround depends on
+    // the pair.
+    function pickPair(primary, secondary){
+      var best = null
+      var tol = primary === 'batt' ? 0.05 : 0.5
+      candOut.forEach(function(co){
+        candBack.forEach(function(cb){
+          var x = pairExtras(co, cb)
+          var tot = { time: co.time + cb.time + x.time, batt: co.batt + cb.batt + x.batt }
+          if (!isFinite(tot[primary])) return
+          if (!best || tot[primary] < best[primary] - tol || (Math.abs(tot[primary] - best[primary]) <= tol && tot[secondary] < best[secondary])){
+            best = { out: co, back: cb, time: tot.time, batt: tot.batt, totalTime: tot.time, totalBatt: tot.batt }
+          }
+        })
+      })
+      // One leg unflyable: still show the other one.
+      return best || { out: pickBest(candOut, primary, secondary), back: pickBest(candBack, primary, secondary), totalTime: NaN, totalBatt: NaN }
+    }
+    var plans = { fast: pickPair('time', 'batt'), eco: null }
+    if (battModel){
+      plans.eco = pickPair('batt', 'time')
+    }
+    // A hold-altitude profile can rescue a leg that terrain following
+    // couldn't fly; don't leave the "can't recommend" warning up then.
+    if (plans.fast.out && plans.fast.back) document.getElementById('flyWarning').style.display = 'none'
+
+    // Savings line: fastest plan vs simply flying at the highest
+    // allowed, flyable height (terrain following).
+    var savingsEl = document.getElementById('savingsText')
+    if (plans.fast.out && plans.fast.back && typeof baseIdx === 'number' && baseIdx !== -1 && isFinite(travel120)){
+        var baseX = pairExtras(evalLeg(legSpecs.out, baseIdx, 'follow'), evalLeg(legSpecs.back, baseIdx, 'follow'))
+        var travelBase = travel120 + baseX.time
+        var fastTotal = plans.fast.totalTime
+        document.getElementById('savesec').innerHTML = formatDuration(travelBase - fastTotal, 1)
+        document.getElementById('totaltime120').innerHTML = formatDuration(travelBase)
+        document.getElementById('savepercent').innerHTML = "(" + ((travelBase - fastTotal) / travelBase * 100).toFixed(1) + "%)"
+        var battSaveFast = (battOut[baseIdx] + battBack[baseIdx] + baseX.batt) - plans.fast.totalBatt
+        document.getElementById('battSaving').textContent = (isFinite(battSaveFast) && battSaveFast >= 0.5) ? ' and about ' + battSaveFast.toFixed(0) + '% of a battery' : ''
+        savingsEl.style.display = (travelBase - fastTotal) > 0.5 ? '' : 'none'
+    }
+    currentCalc = {
+      plans: plans,
+      heights: heights,
+      terrainSamples: terrainSamples,
+      terrainAvailable: terrainAvailable,
+      terrainBaseText: terrainAvailable ? terrainBaseText : '',
+      path: avoidance.path,
+      terrainBack: terrainBack,
+      mission: mission,
+      speedOut: speedhorizontal,
+      speedBack: speedhorizontalback,
+      droneModel: document.getElementById('droneModel').value
+    }
+    renderPlan()
+    renderForecastStrip(json, nowHourIdx)
 
     updateUrlForRoute();
 
@@ -2994,11 +3425,11 @@ function xmlEscape(s){
 // The mission-config block is identical in template.kml and
 // waylines.wpml (see the "common elements" section of DJI's WPML
 // spec), so it's built once and reused for both.
-function wpmlMissionConfigXml(droneEnum){
+function wpmlMissionConfigXml(droneEnum, finishAction){
   return '' +
 '  <wpml:missionConfig>\n' +
 '    <wpml:flyToWaylineMode>safely</wpml:flyToWaylineMode>\n' +
-'    <wpml:finishAction>goHome</wpml:finishAction>\n' +
+'    <wpml:finishAction>' + (finishAction || 'goHome') + '</wpml:finishAction>\n' +
 '    <wpml:exitOnRCLost>executeLostAction</wpml:exitOnRCLost>\n' +
 '    <wpml:executeRCLostAction>hover</wpml:executeRCLostAction>\n' +
 '    <wpml:takeOffSecurityHeight>20</wpml:takeOffSecurityHeight>\n' +
@@ -3048,7 +3479,7 @@ function buildTemplateKml(route){
 '  <wpml:author>Flytimizer</wpml:author>\n' +
 '  <wpml:createTime>' + Date.now() + '</wpml:createTime>\n' +
 '  <wpml:updateTime>' + Date.now() + '</wpml:updateTime>\n' +
-wpmlMissionConfigXml(droneEnum) +
+wpmlMissionConfigXml(droneEnum, route.finishAction) +
 '  <Folder>\n' +
 '    <wpml:templateType>waypoint</wpml:templateType>\n' +
 '    <wpml:templateId>0</wpml:templateId>\n' +
@@ -3079,7 +3510,7 @@ function buildWaylinesWpml(route, distanceM){
   return '<?xml version="1.0" encoding="UTF-8"?>\n' +
 '<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.2">\n' +
 '<Document>\n' +
-wpmlMissionConfigXml(droneEnum) +
+wpmlMissionConfigXml(droneEnum, route.finishAction) +
 '  <Folder>\n' +
 '    <wpml:templateId>0</wpml:templateId>\n' +
 '    <wpml:executeHeightMode>relativeToStartPoint</wpml:executeHeightMode>\n' +
@@ -3097,8 +3528,8 @@ placemarks +
 // triggers a browser download. Called by the "Download flight plan"
 // button, which is only shown once calcHeight() has found a flyable
 // outbound height (see lastRoute above).
-async function downloadWPML(){
-  if (!lastRoute){
+async function downloadWPML(missionIdx){
+  if (!lastRoute || !lastRoute.missions[missionIdx || 0]){
     window.alert("There's no flyable route to export yet - calculate a route first.");
     return;
   }
@@ -3107,22 +3538,24 @@ async function downloadWPML(){
     return;
   }
 
+  var m = lastRoute.missions[missionIdx || 0];
+  var route = { waypoints: m.waypoints, speedMS: m.speedMS, finishAction: m.finishAction, droneModel: lastRoute.droneModel };
   var distanceM = 0;
-  for (var i = 0; i < lastRoute.path.length - 1; i++){
-    distanceM += getDistanceFromLatLon(lastRoute.path[i].lat, lastRoute.path[i].lng, lastRoute.path[i+1].lat, lastRoute.path[i+1].lng);
+  for (var i = 0; i < route.waypoints.length - 1; i++){
+    distanceM += getDistanceFromLatLon(route.waypoints[i].lat, route.waypoints[i].lng, route.waypoints[i+1].lat, route.waypoints[i+1].lng);
   }
 
   var zip = new JSZip();
   var wpmz = zip.folder('wpmz');
-  wpmz.file('template.kml', buildTemplateKml(lastRoute));
-  wpmz.file('waylines.wpml', buildWaylinesWpml(lastRoute, distanceM));
+  wpmz.file('template.kml', buildTemplateKml(route));
+  wpmz.file('waylines.wpml', buildWaylinesWpml(route, distanceM));
 
   try {
     var blob = await zip.generateAsync({ type: 'blob' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
-    a.download = 'flytimizer-route.kmz';
+    a.download = m.filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -3148,7 +3581,7 @@ async function downloadWPML(){
 // ---------------------------------------------------------------
 var SETTINGS_KEY = 'flytimizerSettings';
 var LAST_PLACE_KEY = 'flytimizerLastPlace';
-var SETTING_FIELDS = ['hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
+var SETTING_FIELDS = ['mission', 'dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
 
 function storageGet(key){
   try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e){ return null; }
@@ -3171,6 +3604,10 @@ function applySettings(st){
   if (isPreset) applyDronePreset(); // load the preset's own numbers first
   SETTING_FIELDS.forEach(function(id){
     var v = st[id];
+    if (id === 'mission'){
+      if (v === 'delivery' || v === 'photo') document.getElementById('mission').value = v;
+      return;
+    }
     if (v === undefined || v === null || v === '' || isNaN(parseFloat(v))) return;
     // For a preset only the payload/drag fields are personal; the
     // speeds come from the preset itself.
@@ -3302,6 +3739,8 @@ function restoreFromUrl(){
   SETTING_FIELDS.forEach(function(id){
     document.getElementById(id).addEventListener('input', saveSettings);
   });
+
+  onMissionChange();
 
   if (restored === 'route'){
     window.addEventListener('load', function(){
