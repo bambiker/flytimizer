@@ -7,6 +7,7 @@
 //   elevFail      the elevation API answers HTTP 500
 //   flatGround    every elevation is 40 m
 //   forecastFail  the forecast API answers HTTP 500
+//   jszipFail     the JSZip script can't be downloaded
 //   hazards       restricted sites near the route (default: a set
 //                 including one with an HTML-injection name)
 //   buildings     'nearby' (default), 'mixed' or 'many' on the line
@@ -72,6 +73,7 @@ export async function openSite(page, from, to, query, sc = {}){
   });
   await ctx.route(/^https:\/\/unpkg\.com\/(leaflet|jszip)@[^/]+\/(.*)$/, r => {
     const m = r.request().url().match(/unpkg\.com\/(leaflet|jszip)@[^/]+\/(.*)$/);
+    if (m[1] === 'jszip' && sc.jszipFail) return r.fulfill({ status: 503, body: 'error' });
     const file = path.join(MODULES, m[1], m[2]);
     r.fulfill({ status: 200, body: fs.readFileSync(file), contentType: TYPES[path.extname(file)] });
   });
