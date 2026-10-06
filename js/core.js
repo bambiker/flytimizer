@@ -5,12 +5,6 @@ import { map } from './map-view.js';
 import { hideNotice, showNotice } from './notice.js';
 import { rememberStartPoint } from './share.js';
 
-// todo:
-// if choose start and than use GPs it makes two start marker
-// before calculate height test if there is start and destination
-// tell the user, how much he will save if he fly at 30m, 120m
-// let the user decide horizontal and vertical UAV speed
-
 //Set up some of our variables.
 export var marker = 0; ////Has the user plotted their location marker?
 export var lat1,lat2, lng1, lng2;
@@ -121,8 +115,7 @@ export function setstartloc(lat, long)
             marker1.bindTooltip("Start");  
          markerLocation(1, marker1);    
    //Listen for drag events!
-   marker1.on('dragend', function(event) {
-//        var latlng = event.target.getLatLng();
+   marker1.on('dragend', function() {
        markerLocation(1, marker1);  
 });      
     }
@@ -132,21 +125,15 @@ export function setstartloc(lat, long)
 //This function will get the marker's current location and then add the lat/long
 //values to our textfields so that we can save the location.
 export function markerLocation(sd, mark){
-    //Get location.
-    if (sd===1)
-        {
-  var currentLocation = mark.getLatLng(); //getLatLng();  
-  lat1 = currentLocation.lat; //latitude
-  lng1 = currentLocation.lng; //longitude
-  rememberStartPoint(lat1, lng1);
-        }
-    else
-        {
-   var currentLocation = mark.getLatLng();  
-   lat2 = currentLocation.lat; //latitude
-   lng2 = currentLocation.lng; //longitude
-        }
-
+  var currentLocation = mark.getLatLng();
+  if (sd === 1){
+    lat1 = currentLocation.lat;
+    lng1 = currentLocation.lng;
+    rememberStartPoint(lat1, lng1);
+  } else {
+    lat2 = currentLocation.lat;
+    lng2 = currentLocation.lng;
+  }
 }
 
 // Map click: the first click places the start, the second the
@@ -164,8 +151,7 @@ export function addMarker(e){
        markerLocation(1, marker1);  
        //Listen for drag events!
 
-marker1.on('dragend', function(event) {
- var latlng = event.target.getLatLng();
+marker1.on('dragend', function() {
  markerLocation(1, marker1);
 });      
     } else{
@@ -177,7 +163,7 @@ marker1.on('dragend', function(event) {
             marker2.bindTooltip("Destination");    
             markerLocation(2, marker2);
             //Listen for drag events!
-     marker2.on('dragend', function(event) {
+     marker2.on('dragend', function() {
    markerLocation(2, marker2);  
 });      
         } else{

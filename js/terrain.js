@@ -385,7 +385,14 @@ export function profileWaypoints(samples, prof){
 
 // Side view of the route: ground, the 120 m-above-ground ceiling, and
 // the planned outbound altitude.
-export function renderTerrainProfile(samples, prof, h){
+// Side view of the route, start on the left: the ground, the
+// above-ground height limit, and the planned altitude of each leg.
+// back = { prof, h } for the return leg (its profile runs from the
+// destination, so it's mirrored onto the same axis), or null.
+// When both legs fly the same altitudes, one line is drawn and the
+// legend says so; otherwise the return leg is a wider band under the
+// outbound line, so stretches where they coincide show both colours.
+export function renderTerrainProfile(samples, prof, h, back){
   var el = document.getElementById('terrainProfile');
   if (!el) return;
   if (!samples || !prof || samples[samples.length - 1].s < 1){
@@ -393,11 +400,17 @@ export function renderTerrainProfile(samples, prof, h){
     return;
   }
   refreshVizTheme();
-  var W = 600, H = 190, padL = 46, padR = 12, padT = 26, padB = 26;
+  var W = 600, H = 204, padL = 46, padR = 12, padT = 40, padB = 26;
   var total = samples[samples.length - 1].s;
+  var outPts = prof.pts;
+  var backPts = back && back.prof ? back.prof.pts.map(function(p){ return { s: total - p.s, alt: p.alt }; }).reverse() : null;
+  var sameAlt = !!backPts && samples.every(function(p){
+    return Math.abs(profileAltAt(outPts, p.s) - profileAltAt(backPts, p.s)) < 1;
+  });
+
   var minG = Infinity, maxY = -Infinity;
   samples.forEach(function(p){ minG = Math.min(minG, p.g); maxY = Math.max(maxY, p.g + MAX_AGL_M); });
-  prof.pts.forEach(function(p){ maxY = Math.max(maxY, p.alt); });
+  outPts.concat(backPts || []).forEach(function(p){ maxY = Math.max(maxY, p.alt); });
   var y0 = Math.floor((minG - 10) / 10) * 10;
   var y1 = Math.ceil((maxY + 5) / 10) * 10;
   function X(s){ return padL + (s / total) * (W - padL - padR); }
@@ -407,9 +420,11 @@ export function renderTerrainProfile(samples, prof, h){
   samples.forEach(function(p){ ground += ' L' + X(p.s).toFixed(1) + ',' + Y(p.g).toFixed(1); });
   ground += ' L' + X(total) + ',' + Y(y0) + ' Z';
   var ceiling = samples.map(function(p, i){ return (i ? 'L' : 'M') + X(p.s).toFixed(1) + ',' + Y(p.g + MAX_AGL_M).toFixed(1); }).join(' ');
-  var flight = prof.pts.map(function(p, i){ return (i ? 'L' : 'M') + X(p.s).toFixed(1) + ',' + Y(p.alt).toFixed(1); }).join(' ');
-  flight = 'M' + X(0) + ',' + Y(samples[0].g) + ' L' + flight.slice(1) +
-    ' L' + X(total) + ',' + Y(samples[samples.length - 1].g);
+  // A leg's line, from the ground at the start to the ground at the destination.
+  function flightPath(pts){
+    var d = pts.map(function(p, i){ return (i ? 'L' : 'M') + X(p.s).toFixed(1) + ',' + Y(p.alt).toFixed(1); }).join(' ');
+    return 'M' + X(0) + ',' + Y(samples[0].g) + ' L' + d.slice(1) + ' L' + X(total) + ',' + Y(samples[samples.length - 1].g);
+  }
 
   var mono = 'font-family="JetBrains Mono, monospace" font-size="10"';
   var ticks = '';
@@ -424,21 +439,37 @@ export function renderTerrainProfile(samples, prof, h){
   }
   var distLabel = fmtDist(total);
 
+  // Legend row under the title: one entry per line drawn, then the limit.
+  var legend = [];
+  if (!backPts) legend.push({ color: VIZ_COLORS.accent, text: 'outbound (≥' + fmtLen(h) + ' AGL)' });
+  else if (sameAlt) legend.push({ color: VIZ_COLORS.accent, text: 'outbound & return, same height (≥' + fmtLen(h) + ' AGL)' });
+  else {
+    legend.push({ color: VIZ_COLORS.accent, text: 'outbound (≥' + fmtLen(h) + ' AGL)' });
+    legend.push({ color: VIZ_COLORS.accent2, width: 5, text: 'return (≥' + fmtLen(back.h) + ' AGL)' });
+  }
+  legend.push({ color: VIZ_COLORS.danger, dash: true, text: fmtLen(MAX_AGL_M) + ' AGL limit' });
+  var lx = padL, legendSvg = '';
+  legend.forEach(function(item){
+    legendSvg += '<line x1="' + lx + '" x2="' + (lx + 14) + '" y1="25" y2="25" stroke="' + item.color + '" stroke-width="' + (item.dash ? 1 : (item.width || 2.2)) + '"' + (item.dash ? ' stroke-dasharray="4 3"' : '') + '/>' +
+      '<text x="' + (lx + 18) + '" y="28" fill="' + VIZ_COLORS.muted + '">' + item.text + '</text>';
+    lx += 18 + item.text.length * 6.1 + 18;
+  });
+
+  var title = backPts ? 'OUTBOUND & RETURN' : 'OUTBOUND';
+  var ariaLegs = !backPts ? 'the planned outbound altitude'
+    : sameAlt ? 'the planned altitude, the same for the outbound and return legs'
+    : 'the planned outbound and return altitudes';
   el.innerHTML =
-    '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Side view of the route: ground elevation, the above-ground height limit, and the planned outbound altitude">' +
-      '<text x="' + padL + '" y="14" ' + mono + ' fill="' + VIZ_COLORS.muted + '">ALTITUDE ABOVE SEA LEVEL (' + lenUnit() + ') — OUTBOUND</text>' +
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Side view of the route: ground elevation, the above-ground height limit, and ' + ariaLegs + '">' +
+      '<text x="' + padL + '" y="12" ' + mono + ' fill="' + VIZ_COLORS.muted + '">ALTITUDE ABOVE SEA LEVEL (' + lenUnit() + ') — ' + title + '</text>' +
+      '<g ' + mono + '>' + legendSvg + '</g>' +
       ticks +
       '<path d="' + ground + '" fill="' + VIZ_COLORS.muted + '" fill-opacity="0.28" stroke="' + VIZ_COLORS.muted + '" stroke-width="1"/>' +
       '<path d="' + ceiling + '" fill="none" stroke="' + VIZ_COLORS.danger + '" stroke-width="1" stroke-dasharray="4 3"/>' +
-      '<path d="' + flight + '" fill="none" stroke="' + VIZ_COLORS.accent + '" stroke-width="2.2" stroke-linejoin="round"/>' +
+      (backPts && !sameAlt ? '<path class="flight-return" d="' + flightPath(backPts) + '" fill="none" stroke="' + VIZ_COLORS.accent2 + '" stroke-width="5" stroke-linejoin="round"/>' : '') +
+      '<path class="flight-out" d="' + flightPath(outPts) + '" fill="none" stroke="' + VIZ_COLORS.accent + '" stroke-width="2.2" stroke-linejoin="round"/>' +
       '<text x="' + padL + '" y="' + (H - 8) + '" ' + mono + ' fill="' + VIZ_COLORS.muted + '">start</text>' +
       '<text x="' + (W - padR) + '" y="' + (H - 8) + '" text-anchor="end" ' + mono + ' fill="' + VIZ_COLORS.muted + '">' + distLabel + '</text>' +
-      '<g ' + mono + '>' +
-        '<line x1="' + (W - 250) + '" x2="' + (W - 236) + '" y1="11" y2="11" stroke="' + VIZ_COLORS.accent + '" stroke-width="2.2"/>' +
-        '<text x="' + (W - 232) + '" y="14" fill="' + VIZ_COLORS.muted + '">drone (≥' + fmtLen(h) + ' AGL)</text>' +
-        '<line x1="' + (W - 112) + '" x2="' + (W - 98) + '" y1="11" y2="11" stroke="' + VIZ_COLORS.danger + '" stroke-dasharray="4 3"/>' +
-        '<text x="' + (W - 94) + '" y="14" fill="' + VIZ_COLORS.muted + '">' + fmtLen(MAX_AGL_M) + ' AGL limit</text>' +
-      '</g>' +
     '</svg>';
   el.style.display = 'block';
 }

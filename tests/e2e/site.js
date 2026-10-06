@@ -5,6 +5,7 @@
 //   windMul       multiply all forecast wind speeds and gusts
 //   overpassFail  Overpass answers HTTP 500
 //   elevFail      the elevation API answers HTTP 500
+//   flatGround    every elevation is 40 m
 //   hazards       restricted sites near the route (default: a set
 //                 including one with an HTML-injection name)
 //   buildings     'nearby' (default), 'mixed' or 'many' on the line
@@ -79,7 +80,7 @@ export async function openSite(page, from, to, query, sc = {}){
     const u = new URL(r.request().url());
     const la = u.searchParams.get('latitude').split(',').map(Number);
     const lo = u.searchParams.get('longitude').split(',').map(Number);
-    json(r, { elevation: la.map((a, i) => Math.round(40 + 3000 * (a - fla) + 25 * Math.sin((lo[i] - flo) * 900))) });
+    json(r, { elevation: la.map((a, i) => sc.flatGround ? 40 : Math.round(40 + 3000 * (a - fla) + 25 * Math.sin((lo[i] - flo) * 900))) });
   });
   await ctx.route(/nominatim\.openstreetmap\.org\/search/, r => {
     const q = new URL(r.request().url()).searchParams.get('q');
