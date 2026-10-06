@@ -62,7 +62,9 @@
   --accent: #ff8a34;
   --accent-ink: #1a1002;
   --accent-2: #4fd1c5;
+  --accent-text: #ff8a34;  /* accent used as text: at least 4.5:1 on the panels */
   --danger: #ff5a5a;
+  --danger-solid: #c62828; /* background behind white text */
   --grid-line: rgba(79,209,197,0.06);
   --field-shadow: rgba(0,0,0,0.35);
   --danger-bg: rgba(255,90,90,0.12);
@@ -82,8 +84,10 @@
     --muted: #58658a;
     --accent: #d9670f;
     --accent-ink: #1a1002;
-    --accent-2: #0e8c7f;
+    --accent-2: #0a776c;
+    --accent-text: #b04f06;
     --danger: #c93030;
+    --danger-solid: #c93030;
     --grid-line: rgba(23,32,55,0.045);
     --field-shadow: rgba(23,32,55,0.12);
     --danger-bg: rgba(201,48,48,0.10);
@@ -278,6 +282,13 @@ details.panel + details.panel{
   margin-top: 12px;
 }
 
+.map-buttons{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.map-buttons [hidden]{ display: none; }
+
 .location-search{
   display:flex;
   gap: 8px;
@@ -324,7 +335,7 @@ details.panel + details.panel{
   min-width: 0;
   background: transparent;
   border: none;
-  color: var(--accent);
+  color: var(--accent-text);
   font-family: var(--mono);
   font-size: 15px;
   padding: 4px 0;
@@ -512,6 +523,11 @@ details.panel + details.panel{
   grid-template-columns: 2fr 1fr;
   gap: 12px;
 }
+
+/* Grid and flex items don't shrink below their content by default, so
+   a long dropdown option would push the field off a phone screen. */
+.mission-grid > *, .field, .field-input{ min-width: 0; }
+.field-input select{ width: 100%; text-overflow: ellipsis; }
 
 @media (max-width: 520px){
   .mission-grid{ grid-template-columns: 1fr; }
@@ -746,8 +762,8 @@ details.panel + details.panel{
 }
 
 .no-fly-warning{
-  background: var(--danger);
-  border: 2px solid var(--danger);
+  background: var(--danger-solid);
+  border: 2px solid var(--danger-solid);
   color: #fff;
   padding: 14px 16px;
   border-radius: 4px;
@@ -905,6 +921,8 @@ details.panel + details.panel{
     </div>
   </header>
 
+  <main>
+
   <p class="lede">Click or search to set the start point. Click again
   to set the destination.</p>
 
@@ -917,7 +935,10 @@ details.panel + details.panel{
         </div>
         <button class="btn btn-ghost" id="locationSearchBtn" data-action="search">Search</button>
       </div>
-      <button class="btn btn-ghost" data-action="locate">Use my location</button>
+      <div class="map-buttons">
+        <button class="btn btn-ghost" data-action="locate">Use my location</button>
+        <button class="btn btn-ghost" id="resetBtn" data-action="reset" hidden>Start over</button>
+      </div>
     </div>
     <div class="notice" id="searchNotice" role="alert" hidden></div>
   </section>
@@ -1260,6 +1281,7 @@ details.panel + details.panel{
       almost the wind's speed.</p>
     </div>
   </details>
+  </main>
 
   <a class="feedback-link" href="https://docs.google.com/forms/d/e/1FAIpQLScucpTGf_6hN_e8NQMgTJqoPX7q7B1HavnFdywewEtgMXFuNA/viewform?usp=sf_link" target="_blank">Contact us for questions and improvement suggestions</a>
   <span style="color:var(--muted); margin:0 8px;">&middot;</span>
@@ -1309,7 +1331,7 @@ details.panel + details.panel{
 
   <!-- AddToAny BEGIN -->
   <div class="a2a_kit a2a_kit_size_32 a2a_default_style" data-a2a-url="https://bambiker.github.io/flytimizer/" data-a2a-title="Flytimizer">
-    <a class="a2a_dd" href="https://www.addtoany.com/share"></a>
+    <a class="a2a_dd" href="https://www.addtoany.com/share" aria-label="More ways to share"></a>
     <a class="a2a_button_copy_link"></a>
     <a class="a2a_button_twitter"></a>
     <a class="a2a_button_x"></a>
