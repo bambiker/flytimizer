@@ -1327,7 +1327,10 @@ details.panel + details.panel{
 
       function show(date){
         var formatted = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-        var days = Math.floor((Date.now() - date.getTime()) / 86400000);
+        // Whole calendar days in the visitor's time zone, so a date from
+        // yesterday reads "yesterday" even if it was under 24 hours ago.
+        function dayStart(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+        var days = Math.round((dayStart(new Date()) - dayStart(date)) / 86400000);
         var rel = days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 30 ? days + ' days ago' : null;
         timeEl.textContent = rel ? formatted + ' (' + rel + ')' : formatted;
         timeEl.setAttribute('datetime', date.toISOString().slice(0, 10));
