@@ -371,3 +371,27 @@ test('usage events are sent to analytics, without coordinates', async ({ page })
   // Nothing that locates the person: no coordinates in any event.
   expect(JSON.stringify(events)).not.toMatch(/32\.79|34\.98|35\.00|32\.80/);
 });
+
+for (const guide of ['guides/', 'guides/best-drone-altitude-in-wind.html', 'guides/drone-battery-in-wind.html', 'guides/is-the-straight-line-the-best-drone-route.html']){
+  for (const scheme of ['light', 'dark']){
+    test('guide page ' + guide + ' has no accessibility problems (' + scheme + ')', async ({ page }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      await openSite(page, HAIFA, null, '');     // installs the fakes
+      await page.goto('https://flytimizer.test/' + guide);
+      await expect(page.locator('h1')).toBeVisible();
+      await expect(page.locator('a.cta')).toHaveAttribute('href', '../');
+      await page.addScriptTag({ path: require.resolve('axe-core/axe.min.js') });
+      const violations = await page.evaluate(async () => (await window.axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'best-practice'] }))
+        .violations.map(v => v.id + ': ' + v.nodes.map(n => n.target.join(' ')).slice(0, 4).join(', ')));
+      expect(violations).toEqual([]);
+    });
+  }
+}
+
+test('the main page links to the guides', async ({ page }) => {
+  await openSite(page, HAIFA, null, '');
+  await page.getByRole('link', { name: 'Wind changes with height' }).click();
+  await expect(page.locator('h1')).toHaveText('What altitude should I fly my drone in wind?');
+  await page.locator('a.cta').click();
+  await expect(page.locator('#map')).toBeVisible();
+});

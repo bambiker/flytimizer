@@ -1,0 +1,32 @@
+# Flytimizer
+
+> Free web-based drone flight planner. Given a start and destination on a map, it recommends the altitude (height above ground) for the outbound and return legs separately, using live hourly wind forecasts at several heights, terrain elevation, buildings and restricted areas from OpenStreetMap, and the drone's speeds, payload and battery. No sign-up.
+
+Flytimizer is for drone pilots planning delivery, inspection or photo flights who want the fastest or least-battery altitude for a route, and a check against gusts, crosswind, terrain, buildings and restricted sites before flying.
+
+What it does:
+- Checks every height from 30 m to 120 m above ground, in 10 m steps, up to the local legal limit, and picks the best one for each leg (the outbound and return legs face opposite winds).
+- Uses the hourly wind forecast (Open-Meteo) at 10, 80 and 120 m, estimates gusts at each height, and rules out heights where gusts exceed the drone's rated wind resistance or the crosswind is too strong.
+- Follows the terrain (Copernicus GLO-90 elevation), so heights stay above ground level along the whole route.
+- Detours around schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites (OpenStreetMap), and clears or avoids buildings.
+- Applies country rules (height limit, keep-out distances) for Israel and the United States; elsewhere it applies Israel's rules as a cautious default.
+- Estimates battery use per leg (payload, climbs, wind, cold, battery health) and warns below a 20% reserve; offers a fastest plan and a least-battery plan.
+- Shows a 48-hour outlook to pick a better time, exports a DJI WPML waypoint mission (.kmz) for DJI Pilot 2, and makes shareable route links.
+- Drone presets for DJI and Autel models, or custom parameters.
+
+Limitations: a planning aid, not a guarantee of safety or legality. OpenStreetMap data can be incomplete, forecasts can be wrong, and the battery estimate is roughly ±20%. Pilots must check official no-fly maps, NOTAMs and local rules.
+
+## App
+
+- [Flytimizer](https://bambiker.github.io/flytimizer/): the flight planner
+
+## Guides
+
+- [What altitude should I fly my drone in wind?](https://bambiker.github.io/flytimizer/guides/best-drone-altitude-in-wind.html): wind shear, headwind vs tailwind asymmetry, and different altitudes per leg, with worked examples
+- [How does wind affect drone battery life?](https://bambiker.github.io/flytimizer/guides/drone-battery-in-wind.html): why wind drains the battery; payload, climbs, cold and battery age
+- [Is the straight line the best drone route?](https://bambiker.github.io/flytimizer/guides/is-the-straight-line-the-best-drone-route.html): terrain, buildings, restricted sites and wind, with a planning checklist
+
+## Optional
+
+- [Source code](https://github.com/bambiker/flytimizer)
+- [Terms of Use](https://bambiker.github.io/flytimizer/terms.html)
