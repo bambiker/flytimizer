@@ -875,7 +875,7 @@ details.panel + details.panel{
     <div class="map-actions">
       <div class="location-search">
         <div class="field-input">
-          <input type="text" id="locationSearchInput" placeholder="Search a place or address…" autocomplete="off">
+          <input type="text" id="locationSearchInput" placeholder="Search a place or address…" aria-label="Search a place or address" enterkeyhint="search" autocomplete="off">
         </div>
         <button class="btn btn-ghost" id="locationSearchBtn" data-action="search">Search</button>
       </div>
@@ -896,7 +896,7 @@ details.panel + details.panel{
       </label>
       <label class="field">
         Time at destination
-        <div class="field-input"><input type="text" id="dwell" value="30"><span class="unit">s</span></div>
+        <div class="field-input"><input type="text" inputmode="decimal" id="dwell" value="30"><span class="unit">s</span></div>
       </label>
     </div>
     <p class="field-note" id="missionNote"></p>
@@ -922,47 +922,47 @@ details.panel + details.panel{
         </label>
         <label class="field">
           Horizontal speed
-          <div class="field-input"><input type="text" id="hor" value="12"><span class="unit">m/s</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="hor" value="12"><span class="unit">m/s</span></div>
         </label>
         <label class="field">
           Ascent speed
-          <div class="field-input"><input type="text" id="asc" value="5"><span class="unit">m/s</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="asc" value="5"><span class="unit">m/s</span></div>
         </label>
         <label class="field">
           Descent speed
-          <div class="field-input"><input type="text" id="des" value="3"><span class="unit">m/s</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="des" value="3"><span class="unit">m/s</span></div>
         </label>
         <label class="field">
           Wind resistance
-          <div class="field-input"><input type="text" id="windres" value="10.7"><span class="unit">m/s</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="windres" value="10.7"><span class="unit">m/s</span></div>
         </label>
         <label class="field">
           Battery energy
-          <div class="field-input"><input type="text" id="batt" value="11.5"><span class="unit">Wh</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="batt" value="11.5"><span class="unit">Wh</span></div>
         </label>
         <label class="field">
           Rated flight time
-          <div class="field-input"><input type="text" id="ftime" value="19"><span class="unit">min</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="ftime" value="19"><span class="unit">min</span></div>
         </label>
         <label class="field">
           Takeoff weight
-          <div class="field-input"><input type="text" id="mass" value="0.151"><span class="unit">kg</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="mass" value="0.151"><span class="unit">kg</span></div>
         </label>
         <label class="field">
           Battery health
-          <div class="field-input"><input type="text" id="health" value="100"><span class="unit">%</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="health" value="100"><span class="unit">%</span></div>
         </label>
         <label class="field">
           Drag coefficient
-          <div class="field-input"><input type="text" id="drag" value="1.0"><span class="unit">&nbsp;</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="drag" value="1.0"><span class="unit">&nbsp;</span></div>
         </label>
         <label class="field">
           <span id="payloadLabel">Payload coefficient (outbound)</span>
-          <div class="field-input"><input type="text" id="payload" value="2"><span class="unit">&times;</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="payload" value="2"><span class="unit">&times;</span></div>
         </label>
         <label class="field" id="payloadBackField">
           Payload coefficient (return)
-          <div class="field-input"><input type="text" id="payloadback" value="1"><span class="unit">&times;</span></div>
+          <div class="field-input"><input type="text" inputmode="decimal" id="payloadback" value="1"><span class="unit">&times;</span></div>
         </label>
         <label class="field-check">
           <input type="checkbox" id="altPermit">
@@ -1004,24 +1004,7 @@ details.panel + details.panel{
       </select>
     </div>
 
-    <div class="no-fly-warning" id="noFlyWarning" style="display:none"></div>
     <div class="fly-warning" id="flyWarning" style="display:none"></div>
-    <div class="fly-warning" id="rainWarning" style="display:none"></div>
-    <div class="fly-warning" id="batteryWarning" style="display:none"></div>
-
-    <div class="forecast">
-      <div class="forecast-head">
-        <strong id="forecastSelected">Planning for now</strong>
-        <button class="btn btn-ghost btn-inline" id="forecastNowBtn" style="display:none" data-action="forecast" data-arg="0">Back to now</button>
-      </div>
-      <div id="forecastStrip"></div>
-      <div class="forecast-legend">
-        <span>Next 48 h &middot; bar = wind at 80m</span>
-        <span><i style="background:var(--accent-2)"></i>good</span>
-        <span><i style="background:#d9a400"></i>marginal</span>
-        <span><i style="background:var(--danger)"></i>not recommended</span>
-      </div>
-    </div>
 
     <div class="plan-tabs" id="planTabs" role="tablist" aria-label="Route plan" style="display:none">
       <button class="plan-tab active" id="planFastBtn" role="tab" aria-selected="true" data-action="plan" data-arg="fast"><span class="plan-title">Fastest</span></button>
@@ -1058,6 +1041,24 @@ details.panel + details.panel{
     with flying at <span id="baselineHeight"></span>, the highest allowed
     height that's flyable today (<span id="totaltime120"></span> total,
     <span id="timenowind"></span> with no wind at all).</p>
+
+    <div class="no-fly-warning" id="noFlyWarning" style="display:none"></div>
+    <div class="fly-warning" id="rainWarning" style="display:none"></div>
+    <div class="fly-warning" id="batteryWarning" style="display:none"></div>
+
+    <div class="forecast">
+      <div class="forecast-head">
+        <strong id="forecastSelected">Planning for now</strong>
+        <button class="btn btn-ghost btn-inline" id="forecastNowBtn" style="display:none" data-action="forecast" data-arg="0">Back to now</button>
+      </div>
+      <div id="forecastStrip"></div>
+      <div class="forecast-legend">
+        <span>Next 48 h &middot; bar = wind at 80m</span>
+        <span><i style="background:var(--accent-2)"></i>good</span>
+        <span><i style="background:#d9a400"></i>marginal</span>
+        <span><i style="background:var(--danger)"></i>not recommended</span>
+      </div>
+    </div>
 
     <div class="terrain-profile" id="terrainProfile" style="display:none"></div>
 
