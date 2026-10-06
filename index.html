@@ -173,11 +173,9 @@ h1 i{
 .updated{
   color: var(--muted);
   font-size: 13px;
-  margin: 0;
+  margin: 0 0 22px;
   font-family: var(--mono);
 }
-
-.updated a{ text-decoration: none; border-bottom: 1px dotted currentColor; }
 
 .changelog-date{
   font-family: var(--mono);
@@ -867,13 +865,6 @@ details.panel + details.panel{
       <h1><i class="fas fa-drone"></i> Flytimizer</h1>
       <p class="subtitle">Fly (Time & Battery) Optimizer</p>
     </div>
-    <!-- Bump data-updated (and the What's new list) on every release.
-         If the GitHub repo is reachable, the latest commit date
-         replaces it automatically when it's newer. -->
-    <p class="updated" id="lastUpdated" data-updated="2026-10-05">
-      Updated <time id="lastUpdatedDate" datetime="2026-10-05">5 Oct 2026</time>
-      &middot; <a href="#whatsNew" id="whatsNewLink">What's new</a>
-    </p>
   </header>
 
   <p class="lede">Click or search to set the start point. Click again
@@ -1317,6 +1308,13 @@ details.panel + details.panel{
   <span style="color:var(--muted); margin:0 8px;">&middot;</span>
   <a class="feedback-link" href="terms.html">Terms of Use</a>
 
+  <!-- Bump data-updated (and the What's new list) on every release.
+       If the GitHub repo is reachable, the latest commit date
+       replaces it automatically when it's newer. -->
+  <p class="updated" id="lastUpdated" data-updated="2026-10-05">
+    Updated <time id="lastUpdatedDate" datetime="2026-10-05">5 Oct 2026</time>
+  </p>
+
   <script>
     // "Updated" date: start from the date written in the page, and
     // replace it with the repo's latest commit date when that's newer
@@ -1346,17 +1344,6 @@ details.panel + details.panel{
           if (latest && !isNaN(latest) && (isNaN(written) || latest > written)) show(latest);
         })
         .catch(function(){});
-
-      // The "What's new" link opens the panel instead of just jumping to it.
-      var link = document.getElementById('whatsNewLink');
-      var panel = document.getElementById('whatsNew');
-      if (link && panel){
-        link.addEventListener('click', function(e){
-          e.preventDefault();
-          panel.open = true;
-          panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-      }
     })();
   </script>
 
