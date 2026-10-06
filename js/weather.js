@@ -76,7 +76,7 @@ export function renderForecastStrip(json, nowIdx){
       ', gusts ' + fmtSpeed(f.gustLow) + '–' + fmtSpeed(f.gustHigh) + ', rain ' + f.pp.toFixed(0) + '%' +
       (f.status === 'bad' ? ' — not recommended' : f.status === 'fair' ? ' — marginal' : ' — good');
     var h = Math.max(8, Math.round(f.w80 / maxW * 100));
-    var tick = (f.time.getHours() % 6 === 0) ? '<span class="fc-tick">' + (f.time.getHours() === 0 ? f.time.toLocaleDateString([], { weekday: 'short' }) : String(f.time.getHours()).padStart(2, '0')) + '</span>' : '';
+    var tick = (f.time.getHours() % 6 === 0) ? '<span class="fc-tick" aria-hidden="true">' + (f.time.getHours() === 0 ? f.time.toLocaleDateString([], { weekday: 'short' }) : String(f.time.getHours()).padStart(2, '0')) + '</span>' : '';
     return '<button type="button" class="fc-bar fc-' + f.status + (k === forecastOffsetH ? ' fc-selected' : '') + '" title="' + label + '" aria-label="' + label + '" data-action="forecast" data-arg="' + k + '">' +
       '<span class="fc-fill" style="height:' + h + '%"></span>' + tick + '</button>';
   }).join('');
@@ -89,6 +89,11 @@ export function renderForecastStrip(json, nowIdx){
   }
   var nowBtn = document.getElementById('forecastNowBtn');
   if (nowBtn) nowBtn.style.display = forecastOffsetH === 0 ? 'none' : '';
+}
+
+// Back to planning for now, without recalculating (used by Start over).
+export function resetForecastOffset(){
+  forecastOffsetH = 0;
 }
 
 export function setForecastOffset(k){

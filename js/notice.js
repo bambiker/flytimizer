@@ -4,6 +4,8 @@
 
 // Shows `message` in the container with this id. With opts.copyText,
 // also shows that text in a read-only box, selected, ready to copy.
+// With opts.action = { label, name }, adds a button that runs that
+// data-action (see app.js), e.g. a "Try again".
 export function showNotice(id, message, opts){
   var box = document.getElementById(id);
   if (!box) return;
@@ -21,6 +23,14 @@ export function showNotice(id, message, opts){
     copy.value = opts.copyText;
     copy.setAttribute('aria-label', message);
     box.appendChild(copy);
+  }
+  if (opts.action){
+    var act = document.createElement('button');
+    act.type = 'button';
+    act.className = 'btn btn-ghost btn-inline';
+    act.dataset.action = opts.action.name;
+    act.textContent = opts.action.label;
+    box.appendChild(act);
   }
   var close = document.createElement('button');
   close.type = 'button';

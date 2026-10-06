@@ -34,6 +34,12 @@ export function setCurrentCalc(c){
   currentCalc = c;
 }
 
+// Start over: forget the last result (and its flight plans).
+export function clearPlans(){
+  currentCalc = null;
+  lastRoute = null;
+}
+
 export function planLegLabel(leg){
   if (!leg) return '—';
   return leg.mode === 'level' ? 'holds altitude' : 'follows terrain';

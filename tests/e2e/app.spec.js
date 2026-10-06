@@ -1,6 +1,7 @@
 import * as base from '@playwright/test';
 import JSZip from 'jszip';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import { openSite, waitForResult } from './site.js';
 
 // Every test fails on an uncaught page error or console error.
@@ -190,6 +191,7 @@ test('Calculate without a start point says so in the page', async ({ page }) => 
   await page.locator('#calcBtn').click();
   await expect(page.locator('#calcNotice')).toBeVisible();
   await expect(page.locator('#calcNotice')).toContainText('Choose a start point first');
+  await expect(page.locator('#result')).toBeHidden();
   await page.locator('#calcNotice .notice-close').click();
   await expect(page.locator('#calcNotice')).toBeHidden();
 });
@@ -253,3 +255,68 @@ test('when both legs fly the same altitudes, the side view draws one line and sa
   await expect(chart.locator('path.flight-out')).toHaveCount(1);
   await expect(chart.locator('path.flight-return')).toHaveCount(0);
 });
+
+test('on a narrow phone the mission fields fit the screen', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 });
+  await openSite(page, HAIFA, null, '');
+  const panel = await page.locator('#mission').locator('xpath=ancestor::section[1]').boundingBox();
+  for (const id of ['#mission', '#dwell']){
+    const box = await page.locator(id).locator('xpath=..').boundingBox();   // the field's box
+    expect(box.x + box.width).toBeLessThanOrEqual(panel.x + panel.width);
+  }
+});
+
+test('Start over clears the points, the route and the result', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+  await waitForResult(page);
+  const reset = page.getByRole('button', { name: 'Start over' });
+  await expect(page.locator('.leaflet-marker-icon')).toHaveCount(2);
+
+  await reset.click();
+  await expect(page.locator('#result')).toBeHidden();
+  await expect(page.locator('.leaflet-marker-icon')).toHaveCount(0);
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(1);   // just the (now empty) route line
+  expect(new URL(page.url()).search).toBe('');
+  await expect(reset).toBeHidden();
+
+  // The next map click is a new start point, and Calculate works from it.
+  const map = await page.locator('#map').boundingBox();
+  await page.mouse.click(map.x + map.width / 2, map.y + map.height / 2);
+  await expect(page.locator('.leaflet-marker-icon')).toHaveCount(1);
+  await expect(reset).toBeVisible();
+  await page.locator('#calcBtn').click();
+  await waitForResult(page);
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+});
+
+test('Start over is only offered once there is a point on the map', async ({ page }) => {
+  await openSite(page, HAIFA, null, '');
+  await page.evaluate(() => history.replaceState(null, '', location.pathname));
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Start over' })).toBeHidden();
+});
+
+test('a failed wind forecast is reported, with Try again', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { forecastFail: true });
+  const notice = page.locator('#calcNotice');
+  await expect(notice).toContainText("Couldn't load the wind forecast", { timeout: 45000 });
+  await expect(notice.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(page.locator('#result')).toBeHidden();
+});
+
+const require = createRequire(import.meta.url);
+for (const scheme of ['light', 'dark']){
+  test('no accessibility problems found by axe (' + scheme + ' theme)', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+    await waitForResult(page);
+    await page.locator('details').evaluateAll(ds => ds.forEach(d => { d.open = true; }));
+    await page.addScriptTag({ path: require.resolve('axe-core/axe.min.js') });
+    const violations = await page.evaluate(async () => {
+      // The map's own controls and tiles are Leaflet's; the share buttons are AddToAny's.
+      const r = await window.axe.run({ exclude: [['#map'], ['.a2a_kit']] }, { runOnly: ['wcag2a', 'wcag2aa', 'best-practice'], rules: { region: { enabled: false } } });
+      return r.violations.map(v => v.id + ': ' + v.nodes.map(n => n.target.join(' ')).slice(0, 4).join(', '));
+    });
+    expect(violations).toEqual([]);
+  });
+}
