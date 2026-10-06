@@ -10,7 +10,8 @@ What it does:
 - Follows the terrain (Copernicus GLO-90 elevation), so heights stay above ground level along the whole route.
 - Detours around schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites (OpenStreetMap), and clears or avoids buildings.
 - Applies country rules (height limit, keep-out distances) for Israel and the United States; elsewhere it applies Israel's rules as a cautious default.
-- Estimates battery use per leg (payload, climbs, wind, cold, battery health) and warns below a 20% reserve; offers a fastest plan and a least-battery plan.
+- Models both ways a drone flies in wind: holding a set ground speed (DJI waypoint missions, most multirotors; a tailwind saves battery, not time) or holding its airspeed (fixed-wing, or flying flat out; a tailwind makes it faster).
+- Estimates battery use per leg (payload, climbs, wind, airspeed, cold, battery health) and warns below a 20% reserve; offers a fastest plan and a least-battery plan.
 - Shows a 48-hour outlook to pick a better time, exports a DJI WPML waypoint mission (.kmz) for DJI Pilot 2, and makes shareable route links.
 - Drone presets for DJI and Autel models, or custom parameters.
 
