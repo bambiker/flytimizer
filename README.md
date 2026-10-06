@@ -274,6 +274,7 @@ npx playwright install chromium   # first time only
 npm test
 ```
 
+* `npm run lint` — ESLint (also part of `npm test`).
 * `tests/unit/` — the calculation and formatting functions, run directly in Node.
 * `tests/e2e/` — the real page in Chromium, with the weather, elevation and OpenStreetMap services replaced by fixed test data, so the tests run offline and give the same result every time.
 
