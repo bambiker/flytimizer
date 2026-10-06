@@ -534,7 +534,7 @@ function renderRulesInfo(rules, legalCapM, permit){
   var el = document.getElementById('rulesInfo');
   if (!el) return;
   var p = rules.profile;
-  var where = rules.detected.name || (rules.detected.code ? rules.detected.code : 'this location');
+  var where = escapeHtml(rules.detected.name || (rules.detected.code ? rules.detected.code : 'this location'));
   var head;
   if (rules.fallback){
     head = '<strong>Rules: Israel (default).</strong> We don’t have a rule set for ' + where + ' yet, so we’re applying Israel’s, which are on the strict side — check your local regulations too.';
@@ -2063,6 +2063,15 @@ function chooseUnits(rules){
 }
 
 function lenNum(m){ return Math.round(unitsImperial ? m * M_TO_FT : m); }
+// Place and country names come from OpenStreetMap, which anyone can
+// edit, and end up in innerHTML and Leaflet tooltips (which render
+// HTML) - escape them so a name can't inject markup or script.
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
 function lenUnit(){ return unitsImperial ? 'ft' : 'm'; }
 function fmtLen(m){ return lenNum(m) + ' ' + lenUnit(); }
 function fmtSpeed(ms){ return unitsImperial ? (ms * 2.23694).toFixed(1) + ' mph' : ms.toFixed(1) + ' m/s'; }
@@ -2766,7 +2775,7 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
       return minDistanceFromPath(avoidance.path, h.lat, h.lng) < (h.radius + h.warnM)
     }).map(function(h){
       var label = HAZARD_TYPE_LABEL[h.type] || 'restricted site'
-      if (h.name) label += ' (' + h.name + ')'
+      if (h.name) label += ' (' + escapeHtml(h.name) + ')'
       var note = rules.profile.noFlyNote[h.type]
       return label + ' — ' + (note || ('keep-out distance around ' + formatDistance(h.buffer)))
     })
@@ -3024,7 +3033,7 @@ headwindOkBack[i] = !crosswindOkBack[i] || gsBack[i] > MIN_GROUND_SPEED_MS
         if (trappedList.length > 0){
             var trappedNames = trappedList.map(function(t){
                 var label = HAZARD_TYPE_LABEL[t.type] || 'restricted area'
-                if (t.name) label += ' (' + t.name + ')'
+                if (t.name) label += ' (' + escapeHtml(t.name) + ')'
                 var where = (t.atStart && t.atDest) ? 'start and destination' : (t.atStart ? 'start point' : 'destination point')
                 return label + ' at the ' + where
             })
@@ -3315,7 +3324,7 @@ function renderHazardsAndRoute(hazards, buildings, path){
   for (var i = 0; i < hazards.length; i++){
     var hz = hazards[i];
     var label = HAZARD_TYPE_LABEL[hz.type] || 'Restricted area';
-    if (hz.name) label += ' \u2014 ' + hz.name;
+    if (hz.name) label += ' \u2014 ' + escapeHtml(hz.name);
     var hazardStyle = hz.noFly
       ? { color: '#7a1620', weight: 2, dashArray: '6 4', fillColor: '#7a1620', fillOpacity: 0.28 }
       : { color: '#e6484f', weight: 2, fillColor: '#e6484f', fillOpacity: 0.22 };
