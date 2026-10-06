@@ -1,5 +1,6 @@
 // DJI WPML flight-plan export.
 
+import { track } from './analytics.js';
 import { getDistanceFromLatLon } from './core.js';
 import { hideNotice, showNotice } from './notice.js';
 import { lastRoute } from './plans.js';
@@ -215,6 +216,7 @@ export async function downloadWPML(missionIdx){
     a.download = m.filename;
     document.body.appendChild(a);
     a.click();
+    track('download_flight_plan', { mission: lastRoute.missions.length > 1 ? 'one_way_legs' : m.filename.replace(/^flytimizer-|\.kmz$/g, '') });
     document.body.removeChild(a);
     setTimeout(function(){ URL.revokeObjectURL(url); }, 10000);
   } catch (err){

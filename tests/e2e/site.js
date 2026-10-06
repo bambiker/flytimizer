@@ -67,7 +67,8 @@ export async function openSite(page, from, to, query, sc = {}){
   // Anything not handled below (tiles, fonts, analytics, share buttons) is blocked.
   await ctx.route(/./, r => r.abort());
   await ctx.route(SITE + '/**', r => {
-    const file = path.join(ROOT, decodeURIComponent(new URL(r.request().url()).pathname));
+    let file = path.join(ROOT, decodeURIComponent(new URL(r.request().url()).pathname));
+    if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');   // like GitHub Pages
     if (!file.startsWith(ROOT) || !fs.existsSync(file)) return r.fulfill({ status: 404 });
     r.fulfill({ status: 200, body: fs.readFileSync(file), contentType: TYPES[path.extname(file)] || 'application/octet-stream' });
   });

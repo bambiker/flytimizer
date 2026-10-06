@@ -1,6 +1,7 @@
 // Shareable route URLs, remembered settings, and page start-up
 // (initSharedState, called by app.js).
 
+import { track } from './analytics.js';
 import { getHeight } from './calc.js';
 import { lat1, lat2, lng1, lng2, marker, setDestination, setstartloc } from './core.js';
 import { DRONE_PRESETS, PRESET_FIELDS, applyDronePreset, updateDroneSummary } from './drone.js';
@@ -92,6 +93,7 @@ export async function shareRoute(){
   if (navigator.share){
     try {
       await navigator.share({ title: 'Flytimizer route', text: 'Optimal drone altitude for this route, with live wind and terrain:', url: url });
+      track('share_route', { method: 'share_sheet' });
       return;
     } catch (e){
       if (e && e.name === 'AbortError') return; // person closed the share sheet
@@ -99,6 +101,7 @@ export async function shareRoute(){
   }
   try {
     await navigator.clipboard.writeText(url);
+    track('share_route', { method: 'copy' });
     if (btn){
       var label = btn.textContent;
       btn.textContent = 'Link copied ✓';
@@ -106,6 +109,7 @@ export async function shareRoute(){
     }
   } catch (e){
     showNotice('resultNotice', 'Copy this link to share the route:', { copyText: url });
+    track('share_route', { method: 'shown' });
   }
 }
 
@@ -139,6 +143,8 @@ export function restoreFromUrl(){
 
 export function initSharedState(){
   var restored = restoreFromUrl();
+  // Someone opened a shared link (a whole route, or just a start point).
+  if (restored) track('open_shared_link', { kind: restored });
   if (!restored){
     applySettings(storageGet(SETTINGS_KEY));
     var last = storageGet(LAST_PLACE_KEY);

@@ -5,6 +5,7 @@
 // Buttons say what they do with data-action (and data-arg), including
 // ones the scripts create later, so one click listener handles them all.
 
+import { track } from './analytics.js';
 import { applyDronePreset, checkCustom } from './drone.js';
 import { getHeight } from './calc.js';
 import { clearMarkers, getLocation, searchLocation } from './core.js';
@@ -41,9 +42,20 @@ var ACTIONS = {
   download: function(index){ downloadWPML(Number(index)); }
 };
 
+// Choices worth counting (outcomes like calculate or share are counted
+// where they happen).
+var TRACKED = {
+  plan: function(arg){ return ['select_plan', { plan: arg }]; },
+  forecast: function(arg){ return ['select_forecast_hour', { hours_ahead: Number(arg) }]; },
+  reset: function(){ return ['start_over', {}]; }
+};
+
 document.addEventListener('click', function(e){
+  var feedback = e.target.closest('a.feedback-link[href*="docs.google.com/forms"]');
+  if (feedback) track('feedback_click', { place: 'footer' });
   var el = e.target.closest('[data-action]');
   if (!el || !ACTIONS[el.dataset.action]) return;
+  if (TRACKED[el.dataset.action]) track.apply(null, TRACKED[el.dataset.action](el.dataset.arg));
   ACTIONS[el.dataset.action](el.dataset.arg);
 });
 
