@@ -152,3 +152,31 @@ test('with only a start point, Calculate plans a hover at that spot', async ({ p
 
   await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
 });
+
+test('on a phone the recommended heights come before the warnings', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+  await waitForResult(page);
+
+  const top = async sel => (await page.locator(sel).boundingBox()).y;
+  await expect(page.locator('#noFlyWarning')).toBeVisible();
+  expect(await top('#readoutFore')).toBeLessThan(await top('#noFlyWarning'));
+  expect(await top('#readoutFore')).toBeLessThan(await top('#forecastStrip'));
+  // The no-fly text refers to "the altitude or path shown above".
+  await expect(page.locator('#noFlyWarning')).toContainText('shown above');
+});
+
+test('when no height is safe, that warning comes before everything else', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { windMul: 6 });
+  await waitForResult(page);
+
+  const top = async sel => (await page.locator(sel).boundingBox()).y;
+  expect(await top('#flyWarning')).toBeLessThan(await top('#readoutFore'));
+});
+
+test('number fields open a numeric keypad on phones', async ({ page }) => {
+  await openSite(page, HAIFA, null, 'drone=mini4pro');
+  const fields = ['dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'health', 'drag', 'payload', 'payloadback'];
+  for (const id of fields) await expect(page.locator('#' + id)).toHaveAttribute('inputmode', 'decimal');
+  await expect(page.getByRole('textbox', { name: 'Search a place or address' })).toBeVisible();
+});
