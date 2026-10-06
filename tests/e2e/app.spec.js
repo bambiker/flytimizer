@@ -156,6 +156,45 @@ test('with only a start point, Calculate plans a hover at that spot', async ({ p
   await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
 });
 
+test('the round-trip range is drawn around the start and can be hidden', async ({ page }) => {
+  await openSite(page, HAIFA, null, 'drone=mini4pro');
+  await page.locator('#calcBtn').click();
+  await waitForResult(page);
+
+  const outline = page.locator('.leaflet-overlay-pane path[stroke="#14b8a6"]');
+  await expect(outline).toHaveCount(1);
+  await expect(page.locator('#rangeText')).toContainText(/up to [\d.]+ km toward the \w+/);
+  // With only a start point the map zooms out to show the whole range.
+  const map = await page.locator('#map').boundingBox();
+  await expect.poll(async () => (await outline.boundingBox()).height).toBeGreaterThan(map.height * 0.4);
+  const box = await outline.boundingBox();
+  expect(box.x).toBeGreaterThanOrEqual(map.x);
+  expect(box.y).toBeGreaterThanOrEqual(map.y);
+  expect(box.x + box.width).toBeLessThanOrEqual(map.x + map.width);
+  expect(box.y + box.height).toBeLessThanOrEqual(map.y + map.height);
+
+  await page.getByLabel('Show range on the map').uncheck();
+  await expect(outline).toHaveCount(0);
+  await page.getByLabel('Show range on the map').check();
+  await expect(outline).toHaveCount(1);
+
+  // A click inside the range still sets the destination.
+  await page.locator('#map').click({ position: { x: map.width / 2 + 40, y: map.height / 2 + 40 } });
+  await expect(page.locator('.leaflet-marker-icon')).toHaveCount(2);
+});
+
+test('with a custom drone that has no battery figures, no range is shown', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+  await waitForResult(page);
+  await expect(page.locator('#rangeInfo')).toBeVisible();
+  // Custom drones can leave the battery size empty.
+  await page.locator('#batt').evaluate(el => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.locator('#calcBtn').click();
+  await waitForResult(page);
+  await expect(page.locator('#rangeInfo')).toBeHidden();
+  await expect(page.locator('.leaflet-overlay-pane path[stroke="#14b8a6"]')).toHaveCount(0);
+});
+
 test('on a phone the recommended heights come before the warnings', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
@@ -280,8 +319,7 @@ test('Start over clears the points, the route and the result', async ({ page }) 
   await expect(reset).toBeHidden();
 
   // The next map click is a new start point, and Calculate works from it.
-  const map = await page.locator('#map').boundingBox();
-  await page.mouse.click(map.x + map.width / 2, map.y + map.height / 2);
+  await page.locator('#map').click();   // waits for the scroll back to the map
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(1);
   await expect(reset).toBeVisible();
   await page.locator('#calcBtn').click();
@@ -364,7 +402,7 @@ test('usage events are sent to analytics, without coordinates', async ({ page })
   expect(names).toEqual(expect.arrayContaining(['open_shared_link', 'calculate', 'select_plan', 'select_forecast_hour',
     'download_flight_plan', 'share_route', 'start_over']));
   const calcs = events.filter(e => e[0] === 'calculate').map(e => e[1]);
-  expect(calcs[0]).toEqual({ result: 'ok', drone: 'mini4pro', mission: 'delivery', speed_mode: 'ground', country: 'IL', points: 2, distance_km: expect.any(Number) });
+  expect(calcs[0]).toEqual({ result: 'ok', drone: 'mini4pro', mission: 'delivery', speed_mode: 'ground', country: 'IL', points: 2, distance_km: expect.any(Number), range_km: expect.any(Number) });
   expect(calcs[calcs.length - 1]).toEqual({ result: 'no_start' });
   expect(events.find(e => e[0] === 'select_plan')[1]).toEqual({ plan: 'eco' });
   expect(events.find(e => e[0] === 'share_route')[1]).toEqual({ method: 'copy' });

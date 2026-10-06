@@ -6,7 +6,7 @@ import { escapeHtml, fmtLen } from './units.js';
 
 // Set by initMap(), which app.js calls once at start-up.
 export let map;
-export var buildingLayer, hazardLayer, routeLine;
+export var buildingLayer, hazardLayer, routeLine, rangeLayer;
 
 export var OSM_DATA_CREDIT = 'Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
 
@@ -37,7 +37,9 @@ export function initMap(){
 
   // Buildings, hazard zones (schools/kindergartens/hospitals/playgrounds)
   // and the route around them. Cleared and redrawn on every calculation
-  // instead of piling up new layers each time.
+  // instead of piling up new layers each time. The round-trip range
+  // outline goes first, so it sits underneath the rest.
+  rangeLayer = L.layerGroup().addTo(map);
   buildingLayer = L.layerGroup().addTo(map);
   hazardLayer = L.layerGroup().addTo(map);
   routeLine = L.polyline([], { color: '#2f6fed', weight: 4, opacity: 0.85 }).addTo(map);
@@ -45,8 +47,9 @@ export function initMap(){
   map.on('click', addMarker);
 }
 
-// Start over: removes the restricted areas, buildings and route.
+// Start over: removes the restricted areas, buildings, route and range.
 export function clearRouteLayers(){
+  rangeLayer.clearLayers();
   hazardLayer.clearLayers();
   buildingLayer.clearLayers();
   routeLine.setLatLngs([]);
