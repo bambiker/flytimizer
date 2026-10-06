@@ -10,6 +10,7 @@
 //   buildings     'nearby' (default), 'mixed' or 'many' on the line
 //   country       ISO code Nominatim reports (default 'il')
 //   imperial      saved unit preference
+//   places        place-search results: { 'query text': [lat, lng] }
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -80,7 +81,12 @@ export async function openSite(page, from, to, query, sc = {}){
     const lo = u.searchParams.get('longitude').split(',').map(Number);
     json(r, { elevation: la.map((a, i) => Math.round(40 + 3000 * (a - fla) + 25 * Math.sin((lo[i] - flo) * 900))) });
   });
-  await ctx.route(/nominatim\.openstreetmap\.org/, r => json(r, { address: { country_code: sc.country || 'il', country: sc.country === 'us' ? 'United States' : 'Israel' } }));
+  await ctx.route(/nominatim\.openstreetmap\.org\/search/, r => {
+    const q = new URL(r.request().url()).searchParams.get('q');
+    const hit = (sc.places || {})[q];
+    json(r, hit ? [{ lat: String(hit[0]), lon: String(hit[1]), display_name: q }] : []);
+  });
+  await ctx.route(/nominatim\.openstreetmap\.org\/reverse/, r => json(r, { address: { country_code: sc.country || 'il', country: sc.country === 'us' ? 'United States' : 'Israel' } }));
   await ctx.route(/overpass|maps\.mail\.ru/, r => {
     if (sc.overpassFail) return r.fulfill({ status: 500, body: 'error' });
     const body = decodeURIComponent((r.request().postData() || r.request().url()).replace(/\+/g, ' '));
