@@ -1,5 +1,12 @@
-// Shareable route URLs, remembered settings, and page start-up.
-// Loaded last: its start-up code uses everything above.
+// Shareable route URLs, remembered settings, and page start-up
+// (initSharedState, called by app.js).
+
+import { getHeight } from './calc.js';
+import { lat1, lat2, lng1, lng2, marker, setDestination, setstartloc } from './core.js';
+import { DRONE_PRESETS, PRESET_FIELDS, applyDronePreset, updateDroneSummary } from './drone.js';
+import { map } from './map-view.js';
+import { onMissionChange } from './mission.js';
+import { UNITS_KEY } from './units.js';
 
 // ---------------------------------------------------------------
 // Shareable routes & remembered settings
@@ -14,24 +21,24 @@
 // localStorage, so a returning visitor lands where they left off
 // (unless they arrived through a shared link, which always wins).
 // ---------------------------------------------------------------
-var SETTINGS_KEY = 'flytimizerSettings';
-var LAST_PLACE_KEY = 'flytimizerLastPlace';
-var SETTING_FIELDS = ['mission', 'dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
+export var SETTINGS_KEY = 'flytimizerSettings';
+export var LAST_PLACE_KEY = 'flytimizerLastPlace';
+export var SETTING_FIELDS = ['mission', 'dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
 
-function storageGet(key){
+export function storageGet(key){
   try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e){ return null; }
 }
-function storageSet(key, value){
+export function storageSet(key, value){
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (e){}
 }
 
-function readSettings(){
+export function readSettings(){
   var out = { drone: document.getElementById('droneModel').value };
   SETTING_FIELDS.forEach(function(id){ out[id] = document.getElementById(id).value; });
   return out;
 }
 
-function applySettings(st){
+export function applySettings(st){
   if (!st) return;
   var sel = document.getElementById('droneModel');
   var isPreset = st.drone && Object.prototype.hasOwnProperty.call(DRONE_PRESETS, st.drone);
@@ -52,30 +59,15 @@ function applySettings(st){
   updateDroneSummary();
 }
 
-function saveSettings(){
+export function saveSettings(){
   storageSet(SETTINGS_KEY, readSettings());
 }
 
-function rememberStartPoint(lat, lng){
+export function rememberStartPoint(lat, lng){
   storageSet(LAST_PLACE_KEY, { lat: lat, lng: lng });
 }
 
-// Places (or moves) the destination marker - the programmatic twin
-// of the second map click in addMarker().
-function setDestination(lat, lng){
-  if (marker === 0) return;
-  if (marker === 1){
-    marker = 2;
-    marker2 = new L.marker([lat, lng], { draggable: true, autoPan: true }).addTo(map);
-    marker2.bindTooltip('Destination');
-    marker2.on('dragend', function(){ markerLocation(2, marker2); });
-  } else {
-    marker2.setLatLng([lat, lng]);
-  }
-  markerLocation(2, marker2);
-}
-
-function routeUrl(){
+export function routeUrl(){
   var params = new URLSearchParams();
   if (marker >= 1) params.set('from', lat1.toFixed(5) + ',' + lng1.toFixed(5));
   if (marker === 2) params.set('to', lat2.toFixed(5) + ',' + lng2.toFixed(5));
@@ -88,11 +80,11 @@ function routeUrl(){
   return location.origin + location.pathname + '?' + params.toString().replace(/%2C/g, ',');
 }
 
-function updateUrlForRoute(){
+export function updateUrlForRoute(){
   try { history.replaceState(null, '', routeUrl()); } catch (e){}
 }
 
-async function shareRoute(){
+export async function shareRoute(){
   var url = routeUrl();
   var btn = document.getElementById('shareRouteBtn');
   if (navigator.share){
@@ -115,7 +107,7 @@ async function shareRoute(){
   }
 }
 
-function parseLatLngParam(v){
+export function parseLatLngParam(v){
   if (!v) return null;
   var parts = v.split(',').map(parseFloat);
   if (parts.length !== 2 || parts.some(isNaN)) return null;
@@ -125,7 +117,7 @@ function parseLatLngParam(v){
 
 // Returns 'route' when the URL carried a full route (so it should be
 // calculated right away), 'start' for a start point only, or null.
-function restoreFromUrl(){
+export function restoreFromUrl(){
   var params = new URLSearchParams(location.search);
   var from = parseLatLngParam(params.get('from'));
   if (!from) return null;
@@ -143,7 +135,7 @@ function restoreFromUrl(){
   return 'start';
 }
 
-(function initSharedState(){
+export function initSharedState(){
   var restored = restoreFromUrl();
   if (!restored){
     applySettings(storageGet(SETTINGS_KEY));
@@ -166,7 +158,7 @@ function restoreFromUrl(){
     unitsEl.addEventListener('change', function(){
       storageSet(UNITS_KEY, unitsEl.value);
       // Re-run so every number re-renders (lookups come from cache).
-      if (marker > 0 && document.getElementById('result').style.display === 'block' && typeof getHeight === 'function') getHeight();
+      if (marker > 0 && document.getElementById('result').style.display === 'block') getHeight();
     });
   }
 
@@ -179,7 +171,7 @@ function restoreFromUrl(){
 
   if (restored === 'route'){
     window.addEventListener('load', function(){
-      if (typeof getHeight === 'function') getHeight();
+      getHeight();
     });
   }
-})();
+}

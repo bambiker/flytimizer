@@ -1,5 +1,10 @@
 // Terrain elevation and the above-ground altitude profile.
 
+import { getDistanceFromLatLon } from './core.js';
+import { BUILDING_HEIGHT_SAFETY_MARGIN_M, BUILDING_LATERAL_SAFETY_MARGIN_M, sleep } from './osm.js';
+import { M_TO_FT, fmtDist, fmtLen, lenUnit, unitsImperial } from './units.js';
+import { VIZ_COLORS, refreshVizTheme } from './visuals.js';
+
 // ---------------------------------------------------------------
 // Terrain (Open-Meteo Elevation API, Copernicus GLO-90 DEM)
 //
@@ -34,20 +39,24 @@
 // cliffs and gullies are smoothed out. Treat it as a planning aid on
 // top of visual line of sight, not a guarantee of clearance.
 // ---------------------------------------------------------------
-var ELEVATION_API = 'https://api.open-meteo.com/v1/elevation';
-var ELEVATION_BATCH = 100;          // API limit per request
-var ELEVATION_TIMEOUT_MS = 15000;
-var TERRAIN_SAMPLE_SPACING_M = 30;
-var TERRAIN_MAX_SAMPLES = 400;      // spacing widens on long routes to stay under this
-var TERRAIN_LEVEL_TOLERANCE_M = 15; // how much the ground may vary under one level stretch
-var MAX_AGL_M = 120;                // legal ceiling, above ground
-var elevationCache = new Map();
+export var ELEVATION_API = 'https://api.open-meteo.com/v1/elevation';
+export var ELEVATION_BATCH = 100;          // API limit per request
+export var ELEVATION_TIMEOUT_MS = 15000;
+export var TERRAIN_SAMPLE_SPACING_M = 30;
+export var TERRAIN_MAX_SAMPLES = 400;      // spacing widens on long routes to stay under this
+export var TERRAIN_LEVEL_TOLERANCE_M = 15; // how much the ground may vary under one level stretch
+export var MAX_AGL_M = 120;                // legal ceiling, above ground
+export var elevationCache = new Map();
 
-function elevationKey(p){
+export function setMaxAglM(m){
+  MAX_AGL_M = m;
+}
+
+export function elevationKey(p){
   return p.lat.toFixed(5) + ',' + p.lng.toFixed(5);
 }
 
-async function fetchElevationBatch(batch){
+export async function fetchElevationBatch(batch){
   var url = ELEVATION_API +
     '?latitude=' + batch.map(function(p){ return p.lat.toFixed(5); }).join(',') +
     '&longitude=' + batch.map(function(p){ return p.lng.toFixed(5); }).join(',');
@@ -75,7 +84,7 @@ async function fetchElevationBatch(batch){
   throw lastErr;
 }
 
-async function fetchElevations(points){
+export async function fetchElevations(points){
   var missing = [];
   var seen = {};
   points.forEach(function(p){
@@ -95,7 +104,7 @@ async function fetchElevations(points){
 
 // Points along the path roughly every TERRAIN_SAMPLE_SPACING_M, each
 // with its distance from the start (s). Every path vertex is kept.
-function densifyPath(path){
+export function densifyPath(path){
   var segLens = [], total = 0;
   for (var i = 0; i < path.length - 1; i++){
     var len = getDistanceFromLatLon(path[i].lat, path[i].lng, path[i+1].lat, path[i+1].lng);
@@ -121,7 +130,7 @@ function densifyPath(path){
   return out;
 }
 
-async function getTerrainProfile(path){
+export async function getTerrainProfile(path){
   var samples = densifyPath(path);
   var elev = await fetchElevations(samples);
   samples.forEach(function(p, k){ p.g = elev[k]; });
@@ -131,7 +140,7 @@ async function getTerrainProfile(path){
 // Flat stand-in used when elevation data couldn't be loaded, so the
 // rest of the calculation still runs (heights then mean "above
 // takeoff", as before) - the UI warns loudly when this happens.
-function flatTerrainProfile(path){
+export function flatTerrainProfile(path){
   var samples = densifyPath(path);
   samples.forEach(function(p){ p.g = 0; });
   return samples;
@@ -140,7 +149,7 @@ function flatTerrainProfile(path){
 // Extra altitude required at each sample by buildings we climb over:
 // their (approximate) ground + height + safety margin, applied to
 // every sample within the building's footprint + lateral margin.
-function buildingAltitudeRequirements(samples, buildingsNearPath){
+export function buildingAltitudeRequirements(samples, buildingsNearPath){
   var req = samples.map(function(){ return -Infinity; });
   buildingsNearPath.forEach(function(b){
     var reach = b.radius + BUILDING_LATERAL_SAFETY_MARGIN_M;
@@ -159,7 +168,7 @@ function buildingAltitudeRequirements(samples, buildingsNearPath){
   return req;
 }
 
-function reverseSamples(samples){
+export function reverseSamples(samples){
   var total = samples[samples.length - 1].s;
   return samples.slice().reverse().map(function(p){
     return { lat: p.lat, lng: p.lng, g: p.g, s: total - p.s, isVertex: p.isVertex };
@@ -167,7 +176,7 @@ function reverseSamples(samples){
 }
 
 // Altitude at distance s along a list of {s, alt} profile points.
-function profileAltAt(pts, s){
+export function profileAltAt(pts, s){
   if (s <= pts[0].s) return pts[0].alt;
   for (var i = 0; i < pts.length - 1; i++){
     if (s <= pts[i+1].s){
@@ -179,7 +188,7 @@ function profileAltAt(pts, s){
   return pts[pts.length - 1].alt;
 }
 
-function pushProfilePoint(pts, s, alt){
+export function pushProfilePoint(pts, s, alt){
   var last = pts[pts.length - 1];
   if (last && Math.abs(last.s - s) < 0.01 && Math.abs(last.alt - alt) < 0.01) return;
   pts.push({ s: s, alt: alt });
@@ -188,7 +197,7 @@ function pushProfilePoint(pts, s, alt){
 // Climb/descent transitions between level stretches. climbRun and
 // descRun are horizontal metres per metre of altitude change (0 =
 // transition squeezed into the gap between two samples).
-function profileTransitions(segs, climbRun, descRun){
+export function profileTransitions(segs, climbRun, descRun){
   var pts = [];
   pushProfilePoint(pts, segs[0].S, segs[0].alt);
   for (var i = 0; i < segs.length - 1; i++){
@@ -211,7 +220,7 @@ function profileTransitions(segs, climbRun, descRun){
   return pts;
 }
 
-function checkProfile(samples, R, pts){
+export function checkProfile(samples, R, pts){
   var minClear = Infinity, maxAGL = -Infinity, minAGL = Infinity, sumAGL = 0;
   for (var k = 0; k < samples.length; k++){
     var alt = profileAltAt(pts, samples[k].s);
@@ -227,7 +236,7 @@ function checkProfile(samples, R, pts){
 // Drops profile points that aren't needed: a straight line from an
 // anchor to a later point replaces everything in between, as long as
 // it still clears every sample and stays under the ceiling there.
-function simplifyProfile(samples, R, pts){
+export function simplifyProfile(samples, R, pts){
   if (pts.length <= 2) return pts;
   var allowedAGL = samples.map(function(p){
     return Math.max(MAX_AGL_M, profileAltAt(pts, p.s) - p.g) + 0.01;
@@ -267,7 +276,7 @@ function simplifyProfile(samples, R, pts){
 // building forces a climb, or the height limit over lower ground
 // forces a descent. This "lazy" rule gives the least total climbing
 // possible between the clearance floor and the legal ceiling.
-function buildAltitudeProfile(samples, h, reqAlt, climbRun, descRun, mode){
+export function buildAltitudeProfile(samples, h, reqAlt, climbRun, descRun, mode){
   var n = samples.length;
   var R = samples.map(function(p, k){ return Math.max(p.g + h, reqAlt[k]); });
   var T = Math.max(0, Math.min(TERRAIN_LEVEL_TOLERANCE_M, MAX_AGL_M - h));
@@ -310,7 +319,7 @@ function buildAltitudeProfile(samples, h, reqAlt, climbRun, descRun, mode){
 // Shared tail: transitions between level stretches (steepening them
 // if needed to respect the ceiling), verification, simplification
 // and climb/descent totals.
-function finishAltitudeProfile(samples, R, segs, climbRun, descRun, feasible){
+export function finishAltitudeProfile(samples, R, segs, climbRun, descRun, feasible){
   var n = samples.length;
   var pts = null, check = null;
   var steepness = [1, 0.5, 0.25, 0];
@@ -341,7 +350,7 @@ function finishAltitudeProfile(samples, R, segs, climbRun, descRun, feasible){
 }
 
 // lat/lng at distance s along densified samples.
-function samplePointAt(samples, s){
+export function samplePointAt(samples, s){
   for (var i = 0; i < samples.length - 1; i++){
     if (s <= samples[i+1].s){
       var span = samples[i+1].s - samples[i].s;
@@ -359,7 +368,7 @@ function samplePointAt(samples, s){
 // Mission waypoints for an outbound profile: every path turn plus
 // every point where the altitude changes slope, with heights relative
 // to the takeoff point (what DJI's relativeToStartPoint expects).
-function profileWaypoints(samples, prof){
+export function profileWaypoints(samples, prof){
   var dists = prof.pts.map(function(p){ return p.s; });
   samples.forEach(function(p){ if (p.isVertex) dists.push(p.s); });
   dists.sort(function(x, y){ return x - y; });
@@ -376,7 +385,7 @@ function profileWaypoints(samples, prof){
 
 // Side view of the route: ground, the 120 m-above-ground ceiling, and
 // the planned outbound altitude.
-function renderTerrainProfile(samples, prof, h){
+export function renderTerrainProfile(samples, prof, h){
   var el = document.getElementById('terrainProfile');
   if (!el) return;
   if (!samples || !prof || samples[samples.length - 1].s < 1){

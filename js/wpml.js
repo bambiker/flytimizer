@@ -1,5 +1,8 @@
 // DJI WPML flight-plan export.
 
+import { getDistanceFromLatLon } from './core.js';
+import { lastRoute } from './plans.js';
+
 // ---------------------------------------------------------------
 // WPML flight-plan export
 //
@@ -23,7 +26,7 @@
 // value here, so we fall back to the Matrice 300 RTK's code - the
 // field is required by the format, but for an unsupported drone the
 // exported file wasn't going to import into anything anyway.
-var WPML_DRONE_ENUM = {
+export var WPML_DRONE_ENUM = {
   matrice300: { droneEnumValue: 60, droneSubEnumValue: 0 }, // M300 RTK
   m350: { droneEnumValue: 89, droneSubEnumValue: 0 },       // M350 RTK
   m30: { droneEnumValue: 67, droneSubEnumValue: 0 },        // M30
@@ -32,20 +35,20 @@ var WPML_DRONE_ENUM = {
   m3t: { droneEnumValue: 77, droneSubEnumValue: 1 },        // Mavic 3T (enterprise)
   m3m: { droneEnumValue: 77, droneSubEnumValue: 2 }         // Mavic 3M (enterprise)
 };
-var WPML_DEFAULT_DRONE_ENUM = WPML_DRONE_ENUM.matrice300;
+export var WPML_DEFAULT_DRONE_ENUM = WPML_DRONE_ENUM.matrice300;
 
-function wpmlDroneEnumFor(droneModelKey){
+export function wpmlDroneEnumFor(droneModelKey){
   return WPML_DRONE_ENUM[droneModelKey] || WPML_DEFAULT_DRONE_ENUM;
 }
 
-function xmlEscape(s){
+export function xmlEscape(s){
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // The mission-config block is identical in template.kml and
 // waylines.wpml (see the "common elements" section of DJI's WPML
 // spec), so it's built once and reused for both.
-function wpmlMissionConfigXml(droneEnum, finishAction){
+export function wpmlMissionConfigXml(droneEnum, finishAction){
   return '' +
 '  <wpml:missionConfig>\n' +
 '    <wpml:flyToWaylineMode>safely</wpml:flyToWaylineMode>\n' +
@@ -64,7 +67,7 @@ function wpmlMissionConfigXml(droneEnum, finishAction){
 // One <Placemark> per waypoint - the same shape is used in both
 // files (template.kml keeps it as the editable definition, and
 // waylines.wpml as the actual execution instructions).
-function wpmlPlacemarkXml(point, index, total, speedMS){
+export function wpmlPlacemarkXml(point, index, total, speedMS){
   var altitudeM = point.heightRel;
   var name = (index === 0) ? 'Start' : (index === total - 1) ? 'Destination' : ('Waypoint ' + index);
   return '' +
@@ -87,7 +90,7 @@ function wpmlPlacemarkXml(point, index, total, speedMS){
 '      </Placemark>\n';
 }
 
-function buildTemplateKml(route){
+export function buildTemplateKml(route){
   var droneEnum = wpmlDroneEnumFor(route.droneModel);
   var placemarks = route.waypoints.map(function(p, i){
     return wpmlPlacemarkXml(p, i, route.waypoints.length, route.speedMS);
@@ -120,7 +123,7 @@ placemarks +
 '</kml>\n';
 }
 
-function buildWaylinesWpml(route, distanceM){
+export function buildWaylinesWpml(route, distanceM){
   var droneEnum = wpmlDroneEnumFor(route.droneModel);
   var placemarks = route.waypoints.map(function(p, i){
     return wpmlPlacemarkXml(p, i, route.waypoints.length, route.speedMS);
@@ -148,7 +151,7 @@ placemarks +
 // triggers a browser download. Called by the "Download flight plan"
 // button, which is only shown once calcHeight() has found a flyable
 // outbound height (see lastRoute above).
-async function downloadWPML(missionIdx){
+export async function downloadWPML(missionIdx){
   if (!lastRoute || !lastRoute.missions[missionIdx || 0]){
     window.alert("There's no flyable route to export yet - calculate a route first.");
     return;

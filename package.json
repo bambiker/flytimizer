@@ -1,6 +1,7 @@
 {
   "name": "flytimizer",
   "private": true,
+  "type": "module",
   "description": "Tests for the Flytimizer static site (the site itself has no build step).",
   "scripts": {
     "test": "npm run test:unit && npm run test:e2e",

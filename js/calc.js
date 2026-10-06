@@ -4,11 +4,27 @@
 // per-leg profiles/timings/battery, the result panels, and the two
 // plans.
 
+import { CLIMB_EFFICIENCY, DESCENT_POWER_FACTOR, batteryPct, coldCapacityFactor, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
+import { MIN_GROUND_SPEED_MS, formatDuration, getDistanceFromLatLon, groundSpeed, hourIndexNow, interpDir, lat1, lat2, lng1, lng2, marker, trueBearing } from './core.js';
+import { markUnsafe } from './drone.js';
+import { renderHazardsAndRoute } from './map-view.js';
+import { currentMission } from './mission.js';
+import { BUILDING_AVOID_MAX_COUNT, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_HEIGHT_SAFETY_MARGIN_M, BUILDING_LATERAL_SAFETY_MARGIN_M, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_TYPE_LABEL, MAX_FLIGHT_ALTITUDE_M, getBuildingsNearPath, getHazardsNearRoute } from './osm.js';
+import { renderPlan, setCurrentCalc } from './plans.js';
+import { Progress, estimateLookupSeconds } from './progress.js';
+import { buildingsCrossingPath, computeAvoidanceRoute, maxLateralDeviationM, maxPathDeviationM, minDistanceFromPath } from './routing.js';
+import { MILE_M, altitudePermitChecked, formatDistance, renderRulesInfo, rulesForLocation } from './rules.js';
+import { updateUrlForRoute } from './share.js';
+import { MAX_AGL_M, buildAltitudeProfile, buildingAltitudeRequirements, flatTerrainProfile, getTerrainProfile, renderTerrainProfile, reverseSamples, setMaxAglM } from './terrain.js';
+import { chooseUnits, escapeHtml, fmtDist, fmtLen, fmtSpeed, unitsImperial } from './units.js';
+import { renderCompassRose } from './visuals.js';
+import { forecastOffsetH, getJSON, renderForecastStrip } from './weather.js';
+
 // Heights (m above ground) every route is checked at.
-var CANDIDATE_HEIGHTS_M = [30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
+export var CANDIDATE_HEIGHTS_M = [30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
 
 // Forecast values for one hour, wind in m/s.
-function forecastAt(json, hour){
+export function forecastAt(json, hour){
   var h = json.hourly;
   var wx = {
     ws10: h.wind_speed_10m[hour] / 3.6,
@@ -34,7 +50,7 @@ function forecastAt(json, hour){
 
 // The drone and mission settings from the form. Speeds are divided by
 // the payload coefficient for each leg.
-function readFlightInputs(mission){
+export function readFlightInputs(mission){
   function val(id){ return document.getElementById(id).value; }
   // Photo missions carry the same load both ways.
   var payloadBackCoef = mission === 'photo' ? val('payload') : val('payloadback');
@@ -59,7 +75,7 @@ function readFlightInputs(mission){
 // so they can be worked out before the final (possibly detoured)
 // route length is known. dronedegrees is the REVERSE bearing
 // (destination -> start); the formulas below rely on that convention.
-function windByHeight(heights, wx, dronedegrees, inp){
+export function windByHeight(heights, wx, dronedegrees, inp){
   var w = { ws: [], wd: [], estgust: [], crosswind: [], windResOk: [], crosswindOkOut: [], crosswindOkBack: [],
             gsOut: [], gsBack: [], headwindOkOut: [], headwindOkBack: [] };
   var dragF = parseFloat(inp.drag) || 1;
@@ -104,7 +120,7 @@ function windByHeight(heights, wx, dronedegrees, inp){
 // taller than whichever ceiling is actually flyable right now (wind
 // included), not a flat 120 m - otherwise we'd recommend climbing to
 // a height that the wind rules out anyway.
-function flyableCeilingM(heights, legalOk, w){
+export function flyableCeilingM(heights, legalOk, w){
   var ceiling = 0;
   for (var i = 0; i < heights.length; i++){
     if (legalOk[i] && w.windResOk[i] && w.crosswindOkOut[i] && w.crosswindOkBack[i] && w.headwindOkOut[i] && w.headwindOkBack[i] && heights[i] > ceiling){
@@ -116,7 +132,7 @@ function flyableCeilingM(heights, legalOk, w){
 
 // Splits the buildings on the route into the ones to climb over and
 // the ones to detour around.
-function sortRouteBuildings(buildingList, path, ceilingM){
+export function sortRouteBuildings(buildingList, path, ceilingM){
   // Only buildings that actually sit on (within a safety margin of)
   // the route matter here. This checks against the *actual*
   // hazard-avoidance path, not the straight line - otherwise a route
@@ -151,7 +167,7 @@ function sortRouteBuildings(buildingList, path, ceilingM){
 }
 
 // Terrain-following altitude profile for one leg at every height.
-function legProfiles(heights, samples, req, hs, up, down){
+export function legProfiles(heights, samples, req, hs, up, down){
   var prof = [], ok = [];
   for (var i = 0; i < heights.length; i++){
     prof[i] = buildAltitudeProfile(samples, heights[i], req, hs / up, hs / down);
@@ -164,7 +180,7 @@ function legProfiles(heights, samples, req, hs, up, down){
 // distance; timeV = everything the climbs and descents add on top
 // (takeoff, landing, and any stretch where the height change is
 // slower than the distance).
-function legTimings(heights, prof, samples, gs, up, down, opts, routeDist){
+export function legTimings(heights, prof, samples, gs, up, down, opts, routeDist){
   var t = { timing: [], timeH: [], timeV: [] };
   for (var i = 0; i < heights.length; i++){
     t.timing[i] = gs[i] > MIN_GROUND_SPEED_MS ? profileTiming(prof[i], samples, gs[i], up, down, opts) : null;
@@ -175,7 +191,7 @@ function legTimings(heights, prof, samples, gs, up, down, opts, routeDist){
 }
 
 // Battery % for one leg at every height (NaN without a battery model).
-function legBattery(heights, battModel, payload, hs, timing, up, temperatureC){
+export function legBattery(heights, battModel, payload, hs, timing, up, temperatureC){
   var batt = [];
   for (var i = 0; i < heights.length; i++){
     batt[i] = battModel ? batteryPct(battModel, legEnergyFromTiming(battModel, payload, hs, timing[i], up), temperatureC) : NaN;
@@ -184,7 +200,7 @@ function legBattery(heights, battModel, payload, hs, timing, up, temperatureC){
 }
 
 // Index of the quickest flyable height, or -1 if none is flyable.
-function fastestFlyableIdx(flyable, timeV, timeH){
+export function fastestFlyableIdx(flyable, timeV, timeH){
   var best = -1;
   for (var i = 0; i < flyable.length; i++){
     if (flyable[i] && (best === -1 || timeV[i] + timeH[i] < timeV[best] + timeH[best])) best = i;
@@ -200,7 +216,7 @@ function fastestFlyableIdx(flyable, timeV, timeH){
 // isn't enough of a check - this looks at actual distance to the real
 // site instead and raises a hard, unmissable warning when the route
 // comes anywhere close.
-function renderNoFlyWarning(hazards, rules, path){
+export function renderNoFlyWarning(hazards, rules, path){
   var noFlyWarningEl = document.getElementById('noFlyWarning');
   var noFlyItems = hazards.filter(function(h){
     if (!h.noFly) return false;
@@ -232,7 +248,7 @@ function renderNoFlyWarning(hazards, rules, path){
   }
 }
 
-function renderBatteryNote(battModel, temperatureC){
+export function renderBatteryNote(battModel, temperatureC){
   var battNote = document.getElementById('batteryNote');
   if (!battNote) return;
   battNote.innerHTML = 'Battery figures are estimates from the drone’s rated flight time, payload, climbs and wind (roughly ±20%)' +
@@ -242,7 +258,7 @@ function renderBatteryNote(battModel, temperatureC){
 }
 
 // Route length (with any detour) and outbound heading.
-function renderRouteSummary(routeDist, straightDistM, avoidance, outboundHeading){
+export function renderRouteSummary(routeDist, straightDistM, avoidance, outboundHeading){
   document.getElementById('distance').innerHTML = fmtDist(routeDist);
   var detourNote = document.getElementById('detourNote');
   var detourExtra = routeDist - straightDistM;
@@ -263,7 +279,7 @@ function renderRouteSummary(routeDist, straightDistM, avoidance, outboundHeading
 // r: { heights, w, legalOk, buildingOk, terrainOkOut, terrainOkBack,
 //      flyableOut, flyableBack, tOut, tBack, battOut, battBack,
 //      minSafeAltitude, windResistance, rules }
-function renderHeightTable(r){
+export function renderHeightTable(r){
   var w = r.w;
   var cols = [[0, '30'], [5, '80'], [9, '120']];
   cols.forEach(function(c){
@@ -312,12 +328,12 @@ function renderHeightTable(r){
 
 // Terrain summary; returns the base sentence that renderPlan() builds
 // on (undefined when terrain didn't load).
-function renderTerrainInfo(terrainAvailable, terrainSamples){
+export function renderTerrainInfo(terrainAvailable, terrainSamples){
   var terrainBaseText;
   var terrainInfo = document.getElementById('terrainInfo');
   terrainInfo.classList.remove('warning-hint');
   if (!terrainAvailable){
-    terrainInfo.innerHTML = "⚠️ Couldn't load terrain elevation for this route, so hills and valleys along the way aren't being checked &mdash; the heights shown are above the takeoff point only, which is not safe over rising ground. The flight-plan download is disabled until terrain loads. <button class=\"btn btn-ghost btn-inline\" onclick=\"getHeight()\">Try again</button>";
+    terrainInfo.innerHTML = "⚠️ Couldn't load terrain elevation for this route, so hills and valleys along the way aren't being checked &mdash; the heights shown are above the takeoff point only, which is not safe over rising ground. The flight-plan download is disabled until terrain loads. <button class=\"btn btn-ghost btn-inline\" data-action=\"calculate\">Try again</button>";
     terrainInfo.classList.add('warning-hint');
     renderTerrainProfile(null);
   } else {
@@ -334,14 +350,14 @@ function renderTerrainInfo(terrainAvailable, terrainSamples){
 
 // r: { buildings, sorted, minSafeAltitude, effectiveCeilingM, legalCapM,
 //      leftCheckedArea, deviationM, halfWidthUsed }
-function renderBuildingInfo(r){
+export function renderBuildingInfo(r){
   var buildings = r.buildings, onRoute = r.sorted.onRoute;
   var avoidedForSimplicity = r.sorted.avoidedForSimplicity, tooTallOnRoute = r.sorted.tooTall;
   var maxBuildingHeight = r.sorted.maxClimbedHeight;
   var buildingInfo = document.getElementById('buildingInfo');
   buildingInfo.classList.remove('warning-hint');
   if (buildings === null){
-    buildingInfo.innerHTML = "Couldn't load building data from OpenStreetMap for this route, so only wind is being checked right now &mdash; heights below 30 m above nearby buildings might not actually be safe. <button class=\"btn btn-ghost btn-inline\" onclick=\"getHeight()\">Try again</button>";
+    buildingInfo.innerHTML = "Couldn't load building data from OpenStreetMap for this route, so only wind is being checked right now &mdash; heights below 30 m above nearby buildings might not actually be safe. <button class=\"btn btn-ghost btn-inline\" data-action=\"calculate\">Try again</button>";
     buildingInfo.classList.add('warning-hint');
   } else if (buildings.count === 0){
     buildingInfo.innerHTML = "No buildings found near this route in OpenStreetMap, so no extra height is needed for obstacle clearance.";
@@ -381,12 +397,12 @@ function renderBuildingInfo(r){
 }
 
 // r: { hazardData, hazards, avoidance, leftCheckedArea, deviationM, halfWidthUsed }
-function renderHazardInfo(r){
+export function renderHazardInfo(r){
   var hazards = r.hazards, avoidance = r.avoidance;
   var hazardInfo = document.getElementById('hazardInfo');
   hazardInfo.classList.remove('warning-hint');
   if (r.hazardData === null){
-    hazardInfo.innerHTML = "Couldn't load restricted-area data from OpenStreetMap, so schools, hospitals, power infrastructure, airports and other restricted sites along this route aren't being checked right now. The map servers may be busy - trying again in a minute usually works. <button class=\"btn btn-ghost btn-inline\" onclick=\"getHeight()\">Try again</button>";
+    hazardInfo.innerHTML = "Couldn't load restricted-area data from OpenStreetMap, so schools, hospitals, power infrastructure, airports and other restricted sites along this route aren't being checked right now. The map servers may be busy - trying again in a minute usually works. <button class=\"btn btn-ghost btn-inline\" data-action=\"calculate\">Try again</button>";
     hazardInfo.classList.add('warning-hint');
   } else if (hazards.length === 0){
     hazardInfo.innerHTML = "No schools, hospitals, power infrastructure, airports or other restricted sites found near this route in OpenStreetMap.";
@@ -426,7 +442,7 @@ function renderHazardInfo(r){
 // baseline's index and round-trip time for the plans' savings line.
 // r: { heights, flyableOut, flyableBack, tOut, tBack, battOut, battBack,
 //      minhor, minhorb, routeDist, speedhorizontal, speedhorizontalback }
-function renderBaselineSavings(r){
+export function renderBaselineSavings(r){
   var tOut = r.tOut, tBack = r.tBack, minhor = r.minhor, minhorb = r.minhorb;
   var baseIdx = -1;
   for (var i = 0; i < r.heights.length; i++) if (r.flyableOut[i] && r.flyableBack[i]) baseIdx = i;
@@ -448,7 +464,7 @@ function renderBaselineSavings(r){
 // When a leg has no flyable height: say which leg(s) and why.
 // r: { heights, w, terrainOkOut, terrainOkBack, minhor, minhorb,
 //      minSafeAltitude, legalCapM, windResistance }
-function renderNoSafeHeightWarning(r){
+export function renderNoSafeHeightWarning(r){
   var w = r.w;
   var legs = [];
   if (r.minhor === -1) legs.push('outbound');
@@ -485,7 +501,7 @@ function renderNoSafeHeightWarning(r){
 }
 
 // Visibility, rain and temperature for the chosen hour.
-function renderConditions(wx){
+export function renderConditions(wx){
   var visibility = wx.visibility, precipitation = wx.precipitation;
   var precipitation_probability = wx.precipitation_probability, temperatureC = wx.temperatureC;
   document.getElementById('visibility').innerHTML = unitsImperial ? (visibility / MILE_M).toFixed(0) + ' mi' : (visibility/1000).toFixed(0) + ' km';
@@ -512,7 +528,7 @@ function renderConditions(wx){
 // c: { heights, legs: {out, back}, w, legalOk, buildingOk, terrainAvailable,
 //      battModel, temperatureC, mission, dwellS, payloadOut, payloadBack,
 //      speedupback, speeddownback }
-function buildPlans(c){
+export function buildPlans(c){
   var heights = c.heights, battModel = c.battModel, temperatureC = c.temperatureC;
   function nearestHeightIdx(m){
     var best = 0;
@@ -604,7 +620,7 @@ function buildPlans(c){
 // Savings line: fastest plan vs simply flying at the highest allowed,
 // flyable height (terrain following), including the time and battery
 // spent at the destination.
-function renderPlanSavings(planner, legs, baseline, battOut, battBack){
+export function renderPlanSavings(planner, legs, baseline, battOut, battBack){
   var plans = planner.plans, baseIdx = baseline.baseIdx;
   if (!(plans.fast.out && plans.fast.back && baseIdx !== -1 && isFinite(baseline.travel120))) return;
   var baseX = planner.pairExtras(planner.evalLeg(legs.out, baseIdx, 'follow'), planner.evalLeg(legs.back, baseIdx, 'follow'));
@@ -618,18 +634,16 @@ function renderPlanSavings(planner, legs, baseline, battOut, battBack){
   document.getElementById('savingsText').style.display = (travelBase - fastTotal) > 0.5 ? '' : 'none';
 }
 
-async function calcHeight() {
+export async function calcHeight() {
 
     if (marker==0){
        window.alert('please choose location');
        return;
     }
 
-    if (marker==1){
-        lat2=lat1;
-        lng2=lng1;
-    }
-    var startlat=lat1, startlng=lng1, destlat=lat2, destlng=lng2;
+    // With only a start point, plan a hover there.
+    var startlat=lat1, startlng=lng1;
+    var destlat = marker==1 ? lat1 : lat2, destlng = marker==1 ? lng1 : lng2;
     // dronedegrees is the REVERSE bearing (destination -> start); the
     // wind formulas rely on that convention.
     var dronedegrees = (trueBearing(startlat, startlng, destlat, destlng) + 180) % 360;
@@ -664,7 +678,7 @@ async function calcHeight() {
     // Legal height limit above ground for this route (the app never
     // checks above MAX_FLIGHT_ALTITUDE_M, even with a permit).
     const legalCapM = altPermit ? MAX_FLIGHT_ALTITUDE_M : Math.min(MAX_FLIGHT_ALTITUDE_M, rules.profile.maxAglM);
-    MAX_AGL_M = legalCapM;
+    setMaxAglM(legalCapM);
     chooseUnits(rules);
     const hazards = hazardData ? hazardData.hazards : [];
     const hazardHalfWidthUsed = hazardData ? hazardData.hazardHalfWidthUsed : HAZARD_CORRIDOR_HALF_WIDTH_M;
@@ -859,7 +873,7 @@ async function calcHeight() {
     if (plans.fast.out && plans.fast.back) document.getElementById('flyWarning').style.display = 'none';
     renderPlanSavings(planner, legs, baseline, battOut, battBack);
 
-    currentCalc = {
+    setCurrentCalc({
       plans: plans,
       heights: heights,
       terrainSamples: terrainSamples,
@@ -871,7 +885,7 @@ async function calcHeight() {
       speedOut: speedhorizontal,
       speedBack: speedhorizontalback,
       droneModel: document.getElementById('droneModel').value
-    };
+    });
     renderPlan();
     renderForecastStrip(json, nowHourIdx);
 
@@ -879,4 +893,28 @@ async function calcHeight() {
 
     // Only learn timings from fully successful lookups.
     Progress.finish(hazardData !== null && buildingData !== null && terrainAvailable);
+}
+
+// The Calculate button (and the "Try again" links): runs calcHeight()
+// with the button disabled, then scrolls to the result.
+export async function getHeight() {
+  var btn = document.getElementById('calcBtn');
+  var originalLabel = btn.textContent;
+
+  btn.disabled = true;
+  btn.textContent = 'Calculating\u2026';
+
+  try {
+    await calcHeight();
+    var x = document.getElementById("result");
+    x.style.display = "block";
+    x.scrollIntoView({behavior: "smooth", block: "start"});
+  } catch (err) {
+    console.error(err);
+    window.alert('Something went wrong while calculating - please try again.');
+  } finally {
+    Progress.finish(false); // no-op if it already finished
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
 }

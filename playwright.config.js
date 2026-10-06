@@ -1,9 +1,9 @@
 // End-to-end tests: the real index.html in Chromium, with every
 // external service (Open-Meteo, Overpass, Nominatim, map tiles, CDNs)
 // replaced by local fixtures - see tests/e2e/site.js.
-const { defineConfig, devices } = require('@playwright/test');
+import { defineConfig, devices } from '@playwright/test';
 
-module.exports = defineConfig({
+export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 60000,
   fullyParallel: true,

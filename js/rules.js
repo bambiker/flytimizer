@@ -1,5 +1,8 @@
 // Country rules: per-country height limits, keep-out distances and notes.
 
+import { HAZARD_ROUTING_RADIUS_CAP_M } from './osm.js';
+import { escapeHtml, fmtDist, unitsImperial } from './units.js';
+
 // ---------------------------------------------------------------
 // Country rules
 //
@@ -28,9 +31,9 @@
 // legal advice. Rules change; every result links to the official
 // source to check before flying.
 // ---------------------------------------------------------------
-var MILE_M = 1609.344;
+export var MILE_M = 1609.344;
 
-var REGULATION_PROFILES = {
+export var REGULATION_PROFILES = {
   IL: {
     code: 'IL',
     country: 'Israel',
@@ -100,15 +103,15 @@ var REGULATION_PROFILES = {
     ]
   }
 };
-var RULES_FALLBACK_CODE = 'IL';
-var NO_FLY_WARNING_EXTRA_MARGIN_M = 100; // map-data imprecision margin on top of the keep-out distance
-var countryCache = new Map();
+export var RULES_FALLBACK_CODE = 'IL';
+export var NO_FLY_WARNING_EXTRA_MARGIN_M = 100; // map-data imprecision margin on top of the keep-out distance
+export var countryCache = new Map();
 
 // Rough boxes used only if the reverse geocoder can't be reached.
 // They overlap neighbouring countries at the edges, which is
 // acceptable for a fallback (and anything unmatched gets Israel's
 // rules anyway).
-var COUNTRY_BOXES = [
+export var COUNTRY_BOXES = [
   { code: 'IL', s: 29.45, n: 33.35, w: 34.2, e: 35.9 },
   { code: 'US', s: 24.4, n: 49.4, w: -125.0, e: -66.9 },   // contiguous states
   { code: 'US', s: 51.0, n: 71.6, w: -170.0, e: -129.9 },  // Alaska
@@ -116,7 +119,7 @@ var COUNTRY_BOXES = [
   { code: 'US', s: 17.8, n: 18.6, w: -67.4, e: -65.2 }     // Puerto Rico
 ];
 
-function countryFromBoxes(lat, lng){
+export function countryFromBoxes(lat, lng){
   for (var i = 0; i < COUNTRY_BOXES.length; i++){
     var b = COUNTRY_BOXES[i];
     if (lat >= b.s && lat <= b.n && lng >= b.w && lng <= b.e) return { code: b.code, name: null, source: 'approx' };
@@ -124,7 +127,7 @@ function countryFromBoxes(lat, lng){
   return { code: null, name: null, source: 'approx' };
 }
 
-async function detectCountry(lat, lng){
+export async function detectCountry(lat, lng){
   var key = lat.toFixed(2) + ',' + lng.toFixed(2);
   if (countryCache.has(key)) return countryCache.get(key);
   var result;
@@ -148,7 +151,7 @@ async function detectCountry(lat, lng){
 }
 
 // {profile, detected:{code,name}, fallback:boolean}
-async function rulesForLocation(lat, lng){
+export async function rulesForLocation(lat, lng){
   var detected = await detectCountry(lat, lng);
   var profile = REGULATION_PROFILES[detected.code];
   return {
@@ -158,14 +161,14 @@ async function rulesForLocation(lat, lng){
   };
 }
 
-function hazardBufferFor(profile, type){
+export function hazardBufferFor(profile, type){
   return (profile.bufferM[type] !== undefined) ? profile.bufferM[type] : profile.defaultBufferM;
 }
 
 // Adds the rule-dependent fields to hazards found by
 // getHazardsNearRoute: buffer, routing clearance, whether it's a
 // no-fly type, and how far its warning reaches.
-function applyRulesToHazards(hazards, profile){
+export function applyRulesToHazards(hazards, profile){
   hazards.forEach(function(h){
     h.buffer = hazardBufferFor(profile, h.type);
     h.clearance = Math.min(h.radius + h.buffer, HAZARD_ROUTING_RADIUS_CAP_M);
@@ -175,7 +178,7 @@ function applyRulesToHazards(hazards, profile){
   return hazards;
 }
 
-function formatDistance(m){
+export function formatDistance(m){
   if (typeof unitsImperial !== 'undefined' && unitsImperial) return fmtDist(m);
   if (m >= 1000){
     var km = m / 1000;
@@ -185,12 +188,12 @@ function formatDistance(m){
 }
 
 // Has the person said they're authorized to fly above the local limit?
-function altitudePermitChecked(){
+export function altitudePermitChecked(){
   var el = document.getElementById('altPermit');
   return !!(el && el.checked);
 }
 
-function renderRulesInfo(rules, legalCapM, permit){
+export function renderRulesInfo(rules, legalCapM, permit){
   var el = document.getElementById('rulesInfo');
   if (!el) return;
   var p = rules.profile;

@@ -1,7 +1,7 @@
-const base = require('@playwright/test');
-const JSZip = require('jszip');
-const fs = require('node:fs');
-const { openSite, waitForResult } = require('./site');
+import * as base from '@playwright/test';
+import JSZip from 'jszip';
+import fs from 'node:fs';
+import { openSite, waitForResult } from './site.js';
 
 // Every test fails on an uncaught page error or console error.
 const test = base.test.extend({
@@ -45,14 +45,17 @@ test('names from OpenStreetMap are shown as text, never run as HTML', async ({ p
 
   expect(await page.evaluate(() => window.__xss)).toBeUndefined();
   await expect(page.locator('.leaflet-overlay-pane img, #hazardInfo img, #noFlyWarning img')).toHaveCount(0);
-  // Hover the school and check its tooltip shows the name literally.
-  const tooltips = await page.evaluate(() => {
-    const out = [];
-    Object.values(map._layers).forEach(l => { if (l.getTooltip && l.getTooltip()) out.push(l.getTooltip().getContent()); });
-    return out;
-  });
-  expect(tooltips.some(t => t.includes('&lt;img src=x onerror=&quot;window.__xss=1&quot;&gt;Evil School'))).toBe(true);
-  expect(tooltips.some(t => t.includes('Rambam &amp; &lt;b&gt;Sons&lt;/b&gt;'))).toBe(true);
+  // Hover each restricted area (drawn in red) and read its tooltip.
+  const tooltips = [];
+  const areas = page.locator('path.leaflet-interactive[stroke="#e6484f"], path.leaflet-interactive[stroke="#7a1620"]');
+  for (let i = 0; i < await areas.count(); i++){
+    await areas.nth(i).hover({ force: true });
+    tooltips.push(await page.locator('.leaflet-tooltip').last().textContent());
+    await page.mouse.move(0, 0);
+  }
+  expect(tooltips).toContain('School \u2014 <img src=x onerror="window.__xss=1">Evil School');
+  expect(tooltips.some(t => t.includes('Rambam & <b>Sons</b>'))).toBe(true);
+  await expect(page.locator('.leaflet-tooltip img, .leaflet-tooltip b')).toHaveCount(0);
 });
 
 test('switching plan and forecast hour updates the result', async ({ page }) => {
@@ -66,7 +69,7 @@ test('switching plan and forecast hour updates the result', async ({ page }) => 
 
   const strip = page.locator('#forecastStrip');
   const before = await strip.innerHTML();
-  await page.evaluate(() => setForecastOffset(5));
+  await page.locator('#forecastStrip [data-arg="5"]').click();
   await waitForResult(page);
   await expect.poll(() => strip.innerHTML()).not.toBe(before);
   await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
@@ -144,7 +147,7 @@ test('a US route uses FAA rules and imperial units automatically', async ({ page
 
 test('with only a start point, Calculate plans a hover at that spot', async ({ page }) => {
   await openSite(page, HAIFA, null, 'drone=mini4pro');
-  await page.evaluate(() => getHeight());
+  await page.locator('#calcBtn').click();
   await waitForResult(page);
 
   await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);

@@ -1,5 +1,8 @@
 // Mission type (delivery / photo) and its defaults.
 
+import { saveSettings } from './share.js';
+import { profileWaypoints } from './terrain.js';
+
 // ---------------------------------------------------------------
 // Mission type
 //
@@ -10,15 +13,15 @@
 // the time set, and come straight back at the same weight - no
 // landing or takeoff at the destination, one round-trip mission.
 // ---------------------------------------------------------------
-var DWELL_DEFAULTS = { delivery: 30, photo: 60 };
-var PAYLOAD_DEFAULTS = { delivery: 2, photo: 1 };
+export var DWELL_DEFAULTS = { delivery: 30, photo: 60 };
+export var PAYLOAD_DEFAULTS = { delivery: 2, photo: 1 };
 
-function currentMission(){
+export function currentMission(){
   var el = document.getElementById('mission');
   return (el && el.value === 'photo') ? 'photo' : 'delivery';
 }
 
-function onMissionChange(){
+export function onMissionChange(){
   var m = currentMission();
   var backField = document.getElementById('payloadBackField');
   if (backField) backField.style.display = m === 'photo' ? 'none' : '';
@@ -37,12 +40,12 @@ function onMissionChange(){
       ? 'Flies to the destination, stays in the air there for the time you set, and comes straight back at the same weight. Flight plan: one round-trip mission.'
       : 'Lands or lowers the parcel at the destination (time at destination = hovering time; set 0 if it lands and waits powered down), then flies back with the return payload. Flight plans: one mission each way.';
   }
-  if (typeof saveSettings === 'function') saveSettings();
+  saveSettings();
 }
 
 // One continuous waypoint list out and back, all heights relative to
 // the start point (the outbound takeoff).
-function roundTripWaypoints(outSamples, outProf, backSamples, backProf){
+export function roundTripWaypoints(outSamples, outProf, backSamples, backProf){
   var outW = profileWaypoints(outSamples, outProf);
   var offset = backSamples[0].g - outSamples[0].g;
   var backW = profileWaypoints(backSamples, backProf).map(function(w){
