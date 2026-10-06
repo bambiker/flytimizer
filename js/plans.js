@@ -1,5 +1,11 @@
 // The two plans (fastest / least battery) and their result panel.
 
+import { BATTERY_RESERVE_PCT, fmtPct } from './battery.js';
+import { formatDuration } from './core.js';
+import { roundTripWaypoints } from './mission.js';
+import { profileWaypoints, renderTerrainProfile } from './terrain.js';
+import { fmtLen, lenNum, lenUnit } from './units.js';
+
 // ---------------------------------------------------------------
 // Two plans: fastest and least battery
 //
@@ -14,15 +20,26 @@
 // candidate (height x style) is scored with the battery model and the
 // cheapest flyable one wins, separately for each leg.
 // ---------------------------------------------------------------
-var selectedPlan = 'fast';
-var currentCalc = null;
+export var selectedPlan = 'fast';
+export var currentCalc = null;
 
-function planLegLabel(leg){
+// Snapshot of the current outbound recommendation - path, altitude,
+// speed, drone model - set by renderPlan() after a successful
+// calcHeight() run, and read by downloadWPML() when the person clicks
+// "Download flight plan". null whenever there's no flyable outbound
+// height to build a mission from.
+export var lastRoute = null;
+
+export function setCurrentCalc(c){
+  currentCalc = c;
+}
+
+export function planLegLabel(leg){
   if (!leg) return '—';
   return leg.mode === 'level' ? 'holds altitude' : 'follows terrain';
 }
 
-function renderPlanTabs(){
+export function renderPlanTabs(){
   var c = currentCalc;
   var tabs = document.getElementById('planTabs');
   if (!tabs || !c) return;
@@ -51,7 +68,7 @@ function renderPlanTabs(){
   }
 }
 
-function selectPlan(key){
+export function selectPlan(key){
   if (!currentCalc || !currentCalc.plans[key]) return;
   selectedPlan = key;
   renderPlan();
@@ -59,7 +76,7 @@ function selectPlan(key){
 
 // Everything that depends on which plan is shown: headline heights,
 // battery, the side view, the terrain sentence and the WPML export.
-function renderPlan(){
+export function renderPlan(){
   var c = currentCalc;
   if (!c) return;
   if (!c.plans[selectedPlan]) selectedPlan = 'fast';
@@ -137,7 +154,7 @@ function renderPlan(){
   var wpmlBox = document.getElementById('wpmlButtons');
   if (wpmlBox){
     wpmlBox.innerHTML = missions.map(function(m, k){
-      return '<button class="btn btn-ghost" onclick="downloadWPML(' + k + ')">' + m.label + '</button>';
+      return '<button class="btn btn-ghost" data-action="download" data-arg="' + k + '">' + m.label + '</button>';
     }).join('');
   }
 

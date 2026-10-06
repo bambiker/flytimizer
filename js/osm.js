@@ -1,6 +1,11 @@
 // OpenStreetMap data: building and restricted-area constants, corridor
 // geometry and tag parsing, Overpass access, and the hazard/building lookups.
 
+import { deg2rad, getDistanceFromLatLon } from './core.js';
+import { Progress } from './progress.js';
+import { minDistanceFromPath } from './routing.js';
+import { applyRulesToHazards } from './rules.js';
+
 // ---------------------------------------------------------------
 // Building clearance (OpenStreetMap via the Overpass API)
 //
@@ -17,11 +22,11 @@
 // corridor). So the actual half-width used per route grows with
 // straight-line distance, capped so the Overpass query never gets
 // huge. See corridorHalfWidth() below.
-var BUILDING_CORRIDOR_HALF_WIDTH_M = 100; // floor - 200 m wide corridor around the route
-var BUILDING_CORRIDOR_MAX_HALF_WIDTH_M = 500;
-var BUILDING_CORRIDOR_DISTANCE_FRACTION = 0.05; // +50 m of half-width per km of route
-var BUILDING_HEIGHT_FALLBACK_M = 7;      // ~2 storeys, used when a building has no height/levels tag
-var BUILDING_TYPE_HEIGHT_M = {
+export var BUILDING_CORRIDOR_HALF_WIDTH_M = 100; // floor - 200 m wide corridor around the route
+export var BUILDING_CORRIDOR_MAX_HALF_WIDTH_M = 500;
+export var BUILDING_CORRIDOR_DISTANCE_FRACTION = 0.05; // +50 m of half-width per km of route
+export var BUILDING_HEIGHT_FALLBACK_M = 7;      // ~2 storeys, used when a building has no height/levels tag
+export var BUILDING_TYPE_HEIGHT_M = {
   garage: 3, garages: 3, shed: 3, roof: 3, hut: 3, carport: 3,
   house: 7, residential: 7, detached: 7, terrace: 7, semidetached_house: 7, bungalow: 5,
   apartments: 12, commercial: 10, industrial: 10, retail: 8, office: 12, warehouse: 9
@@ -38,16 +43,16 @@ var BUILDING_TYPE_HEIGHT_M = {
 // which accounts for wind as well as MAX_FLIGHT_ALTITUDE_M), so those
 // specific ones are routed around horizontally instead, the same way
 // hazards are (see below).
-var BUILDING_FOOTPRINT_FALLBACK_M = 8;
-var BUILDING_TYPE_FOOTPRINT_M = {
+export var BUILDING_FOOTPRINT_FALLBACK_M = 8;
+export var BUILDING_TYPE_FOOTPRINT_M = {
   garage: 3, garages: 3, shed: 3, hut: 3, carport: 3, roof: 4,
   house: 7, detached: 7, semidetached_house: 6, terrace: 5, residential: 7, bungalow: 6,
   apartments: 14, commercial: 14, industrial: 18, retail: 12, office: 14, warehouse: 20
 };
-var MAX_FLIGHT_ALTITUDE_M = 120;          // ceiling we check up to (matches the heights[] table below)
-var BUILDING_HEIGHT_SAFETY_MARGIN_M = 20; // vertical buffer added on top of a building's height when climbing over it
-var BUILDING_LATERAL_SAFETY_MARGIN_M = 30; // buffer added on top of a building's footprint when routing around it
-var BUILDING_AVOID_MAX_COUNT = 4; // detour around this many (or fewer) buildings actually on the route instead of climbing over them; beyond this, climbing over the tallest climbable one avoids an impractical zigzag
+export var MAX_FLIGHT_ALTITUDE_M = 120;          // ceiling we check up to (matches the heights[] table below)
+export var BUILDING_HEIGHT_SAFETY_MARGIN_M = 20; // vertical buffer added on top of a building's height when climbing over it
+export var BUILDING_LATERAL_SAFETY_MARGIN_M = 30; // buffer added on top of a building's footprint when routing around it
+export var BUILDING_AVOID_MAX_COUNT = 4; // detour around this many (or fewer) buildings actually on the route instead of climbing over them; beyond this, climbing over the tallest climbable one avoids an impractical zigzag
 
 // Places that are risky to overfly: schools, kindergartens, hospitals,
 // playgrounds, nursing homes, universities/colleges, and power
@@ -56,31 +61,31 @@ var BUILDING_AVOID_MAX_COUNT = 4; // detour around this many (or fewer) building
 // horizontally. We ask Overpass for their real outline (out geom)
 // when it has one, and fall back to a rough per-type radius guess
 // when it doesn't.
-var HAZARD_CORRIDOR_HALF_WIDTH_M = 220; // floor - wide enough to see nearby hazards and have room to route around them
-var HAZARD_CORRIDOR_MAX_HALF_WIDTH_M = 700;
-var HAZARD_CORRIDOR_DISTANCE_FRACTION = 0.06; // +60 m of half-width per km of route - hazards get more headroom than buildings since the route actually swings sideways to dodge them
-var HAZARD_TYPE_RADIUS_M = {
+export var HAZARD_CORRIDOR_HALF_WIDTH_M = 220; // floor - wide enough to see nearby hazards and have room to route around them
+export var HAZARD_CORRIDOR_MAX_HALF_WIDTH_M = 700;
+export var HAZARD_CORRIDOR_DISTANCE_FRACTION = 0.06; // +60 m of half-width per km of route - hazards get more headroom than buildings since the route actually swings sideways to dodge them
+export var HAZARD_TYPE_RADIUS_M = {
   school: 60, kindergarten: 40, hospital: 90, playground: 30,
   nursing_home: 40, university: 120, power: 30,
   airport: 500, heliport: 50, prison: 100, embassy: 40, military: 150
 };
-var HAZARD_TYPE_LABEL = {
+export var HAZARD_TYPE_LABEL = {
   school: 'School', kindergarten: 'Kindergarten', hospital: 'Hospital', playground: 'Playground',
   nursing_home: 'Nursing home', university: 'University/college', power: 'Power facility',
   airport: 'Airport/airfield', heliport: 'Heliport', prison: 'Prison', embassy: 'Embassy', military: 'Military site',
   building: 'Tall building'
 };
 
-var HAZARD_ROUTING_RADIUS_CAP_M = 5000;  // sanity cap on the *total* clearance (real size + keep-out buffer) - guards against a data glitch producing an absurd radius, not meant to shrink a legitimately large site or its buffer
+export var HAZARD_ROUTING_RADIUS_CAP_M = 5000;  // sanity cap on the *total* clearance (real size + keep-out buffer) - guards against a data glitch producing an absurd radius, not meant to shrink a legitimately large site or its buffer
 
-function rad2deg(rad){
+export function rad2deg(rad){
   return rad * (180 / Math.PI);
 }
 
 // Destination point at `distMeters` from (lat,lng) along `bearingDeg`
 // (standard spherical "direct geodesic" formula, same Earth radius
 // used elsewhere in this file).
-function offsetLatLng(lat, lng, bearingDeg, distMeters){
+export function offsetLatLng(lat, lng, bearingDeg, distMeters){
   var R = 6371000;
   var brng = deg2rad(bearingDeg);
   var lat1r = deg2rad(lat);
@@ -94,14 +99,14 @@ function offsetLatLng(lat, lng, bearingDeg, distMeters){
 // Half-width to actually search, given the straight-line route
 // distance: the floor, plus a slice of the distance, capped at a max
 // so a very long route doesn't blow up the Overpass query.
-function corridorHalfWidth(distM, minHalfWidthM, maxHalfWidthM, distanceFraction){
+export function corridorHalfWidth(distM, minHalfWidthM, maxHalfWidthM, distanceFraction){
   return Math.min(maxHalfWidthM, minHalfWidthM + distM * distanceFraction);
 }
 
 // A thin rectangle hugging the start->destination line, used as the
 // Overpass search area. Falls back to a small square around the start
 // point when there's no real route yet (start and destination match).
-function routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, halfWidthM){
+export function routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, halfWidthM){
   var distM = getDistanceFromLatLon(lat1, lng1, lat2, lng2);
   if (distM < 10){
     var r = Math.max(halfWidthM, 100);
@@ -121,7 +126,7 @@ function routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, halfWidthM){
 // Flat-approximation bearing from (lat1,lng1) to (lat2,lng2), in the
 // same convention as offsetLatLng (0=north, clockwise). Fine for the
 // short, local distances this app deals with.
-function bearingBetween(lat1, lng1, lat2, lng2){
+export function bearingBetween(lat1, lng1, lat2, lng2){
   var b = Math.atan2((lng2 - lng1) * Math.cos(deg2rad((lat1 + lat2) / 2)), lat2 - lat1) * 180 / Math.PI;
   return (b + 360) % 360;
 }
@@ -131,7 +136,7 @@ function bearingBetween(lat1, lng1, lat2, lng2){
 // a straight line. Used to query buildings along the *actual* route
 // once it's known (which may already detour around hazards), instead
 // of only around the straight line between start and destination.
-function pathCorridorPolygon(path, halfWidthM){
+export function pathCorridorPolygon(path, halfWidthM){
   if (path.length < 2){
     var p0 = path[0];
     var n = offsetLatLng(p0.lat, p0.lng, 0, halfWidthM);
@@ -162,7 +167,7 @@ function pathCorridorPolygon(path, halfWidthM){
   return left.concat(right.reverse());
 }
 
-function parseMetersTag(value){
+export function parseMetersTag(value){
   if (value === undefined || value === null) return null;
   var n = parseFloat(String(value).replace(',', '.'));
   return isNaN(n) ? null : n;
@@ -171,7 +176,7 @@ function parseMetersTag(value){
 // Best-effort height for a building from its OSM tags: explicit
 // height, then level count (~3 m/level), then a type-based guess,
 // then a generic fallback for untagged buildings.
-function estimateBuildingHeight(tags){
+export function estimateBuildingHeight(tags){
   tags = tags || {};
   var explicit = parseMetersTag(tags.height);
   if (explicit === null) explicit = parseMetersTag(tags['building:height']);
@@ -190,14 +195,14 @@ function estimateBuildingHeight(tags){
 // Same idea as estimateBuildingHeight, but guessing how wide the
 // building is on the ground, since we need that to know how far to
 // steer around it.
-function estimateBuildingFootprintRadius(tags){
+export function estimateBuildingFootprintRadius(tags){
   tags = tags || {};
   var type = (tags.building || '').toLowerCase();
   if (Object.prototype.hasOwnProperty.call(BUILDING_TYPE_FOOTPRINT_M, type)) return BUILDING_TYPE_FOOTPRINT_M[type];
   return BUILDING_FOOTPRINT_FALLBACK_M;
 }
 
-function classifyHazard(tags){
+export function classifyHazard(tags){
   tags = tags || {};
   if (tags.amenity === 'school') return 'school';
   if (tags.amenity === 'kindergarten') return 'kindergarten';
@@ -216,7 +221,7 @@ function classifyHazard(tags){
 
 // Overpass gives nodes their own lat/lon directly, and ways/relations
 // a bounding-box "center" when queried with "out ... center;".
-function elementLatLng(el){
+export function elementLatLng(el){
   if (typeof el.lat === 'number' && typeof el.lon === 'number') return { lat: el.lat, lng: el.lon };
   if (el.center) return { lat: el.center.lat, lng: el.center.lon };
   return null;
@@ -229,7 +234,7 @@ function elementLatLng(el){
 // guessed one. Returns an array of {lat,lng} points, or null if this
 // element didn't come back with usable geometry (e.g. a bare node, or
 // a relation Overpass didn't expand).
-function hazardPolygonFromElement(el){
+export function hazardPolygonFromElement(el){
   if (el.type === 'way' && Array.isArray(el.geometry)){
     var pts = el.geometry.filter(function(p){ return p && typeof p.lat === 'number'; })
       .map(function(p){ return { lat: p.lat, lng: p.lon }; });
@@ -254,7 +259,7 @@ function hazardPolygonFromElement(el){
 // centered on the centroid that still fully encloses the shape. Used
 // as a real, geometry-based clearance radius in place of the guessed
 // per-type radius, whenever we have an actual outline to measure.
-function polygonCentroidAndRadius(points){
+export function polygonCentroidAndRadius(points){
   var sumLat = 0, sumLng = 0;
   points.forEach(function(p){ sumLat += p.lat; sumLng += p.lng; });
   var centroid = { lat: sumLat / points.length, lng: sumLng / points.length };
@@ -270,7 +275,7 @@ function polygonCentroidAndRadius(points){
   return { centroid: centroid, radius: maxR };
 }
 
-function polygonToStr(polygon){
+export function polygonToStr(polygon){
   return polygon.map(function(p){ return p.lat + ' ' + p.lng; }).join(' ');
 }
 
@@ -293,27 +298,27 @@ function polygonToStr(polygon){
 //  - caches successful answers per exact query, so "Try again" after
 //    a partial failure only re-downloads the part that failed.
 // ---------------------------------------------------------------
-var OVERPASS_ENDPOINTS = [
+export var OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
 ];
-var OVERPASS_QUERY_TIMEOUT_S = 40;
-var OVERPASS_FETCH_TIMEOUT_MS = (OVERPASS_QUERY_TIMEOUT_S + 10) * 1000;
-var OVERPASS_RETRY_DELAY_MS = 2000;
-var OVERPASS_CACHE_MAX = 20;
-var overpassCache = new Map();
-var overpassPreferred = 0;
+export var OVERPASS_QUERY_TIMEOUT_S = 40;
+export var OVERPASS_FETCH_TIMEOUT_MS = (OVERPASS_QUERY_TIMEOUT_S + 10) * 1000;
+export var OVERPASS_RETRY_DELAY_MS = 2000;
+export var OVERPASS_CACHE_MAX = 20;
+export var overpassCache = new Map();
+export var overpassPreferred = 0;
 
-function sleep(ms){
+export function sleep(ms){
   return new Promise(function(resolve){ setTimeout(resolve, ms); });
 }
 
-function overpassHost(url){
+export function overpassHost(url){
   return url.split('/')[2];
 }
 
-async function overpassAttempt(url, query){
+export async function overpassAttempt(url, query){
   var controller = new AbortController();
   var timer = setTimeout(function(){ controller.abort(); }, OVERPASS_FETCH_TIMEOUT_MS);
   try {
@@ -340,7 +345,7 @@ async function overpassAttempt(url, query){
   }
 }
 
-async function fetchOverpass(query){
+export async function fetchOverpass(query){
   if (overpassCache.has(query)) return overpassCache.get(query);
 
   var lastErr = null;
@@ -375,7 +380,7 @@ async function fetchOverpass(query){
 }
 
 // Lat/lng bounding box of a polygon, as {s, w, n, e}.
-function polygonBBox(poly){
+export function polygonBBox(poly){
   var bb = { s: Infinity, w: Infinity, n: -Infinity, e: -Infinity };
   poly.forEach(function(p){
     bb.s = Math.min(bb.s, p.lat); bb.n = Math.max(bb.n, p.lat);
@@ -384,7 +389,7 @@ function polygonBBox(poly){
   return bb;
 }
 
-function bboxAreaKm2(bb){
+export function bboxAreaKm2(bb){
   var wKm = (bb.e - bb.w) * 111.32 * Math.cos(deg2rad((bb.s + bb.n) / 2));
   var hKm = (bb.n - bb.s) * 110.54;
   return Math.abs(wKm * hKm);
@@ -395,7 +400,7 @@ function bboxAreaKm2(bb){
 // before we know the final route, because they're what determines
 // the route's shape in the first place (buildings don't cause a
 // detour - see below).
-async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg, rulesPromise){
+export async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg, rulesPromise){
   var distM = getDistanceFromLatLon(lat1, lng1, lat2, lng2);
   var hazardHalfWidth = corridorHalfWidth(distM, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_CORRIDOR_MAX_HALF_WIDTH_M, HAZARD_CORRIDOR_DISTANCE_FRACTION);
   // One global bounding box for the whole query (Overpass resolves a
@@ -472,7 +477,7 @@ async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg, rulesProm
 // wide around a cluster of hazards still gets building coverage along
 // that swing - not just along the straight line between start and
 // destination, which a big detour can leave far behind.
-async function getBuildingsNearPath(path, straightDistM){
+export async function getBuildingsNearPath(path, straightDistM){
   var buildingHalfWidth = corridorHalfWidth(straightDistM, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_CORRIDOR_MAX_HALF_WIDTH_M, BUILDING_CORRIDOR_DISTANCE_FRACTION);
   var buildingPoly = polygonToStr(pathCorridorPolygon(path, buildingHalfWidth));
 

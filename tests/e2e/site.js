@@ -10,10 +10,10 @@
 //   buildings     'nearby' (default), 'mixed' or 'many' on the line
 //   country       ISO code Nominatim reports (default 'il')
 //   imperial      saved unit preference
-const fs = require('node:fs');
-const path = require('node:path');
+import fs from 'node:fs';
+import path from 'node:path';
 
-const ROOT = path.join(__dirname, '..', '..');
+const ROOT = path.join(import.meta.dirname, '..', '..');
 const MODULES = path.join(ROOT, 'node_modules');
 const SITE = 'https://flytimizer.test';
 const TYPES = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.xml': 'application/xml' };
@@ -51,7 +51,7 @@ function square(c, d){
 }
 
 // Opens index.html?<query> with the fakes installed.
-async function openSite(page, from, to, query, sc = {}){
+export async function openSite(page, from, to, query, sc = {}){
   const [fla, flo] = from;
   const [tla, tlo] = to || from;
   const along = t => ({ lat: fla + (tla - fla) * t, lon: flo + (tlo - flo) * t });
@@ -111,7 +111,7 @@ async function openSite(page, from, to, query, sc = {}){
 }
 
 // Waits until a calculation has finished and its result is shown.
-async function waitForResult(page){
+export async function waitForResult(page){
   await page.waitForFunction(() => {
     const result = document.getElementById('result');
     const progress = document.getElementById('calcProgress');
@@ -119,4 +119,3 @@ async function waitForResult(page){
   }, null, { timeout: 45000 });
 }
 
-module.exports = { openSite, waitForResult };

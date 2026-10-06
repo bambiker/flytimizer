@@ -4,7 +4,7 @@
 // Visuals: altitude tape + compass rose (SVG, theme-matched)
 // ---------------------------------------------------------------
 
-var VIZ_COLORS = {
+export var VIZ_COLORS = {
   accent: '#ff8a34',   // outbound
   accent2: '#4fd1c5',  // return / wind
   ink: '#e7ecf6',
@@ -16,7 +16,7 @@ var VIZ_COLORS = {
 
 // Keeps the SVG diagrams in step with the page's light/dark theme,
 // which otherwise follows the OS/browser preference via CSS alone.
-function refreshVizTheme(){
+export function refreshVizTheme(){
   var light = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
   if (light){
     VIZ_COLORS.accent = '#d9670f';
@@ -39,17 +39,17 @@ function refreshVizTheme(){
   }
 }
 
-function polarToXY(cx, cy, r, deg){
+export function polarToXY(cx, cy, r, deg){
   var rad = (deg) * Math.PI / 180;
   return { x: cx + r * Math.sin(rad), y: cy - r * Math.cos(rad) };
 }
 
-var WIND_COLORS = ['#7c9cff', '#4fd1c5', '#ffd166']; // 30m, 80m, 120m
+export var WIND_COLORS = ['#7c9cff', '#4fd1c5', '#ffd166']; // 30m, 80m, 120m
 
 // Draws a line from the center out to `length`, with a small triangular
 // arrowhead at the tip pointing in the direction of travel, plus an
 // optional short text label placed just past the tip.
-function drawArrow(cx, cy, length, deg, color, width, label, labelOffset){
+export function drawArrow(cx, cy, length, deg, color, width, label, labelOffset){
   var tip = polarToXY(cx, cy, length, deg);
   var back = polarToXY(cx, cy, length - 9, deg);
   var leftDeg = deg - 8, rightDeg = deg + 8;
@@ -67,7 +67,7 @@ function drawArrow(cx, cy, length, deg, color, width, label, labelOffset){
   return svg;
 }
 
-function renderCompassRose(droneDeg, windPoints){
+export function renderCompassRose(droneDeg, windPoints){
   var el = document.getElementById('compassRose');
   if (!el) return;
   refreshVizTheme();

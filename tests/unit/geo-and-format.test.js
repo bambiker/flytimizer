@@ -1,8 +1,8 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { loadSite } = require('./load');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { loadSite } from './load.js';
 
-const site = loadSite();
+const site = await loadSite();
 
 test('getDistanceFromLatLon: 0.01 degrees of latitude is about 1.11 km', () => {
   const m = site.getDistanceFromLatLon(32, 35, 32.01, 35);

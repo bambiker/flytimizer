@@ -1,12 +1,12 @@
-const { test, expect } = require('@playwright/test');
-const fs = require('node:fs');
-const path = require('node:path');
-const { openSite } = require('./site');
+import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { openSite } from './site.js';
 
 // The "Updated" date in the footer counts calendar days in the
 // visitor's time zone, not 24-hour periods. (GitHub is unreachable in
 // the tests, so it shows the date written in index.html.)
-const html = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
+const html = fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'index.html'), 'utf8');
 const written = html.match(/data-updated="(\d{4}-\d{2}-\d{2})"/)[1];
 
 // The browser runs in UTC, so these are its local times too.

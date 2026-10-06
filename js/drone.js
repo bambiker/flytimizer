@@ -8,7 +8,7 @@
 // batt = battery energy (Wh), ftime = rated max flight time (min),
 // mass = takeoff weight (kg) - all from the manufacturers' spec
 // sheets; used by the battery estimate.
-var DRONE_PRESETS = {
+export var DRONE_PRESETS = {
   mavic3classic: { name: 'DJI Mavic 3 Classic', hor: 21, asc: 8, des: 6, windres: 12, batt: 77, ftime: 46, mass: 0.895 },
   mini4pro:      { name: 'DJI Mini 4 Pro',       hor: 16, asc: 5, des: 5, windres: 10.7, batt: 18.96, ftime: 34, mass: 0.249 },
   air3:          { name: 'DJI Air 3',            hor: 21, asc: 10, des: 10, windres: 12, batt: 62.6, ftime: 46, mass: 0.72 },
@@ -18,9 +18,9 @@ var DRONE_PRESETS = {
 };
 // Fields a preset fills in (the rest - payload, drag, battery health -
 // are the person's own).
-var PRESET_FIELDS = ['hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass'];
+export var PRESET_FIELDS = ['hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass'];
 
-function updateDroneSummary(){
+export function updateDroneSummary(){
   var sel = document.getElementById('droneModel');
   var nameEl = document.getElementById('droneSummaryName');
   if (!sel || !nameEl) return;
@@ -28,7 +28,7 @@ function updateDroneSummary(){
   nameEl.textContent = preset ? preset.name : 'Custom';
 }
 
-function applyDronePreset(){
+export function applyDronePreset(){
   var sel = document.getElementById('droneModel');
   var preset = DRONE_PRESETS[sel.value];
   if (preset){
@@ -40,7 +40,7 @@ function applyDronePreset(){
 // If the person hand-edits a speed field away from the selected
 // preset's value, flip the picker to "Custom" so it doesn't silently
 // keep claiming to be that drone.
-function checkCustom(){
+export function checkCustom(){
   var sel = document.getElementById('droneModel');
   var preset = DRONE_PRESETS[sel.value];
   if (preset){
@@ -54,7 +54,7 @@ function checkCustom(){
 
 // Turns an element id like "timefore80" or "gust120" into a readable
 // label for the tap-to-see-why note below the table.
-function unsafeCellLabel(id){
+export function unsafeCellLabel(id){
   var m = id.match(/^([a-z]+)(\d+)$/);
   if (!m) return id;
   var prefixLabel = {
@@ -66,7 +66,7 @@ function unsafeCellLabel(id){
   return prefixLabel + ' ' + m[2] + ' m';
 }
 
-function showUnsafeReason(label, reason){
+export function showUnsafeReason(label, reason){
   var note = document.getElementById('unsafeReasonNote');
   if (!note) return;
   note.innerHTML = '<strong>' + label + ':</strong> ' + reason;
@@ -77,7 +77,7 @@ function showUnsafeReason(label, reason){
 // there's no hover on a touchscreen - so tapping shows the same
 // reason in a small note under the table instead, which works the
 // same way on both desktop and mobile.
-function markUnsafe(id, unsafe, reason){
+export function markUnsafe(id, unsafe, reason){
   var el = document.getElementById(id);
   if (!el) return;
   el.classList.toggle('unsafe-value', unsafe);

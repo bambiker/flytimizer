@@ -1,5 +1,8 @@
 // Progress bar for the route calculation.
 
+import { getDistanceFromLatLon } from './core.js';
+import { BUILDING_CORRIDOR_DISTANCE_FRACTION, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_CORRIDOR_MAX_HALF_WIDTH_M, HAZARD_CORRIDOR_DISTANCE_FRACTION, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_CORRIDOR_MAX_HALF_WIDTH_M, bboxAreaKm2, corridorHalfWidth, polygonBBox, routeCorridorPolygon } from './osm.js';
+
 // ---------------------------------------------------------------
 // Progress bar
 //
@@ -12,23 +15,23 @@
 // correction factor is kept in localStorage, so estimates adapt to
 // how fast the map servers actually are for this person.
 // ---------------------------------------------------------------
-var PROGRESS_FACTORS_KEY = 'flytimizerTimingFactors';
+export var PROGRESS_FACTORS_KEY = 'flytimizerTimingFactors';
 
-function loadTimingFactors(){
+export function loadTimingFactors(){
   try {
     var raw = localStorage.getItem(PROGRESS_FACTORS_KEY);
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch (e){ return {}; }
 }
 
-function saveTimingFactors(f){
+export function saveTimingFactors(f){
   try { localStorage.setItem(PROGRESS_FACTORS_KEY, JSON.stringify(f)); } catch (e){}
 }
 
 // Rough first guess, in seconds, before any learning: restricted areas
 // scale with the area of the box we query, buildings with the area of
 // the corridor around the route (buildings are far more numerous).
-function estimateLookupSeconds(lat1, lng1, lat2, lng2, bearingDeg){
+export function estimateLookupSeconds(lat1, lng1, lat2, lng2, bearingDeg){
   var distM = getDistanceFromLatLon(lat1, lng1, lat2, lng2);
   var hazHalf = corridorHalfWidth(distM, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_CORRIDOR_MAX_HALF_WIDTH_M, HAZARD_CORRIDOR_DISTANCE_FRACTION);
   var hazAreaKm2 = bboxAreaKm2(polygonBBox(routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, hazHalf)));
@@ -40,7 +43,7 @@ function estimateLookupSeconds(lat1, lng1, lat2, lng2, bearingDeg){
   };
 }
 
-var Progress = {
+export var Progress = {
   active: false,
   stages: [],
   idx: -1,

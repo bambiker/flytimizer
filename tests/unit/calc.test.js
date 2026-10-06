@@ -1,8 +1,8 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { loadSite } = require('./load');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { loadSite } from './load.js';
 
-const site = loadSite();
+const site = await loadSite();
 const heights = [30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
 
 // Forecast in the units Open-Meteo returns (km/h).

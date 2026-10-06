@@ -276,6 +276,10 @@ Potential areas for contribution include:
 * Visualization
 * Weather-data integration
 
+### Code layout
+
+The site is plain HTML, CSS and JavaScript with no build step. `index.html` loads a single ES module, `js/app.js`, which imports the rest of `js/` (one file per area: wind and routing math, OpenStreetMap lookups, terrain, battery, plans, the map, sharing, the DJI export) and wires up the page.
+
 ### Running the tests
 
 The site itself has no build step, but it has automated tests (run on every pull request by GitHub Actions):

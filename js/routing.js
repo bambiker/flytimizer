@@ -1,8 +1,10 @@
 // Routing around restricted areas and buildings.
 
+import { deg2rad, getDistanceFromLatLon } from './core.js';
+
 // Distance from a circle's center to the segment p1-p2, used to test
 // whether that segment cuts through the circle at all.
-function distancePointToSegment(p1, p2, point){
+export function distancePointToSegment(p1, p2, point){
   var dx = p2.x - p1.x, dy = p2.y - p1.y;
   var lenSq = dx * dx + dy * dy;
   var t = lenSq === 0 ? 0 : ((point.x - p1.x) * dx + (point.y - p1.y) * dy) / lenSq;
@@ -12,7 +14,7 @@ function distancePointToSegment(p1, p2, point){
   return Math.sqrt(ddx * ddx + ddy * ddy);
 }
 
-function segmentCrossesCircle(p1, p2, circle){
+export function segmentCrossesCircle(p1, p2, circle){
   // Small epsilon so a path that legitimately grazes a circle's own
   // boundary (which is how we route around it) isn't rejected due to
   // floating-point noise.
@@ -27,7 +29,7 @@ function segmentCrossesCircle(p1, p2, circle){
 // skipped for edges touching that exact point, since no route can
 // avoid a zone it has to take off or land inside of - it should still
 // clear that circle everywhere else along the way.
-function segmentBlocked(nodeA, nodeB, circles, trappedForStart, trappedForDest){
+export function segmentBlocked(nodeA, nodeB, circles, trappedForStart, trappedForDest){
   var skipIdx = -1;
   if (nodeA.owner !== -1 && nodeA.owner === nodeB.owner){
     var n = VISIBILITY_SAMPLE_POINTS;
@@ -45,11 +47,11 @@ function segmentBlocked(nodeA, nodeB, circles, trappedForStart, trappedForDest){
   return false;
 }
 
-var VISIBILITY_SAMPLE_POINTS = 16; // points sampled around each obstacle's clearance circle
+export var VISIBILITY_SAMPLE_POINTS = 16; // points sampled around each obstacle's clearance circle
 
 // Which circles a point already sits inside of (closer to the center
 // than the required clearance) - there's no avoiding those from here.
-function trappingCircles(point, circles){
+export function trappingCircles(point, circles){
   var trapped = [];
   for (var i = 0; i < circles.length; i++){
     var dx = point.x - circles[i].x, dy = point.y - circles[i].y;
@@ -66,7 +68,7 @@ function trappingCircles(point, circles){
 // short route around the obstacles (as a group, not one at a time),
 // rather than the zigzag you get from nudging around each obstacle
 // independently.
-function findPathAroundCircles(start, dest, circles, trappedForStart, trappedForDest){
+export function findPathAroundCircles(start, dest, circles, trappedForStart, trappedForDest){
   var nodes = [
     { p: start, owner: -1, ring: -1, isStart: true },
     { p: dest, owner: -1, ring: -1, isDest: true }
@@ -146,7 +148,7 @@ function findPathAroundCircles(start, dest, circles, trappedForStart, trappedFor
 // jump straight to the farthest later node still reachable in a clear
 // line, skipping everything in between. Turns the graph's
 // boundary-hugging step sequence into a small number of straight legs.
-function smoothPath(pathNodes, circles, trappedForStart, trappedForDest){
+export function smoothPath(pathNodes, circles, trappedForStart, trappedForDest){
   if (pathNodes.length <= 2) return pathNodes.map(function(nd){ return nd.p; });
   var result = [pathNodes[0].p];
   var i = 0;
@@ -169,7 +171,7 @@ function smoothPath(pathNodes, circles, trappedForStart, trappedForDest){
 // straight start->destination line. Used to flag when the avoidance
 // route swings wider than the corridor we actually asked OSM about,
 // since anything past that width wasn't checked for buildings/hazards.
-function maxLateralDeviationM(path, lat1, lng1, lat2, lng2){
+export function maxLateralDeviationM(path, lat1, lng1, lat2, lng2){
   var mPerDegLat = 110540;
   var mPerDegLng = 111320 * Math.cos(deg2rad(lat1));
   function toLocal(lat, lng){
@@ -194,7 +196,7 @@ function maxLateralDeviationM(path, lat1, lng1, lat2, lng2){
 // to check whether a second avoidance pass (e.g. routing around
 // buildings after already routing around hazards) swings further than
 // the corridor that was actually queried around that first path.
-function maxPathDeviationM(path, referencePath){
+export function maxPathDeviationM(path, referencePath){
   var mPerDegLat = 110540;
   var lat0 = referencePath[0].lat, lng0 = referencePath[0].lng;
   var mPerDegLng = 111320 * Math.cos(deg2rad(lat0));
@@ -236,7 +238,7 @@ function maxPathDeviationM(path, referencePath){
 // given path. Used to check how close the route actually comes to a
 // legally-restricted site (airport, military, etc.), regardless of
 // the (capped) radius used for routing avoidance.
-function minDistanceFromPath(path, lat, lng){
+export function minDistanceFromPath(path, lat, lng){
   var mPerDegLat = 110540;
   var lat0 = path[0].lat, lng0 = path[0].lng;
   var mPerDegLng = 111320 * Math.cos(deg2rad(lat0));
@@ -255,7 +257,7 @@ function minDistanceFromPath(path, lat, lng){
   return minD;
 }
 
-function buildingsCrossingPath(buildingList, path, marginM){
+export function buildingsCrossingPath(buildingList, path, marginM){
   var mPerDegLat = 110540;
   var mPerDegLng = 111320 * Math.cos(deg2rad(path[0].lat));
   function toLocal(lat, lng){
@@ -271,7 +273,7 @@ function buildingsCrossingPath(buildingList, path, marginM){
   });
 }
 
-function computeAvoidanceRoute(lat1, lng1, lat2, lng2, obstacles){
+export function computeAvoidanceRoute(lat1, lng1, lat2, lng2, obstacles){
   var straightDist = getDistanceFromLatLon(lat1, lng1, lat2, lng2);
   var straightPath = [{ lat: lat1, lng: lng1 }, { lat: lat2, lng: lng2 }];
   var empty = { path: straightPath, distance: straightDist, buildingsAvoided: 0, hazardsAvoided: 0, trapped: [] };
