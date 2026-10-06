@@ -4,6 +4,7 @@
 // per-leg profiles/timings/battery, the result panels, and the two
 // plans.
 
+import { track } from './analytics.js';
 import { CLIMB_EFFICIENCY, DESCENT_POWER_FACTOR, batteryPct, coldCapacityFactor, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
 import { MIN_GROUND_SPEED_MS, formatDuration, getDistanceFromLatLon, groundSpeed, hourIndexNow, interpDir, lat1, lat2, lng1, lng2, marker, trueBearing } from './core.js';
 import { markUnsafe } from './drone.js';
@@ -639,6 +640,7 @@ export async function calcHeight() {
 
     if (marker==0){
        showNotice('calcNotice', 'Choose a start point first: click the map or search for a place.');
+       track('calculate', { result: 'no_start' });
        return false;
     }
 
@@ -708,6 +710,7 @@ export async function calcHeight() {
       showNotice('calcNotice', "Couldn't load the wind forecast from Open-Meteo, so no heights can be worked out right now. The weather service may be busy - trying again in a minute usually works.",
         { action: { label: 'Try again', name: 'calculate' } });
       Progress.finish(false);
+      track('calculate', { result: 'forecast_error' });
       return false;
     }
     const json = wind.json;
@@ -882,6 +885,14 @@ export async function calcHeight() {
     // A hold-altitude profile can rescue a leg that terrain following
     // couldn't fly; don't leave the "can't recommend" warning up then.
     if (plans.fast.out && plans.fast.back) document.getElementById('flyWarning').style.display = 'none';
+    track('calculate', {
+      result: plans.fast.out && plans.fast.back ? 'ok' : (plans.fast.out || plans.fast.back) ? 'one_leg' : 'no_safe_height',
+      drone: document.getElementById('droneModel').value,
+      mission: mission,
+      country: rules.detected.code || 'unknown',
+      points: marker,
+      distance_km: Math.round(routeDist / 100) / 10
+    });
     renderPlanSavings(planner, legs, baseline, battOut, battBack);
 
     setCurrentCalc({
@@ -926,6 +937,7 @@ export async function getHeight() {
     x.scrollIntoView({behavior: "smooth", block: "start"});
   } catch (err) {
     console.error(err);
+    track('calculate', { result: 'error' });
     showNotice('calcNotice', 'Something went wrong while calculating - please try again.');
   } finally {
     Progress.finish(false); // no-op if it already finished

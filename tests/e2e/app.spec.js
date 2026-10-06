@@ -341,3 +341,33 @@ test('if JSZip cannot be downloaded, the flight-plan download says so', async ({
   await page.locator('#wpmlButtons button').first().click();
   await expect(page.locator('#resultNotice')).toContainText("Couldn't load the file-packaging library");
 });
+
+// Events sent to Google Analytics (gtag pushes them onto window.dataLayer).
+const gaEvents = page => page.evaluate(() => (window.dataLayer || []).filter(a => a[0] === 'event').map(a => [a[1], a[2]]));
+
+test('usage events are sent to analytics, without coordinates', async ({ page }) => {
+  await page.context().addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.resolve() } });
+  });
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+  await waitForResult(page);
+  await page.locator('#planEcoBtn').click();
+  await page.locator('#forecastStrip [data-arg="3"]').click();
+  await waitForResult(page);
+  await downloadMission(page);
+  await page.locator('#shareRouteBtn').click();
+  await page.getByRole('button', { name: 'Start over' }).click();
+  await page.locator('#calcBtn').click();
+
+  const events = await gaEvents(page);
+  const names = events.map(e => e[0]);
+  expect(names).toEqual(expect.arrayContaining(['open_shared_link', 'calculate', 'select_plan', 'select_forecast_hour',
+    'download_flight_plan', 'share_route', 'start_over']));
+  const calcs = events.filter(e => e[0] === 'calculate').map(e => e[1]);
+  expect(calcs[0]).toEqual({ result: 'ok', drone: 'mini4pro', mission: 'delivery', country: 'IL', points: 2, distance_km: expect.any(Number) });
+  expect(calcs[calcs.length - 1]).toEqual({ result: 'no_start' });
+  expect(events.find(e => e[0] === 'select_plan')[1]).toEqual({ plan: 'eco' });
+  expect(events.find(e => e[0] === 'share_route')[1]).toEqual({ method: 'copy' });
+  // Nothing that locates the person: no coordinates in any event.
+  expect(JSON.stringify(events)).not.toMatch(/32\.79|34\.98|35\.00|32\.80/);
+});
