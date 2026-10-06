@@ -320,3 +320,24 @@ for (const scheme of ['light', 'dark']){
     expect(violations).toEqual([]);
   });
 }
+
+test('JSZip is only downloaded once there is a flight plan to offer', async ({ page }) => {
+  const jszipRequests = [];
+  page.on('request', r => { if (r.url().includes('jszip')) jszipRequests.push(r.url()); });
+  await openSite(page, HAIFA, null, '');
+  await page.waitForLoadState('load');
+  expect(jszipRequests).toEqual([]);
+
+  await page.locator('#calcBtn').click();
+  await waitForResult(page);
+  await expect.poll(() => jszipRequests.length).toBe(1);
+  const kmz = await downloadMission(page);
+  expect(kmz.files).toContain('wpmz/waylines.wpml');
+});
+
+test('if JSZip cannot be downloaded, the flight-plan download says so', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { jszipFail: true });
+  await waitForResult(page);
+  await page.locator('#wpmlButtons button').first().click();
+  await expect(page.locator('#resultNotice')).toContainText("Couldn't load the file-packaging library");
+});

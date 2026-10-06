@@ -4,6 +4,34 @@ import { getDistanceFromLatLon } from './core.js';
 import { hideNotice, showNotice } from './notice.js';
 import { lastRoute } from './plans.js';
 
+// JSZip (about 95 KB) is only needed to build the download, so it's
+// loaded the first time a route has a flight plan to offer (see
+// renderPlan), not on every page view. Same pinned file and integrity
+// hash as a <script> tag would use.
+var JSZIP_URL = 'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js';
+var JSZIP_SRI = 'sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG';
+var jszipLoading = null;
+
+export function loadJSZip(){
+  if (window.JSZip) return Promise.resolve(window.JSZip);
+  if (!jszipLoading){
+    jszipLoading = new Promise(function(resolve, reject){
+      var s = document.createElement('script');
+      s.src = JSZIP_URL;
+      s.integrity = JSZIP_SRI;
+      s.crossOrigin = 'anonymous';
+      s.onload = function(){ window.JSZip ? resolve(window.JSZip) : reject(new Error('JSZip missing after load')); };
+      s.onerror = function(){
+        jszipLoading = null;   // allow another try
+        s.remove();
+        reject(new Error('Could not load JSZip'));
+      };
+      document.head.appendChild(s);
+    });
+  }
+  return jszipLoading;
+}
+
 // ---------------------------------------------------------------
 // WPML flight-plan export
 //
@@ -158,7 +186,11 @@ export async function downloadWPML(missionIdx){
     showNotice('resultNotice', "There's no flyable route to export yet - calculate a route first.");
     return;
   }
-  if (typeof JSZip === 'undefined'){
+  var JSZip;
+  try {
+    JSZip = await loadJSZip();
+  } catch (err){
+    console.warn(err);
     showNotice('resultNotice', "Couldn't load the file-packaging library (JSZip) - check your internet connection and try again.");
     return;
   }

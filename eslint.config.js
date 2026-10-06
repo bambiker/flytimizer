@@ -1,5 +1,5 @@
 // Lint rules: ESLint's recommended set. Site code runs in the browser
-// with Leaflet (L) and JSZip loaded as globals; tests and config run
+// with Leaflet (L) loaded as a global; tests and config run
 // in Node.
 import js from '@eslint/js';
 import globals from 'globals';
@@ -20,7 +20,7 @@ export default [
     files: ['js/**/*.js'],
     languageOptions: {
       sourceType: 'module',
-      globals: { ...globals.browser, L: 'readonly', JSZip: 'readonly' }
+      globals: { ...globals.browser, L: 'readonly' }
     }
   },
   {

@@ -5,6 +5,7 @@ import { formatDuration } from './core.js';
 import { roundTripWaypoints } from './mission.js';
 import { profileWaypoints, renderTerrainProfile } from './terrain.js';
 import { fmtLen, lenNum, lenUnit } from './units.js';
+import { loadJSZip } from './wpml.js';
 
 // ---------------------------------------------------------------
 // Two plans: fastest and least battery
@@ -157,6 +158,8 @@ export function renderPlan(){
     }
   }
   lastRoute = missions.length ? { missions: missions, droneModel: c.droneModel } : null;
+  // Fetch the zip library now, so the download is instant when clicked.
+  if (missions.length) loadJSZip().catch(function(){});
   var wpmlBox = document.getElementById('wpmlButtons');
   if (wpmlBox){
     wpmlBox.innerHTML = missions.map(function(m, k){
