@@ -364,7 +364,7 @@ test('usage events are sent to analytics, without coordinates', async ({ page })
   expect(names).toEqual(expect.arrayContaining(['open_shared_link', 'calculate', 'select_plan', 'select_forecast_hour',
     'download_flight_plan', 'share_route', 'start_over']));
   const calcs = events.filter(e => e[0] === 'calculate').map(e => e[1]);
-  expect(calcs[0]).toEqual({ result: 'ok', drone: 'mini4pro', mission: 'delivery', country: 'IL', points: 2, distance_km: expect.any(Number) });
+  expect(calcs[0]).toEqual({ result: 'ok', drone: 'mini4pro', mission: 'delivery', speed_mode: 'ground', country: 'IL', points: 2, distance_km: expect.any(Number) });
   expect(calcs[calcs.length - 1]).toEqual({ result: 'no_start' });
   expect(events.find(e => e[0] === 'select_plan')[1]).toEqual({ plan: 'eco' });
   expect(events.find(e => e[0] === 'share_route')[1]).toEqual({ method: 'copy' });
@@ -394,4 +394,25 @@ test('the main page links to the guides', async ({ page }) => {
   await expect(page.locator('h1')).toHaveText('What altitude should I fly my drone in wind?');
   await page.locator('a.cta').click();
   await expect(page.locator('#map')).toBeVisible();
+});
+
+test('speed in wind: ground speed is the default, air speed changes the result and is shared', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+  await waitForResult(page);
+  await expect(page.locator('#speedMode')).toHaveValue('ground');
+  expect(page.url()).toContain('speedMode=ground');
+  const groundTimes = await page.locator('.wind-table').textContent();
+
+  await page.locator('#speedMode').selectOption('air');
+  await page.locator('#calcBtn').click();
+  await waitForResult(page);
+  expect(page.url()).toContain('speedMode=air');
+  // Somewhere on this route one leg has the wind behind it, so holding
+  // airspeed makes that leg faster than holding ground speed.
+  expect(await page.locator('.wind-table').textContent()).not.toBe(groundTimes);
+
+  // A shared link brings the mode with it.
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro&speedMode=air');
+  await waitForResult(page);
+  await expect(page.locator('#speedMode')).toHaveValue('air');
 });

@@ -6,7 +6,7 @@
 
 import { track } from './analytics.js';
 import { CLIMB_EFFICIENCY, DESCENT_POWER_FACTOR, batteryPct, coldCapacityFactor, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
-import { MIN_GROUND_SPEED_MS, formatDuration, getDistanceFromLatLon, groundSpeed, hourIndexNow, interpDir, lat1, lat2, lng1, lng2, marker, trueBearing } from './core.js';
+import { MIN_GROUND_SPEED_MS, airspeedFor, formatDuration, getDistanceFromLatLon, groundSpeed, hourIndexNow, interpDir, lat1, lat2, lng1, lng2, marker, trueBearing } from './core.js';
 import { markUnsafe } from './drone.js';
 import { renderHazardsAndRoute } from './map-view.js';
 import { currentMission } from './mission.js';
@@ -66,20 +66,34 @@ export function readFlightInputs(mission){
     speeddownback: val('des') / payloadBackCoef,
     speedhorizontalback: val('hor') / payloadBackCoef,
     drag: val('drag'),
-    windResistance: parseFloat(val('windres'))
+    windResistance: parseFloat(val('windres')),
+    speedMode: val('speedMode') === 'air' ? 'air' : 'ground'
   };
 }
 
 // Per-height wind figures (average speed/direction, estimated gust,
-// crosswind component, ground speed for each leg, and whether that
-// height is flyable on wind grounds alone). These only depend on the
+// crosswind component, ground speed and airspeed for each leg, and
+// whether that height is flyable on wind grounds alone).
+//
+// Two ways a drone can fly a leg (inp.speedMode):
+//  - 'ground' (default): it holds the set speed over the ground, like
+//    DJI waypoint missions and most multirotors in GPS mode. A
+//    tailwind doesn't make it faster - it flies slower through the air
+//    and saves battery instead. Into a headwind it's already flying
+//    flat out, so it slows down just as in 'air' mode.
+//  - 'air': it holds the set speed through the air, like a fixed-wing
+//    drone, or a multirotor flown flat out. Ground speed is airspeed
+//    plus or minus the wind, so a tailwind makes it faster.
+// The set speed (hor / payload) is also the most it can do through
+// the air. These only depend on the
 // forecast and the drone's own speeds - not on the route distance -
 // so they can be worked out before the final (possibly detoured)
 // route length is known. dronedegrees is the REVERSE bearing
 // (destination -> start); the formulas below rely on that convention.
 export function windByHeight(heights, wx, dronedegrees, inp){
   var w = { ws: [], wd: [], estgust: [], crosswind: [], windResOk: [], crosswindOkOut: [], crosswindOkBack: [],
-            gsOut: [], gsBack: [], headwindOkOut: [], headwindOkBack: [] };
+            gsOut: [], gsBack: [], airOut: [], airBack: [], headwindOkOut: [], headwindOkBack: [] };
+  var holdGround = inp.speedMode !== 'air';
   var dragF = parseFloat(inp.drag) || 1;
   for (var i = 0; i < heights.length; i++){
     if (heights[i] < 80){
@@ -107,8 +121,20 @@ export function windByHeight(heights, wx, dronedegrees, inp){
     // Wind-triangle ground speed for each leg (drag scales how strongly
     // the wind acts on the drone; 1.0 = plain vector addition). The
     // return leg flies the opposite track, so its relative angle is +180.
-    w.gsOut[i] = groundSpeed(inp.speedhorizontal, w.ws[i] * dragF, diffangle);
-    w.gsBack[i] = groundSpeed(inp.speedhorizontalback, w.ws[i] * dragF, diffangle + Math.PI);
+    var windF = w.ws[i] * dragF;
+    var gsMaxOut = groundSpeed(inp.speedhorizontal, windF, diffangle);
+    var gsMaxBack = groundSpeed(inp.speedhorizontalback, windF, diffangle + Math.PI);
+    if (holdGround){
+      w.gsOut[i] = Math.min(inp.speedhorizontal, gsMaxOut);
+      w.gsBack[i] = Math.min(inp.speedhorizontalback, gsMaxBack);
+      w.airOut[i] = airspeedFor(w.gsOut[i], windF, diffangle);
+      w.airBack[i] = airspeedFor(w.gsBack[i], windF, diffangle + Math.PI);
+    } else {
+      w.gsOut[i] = gsMaxOut;
+      w.gsBack[i] = gsMaxBack;
+      w.airOut[i] = inp.speedhorizontal;
+      w.airBack[i] = inp.speedhorizontalback;
+    }
     w.headwindOkOut[i] = !w.crosswindOkOut[i] || w.gsOut[i] > MIN_GROUND_SPEED_MS;
     w.headwindOkBack[i] = !w.crosswindOkBack[i] || w.gsBack[i] > MIN_GROUND_SPEED_MS;
   }
@@ -193,10 +219,12 @@ export function legTimings(heights, prof, samples, gs, up, down, opts, routeDist
 }
 
 // Battery % for one leg at every height (NaN without a battery model).
-export function legBattery(heights, battModel, payload, hs, timing, up, temperatureC){
+// airspeed[i]: the speed through the air at that height, which sets
+// the cruise power.
+export function legBattery(heights, battModel, payload, airspeed, timing, up, temperatureC){
   var batt = [];
   for (var i = 0; i < heights.length; i++){
-    batt[i] = battModel ? batteryPct(battModel, legEnergyFromTiming(battModel, payload, hs, timing[i], up), temperatureC) : NaN;
+    batt[i] = battModel ? batteryPct(battModel, legEnergyFromTiming(battModel, payload, airspeed[i], timing[i], up), temperatureC) : NaN;
   }
   return batt;
 }
@@ -551,7 +579,7 @@ export function buildPlans(c){
     for (var j = idx; j <= top; j++) if (!(c.w.windResOk[j] && L.cross[j] && L.head[j])) windOk = false;
     var w = nearestHeightIdx(prof.meanAGL);
     var timing = L.gs[w] > MIN_GROUND_SPEED_MS ? profileTiming(prof, L.samples, L.gs[w], L.up, L.down, L.timingOpts) : null;
-    var batt = (battModel && timing) ? batteryPct(battModel, legEnergyFromTiming(battModel, L.payload, L.hs, timing, L.up), temperatureC) : NaN;
+    var batt = (battModel && timing) ? batteryPct(battModel, legEnergyFromTiming(battModel, L.payload, L.air[w], timing, L.up), temperatureC) : NaN;
     return { i: idx, mode: 'level', prof: prof, time: timing ? timing.total : Infinity, batt: batt, ok: c.legalOk[idx] && c.buildingOk[idx] && prof.ok && windOk && !!timing };
   }
   // Every flyable (height x style) candidate per leg, scored once.
@@ -796,8 +824,8 @@ export async function calcHeight() {
     const battModel = readBatteryModel();
     const payloadOut = parseFloat(document.getElementById('payload').value) || 1;
     const payloadBack = parseFloat(inp.payloadBackCoef) || 1;
-    const battOut = legBattery(heights, battModel, payloadOut, speedhorizontal, tOut.timing, speedup, temperatureC);
-    const battBack = legBattery(heights, battModel, payloadBack, speedhorizontalback, tBack.timing, speedupback, temperatureC);
+    const battOut = legBattery(heights, battModel, payloadOut, w.airOut, tOut.timing, speedup, temperatureC);
+    const battBack = legBattery(heights, battModel, payloadBack, w.airBack, tBack.timing, speedupback, temperatureC);
 
     // A height isn't flyable if:
     //  - it's above the legal height limit, or
@@ -869,10 +897,10 @@ export async function calcHeight() {
 
     // ---- Plans: fastest (above) and least battery.
     const legs = {
-      out: { prof: pOut.prof, flyable: flyableOut, timeV: tOut.timeV, timeH: tOut.timeH, batt: battOut, gs: w.gsOut, cross: w.crosswindOkOut, head: w.headwindOkOut,
+      out: { prof: pOut.prof, flyable: flyableOut, timeV: tOut.timeV, timeH: tOut.timeH, batt: battOut, gs: w.gsOut, air: w.airOut, cross: w.crosswindOkOut, head: w.headwindOkOut,
              payload: payloadOut, hs: speedhorizontal, up: speedup, down: speeddown, samples: terrainSamples, req: reqOut,
              climbRun: speedhorizontal / speedup, descRun: speedhorizontal / speeddown, timingOpts: timingOptsOut },
-      back: { prof: pBack.prof, flyable: flyableBack, timeV: tBack.timeV, timeH: tBack.timeH, batt: battBack, gs: w.gsBack, cross: w.crosswindOkBack, head: w.headwindOkBack,
+      back: { prof: pBack.prof, flyable: flyableBack, timeV: tBack.timeV, timeH: tBack.timeH, batt: battBack, gs: w.gsBack, air: w.airBack, cross: w.crosswindOkBack, head: w.headwindOkBack,
              payload: payloadBack, hs: speedhorizontalback, up: speedupback, down: speeddownback, samples: terrainBack, req: reqBack,
              climbRun: speedhorizontalback / speedupback, descRun: speedhorizontalback / speeddownback, timingOpts: timingOptsBack }
     };
@@ -889,6 +917,7 @@ export async function calcHeight() {
       result: plans.fast.out && plans.fast.back ? 'ok' : (plans.fast.out || plans.fast.back) ? 'one_leg' : 'no_safe_height',
       drone: document.getElementById('droneModel').value,
       mission: mission,
+      speed_mode: inp.speedMode,
       country: rules.detected.code || 'unknown',
       points: marker,
       distance_km: Math.round(routeDist / 100) / 10

@@ -16,7 +16,8 @@ function hourly(over){
   };
   return { hourly: Object.assign(base, over) };
 }
-const inputs = { speedhorizontal: 15, speedhorizontalback: 15, drag: '1', windResistance: 12 };
+const inputs = { speedhorizontal: 15, speedhorizontalback: 15, drag: '1', windResistance: 12, speedMode: 'air' };
+const groundInputs = Object.assign({}, inputs, { speedMode: 'ground' });
 
 test('forecastAt converts km/h to m/s and clamps the gust factor', () => {
   const wx = site.forecastAt(hourly(), 0);
@@ -39,7 +40,7 @@ test('windByHeight uses the forecast at 80 and 120 m and interpolates between', 
   assert.equal(w.estgust[5], 15);
 });
 
-test('windByHeight: wind from behind speeds up the outbound leg and slows the return', () => {
+test('constant airspeed: wind from behind speeds up the outbound leg and slows the return', () => {
   // dronedegrees is the reverse bearing; wind from that direction is a tailwind outbound.
   const w = site.windByHeight(heights, site.forecastAt(hourly(), 0), 180, inputs);
   assert.ok(w.gsOut[5] > inputs.speedhorizontal);
@@ -96,3 +97,26 @@ test('sortRouteBuildings: a few climbable buildings are detoured, many are climb
   assert.deepEqual(tall.toAvoid.map(x => x.height), [150]);
   assert.equal(tall.maxClimbedHeight, 10);
 });
+
+test('airspeedFor is the inverse of groundSpeed', () => {
+  for (const rel of [0, 0.7, Math.PI / 2, 2.5, Math.PI]){
+    const gs = site.groundSpeed(15, 6, rel);
+    assert.ok(Math.abs(site.airspeedFor(gs, 6, rel) - 15) < 1e-9, 'angle ' + rel);
+  }
+});
+
+test('constant ground speed: a tailwind gives no extra speed, only a lower airspeed', () => {
+  const wx = site.forecastAt(hourly(), 0);
+  const air = site.windByHeight(heights, wx, 180, inputs);
+  const ground = site.windByHeight(heights, wx, 180, groundInputs);
+  // Outbound has the wind behind it: capped at the set 15 m/s over the ground,
+  // flying 15 - 10 = 5 m/s through the air at 80 m.
+  assert.equal(ground.gsOut[5], 15);
+  assert.ok(Math.abs(ground.airOut[5] - 5) < 1e-9);
+  assert.equal(air.gsOut[5], 25);
+  assert.equal(air.airOut[5], 15);
+  // Into the wind it already flies flat out, so both modes agree.
+  assert.equal(ground.gsBack[5], air.gsBack[5]);
+  assert.equal(ground.airBack[5], 15);
+});
+

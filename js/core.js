@@ -267,6 +267,14 @@ export function groundSpeed(airspeed, wind, relRad){
   if (Math.abs(cross) >= airspeed) return 0;
   return Math.sqrt(airspeed * airspeed - cross * cross) + along;
 }
+// The reverse: the airspeed needed to make ground speed gs along the
+// track in that wind (same angle convention). The drone crabs into any
+// crosswind and covers the headwind or gives up the tailwind.
+export function airspeedFor(gs, wind, relRad){
+  var along = wind * Math.cos(relRad);
+  var cross = wind * Math.sin(relRad);
+  return Math.sqrt((gs - along) * (gs - along) + cross * cross);
+}
 export var MIN_GROUND_SPEED_MS = 0.5; // below this a leg is treated as not flyable
 
 // Index of the current hour in Open-Meteo's hourly arrays, matched by

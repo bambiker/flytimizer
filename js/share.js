@@ -25,7 +25,7 @@ import { UNITS_KEY } from './units.js';
 // ---------------------------------------------------------------
 export var SETTINGS_KEY = 'flytimizerSettings';
 export var LAST_PLACE_KEY = 'flytimizerLastPlace';
-export var SETTING_FIELDS = ['mission', 'dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
+export var SETTING_FIELDS = ['mission', 'speedMode', 'dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
 
 export function storageGet(key){
   try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e){ return null; }
@@ -50,6 +50,10 @@ export function applySettings(st){
     var v = st[id];
     if (id === 'mission'){
       if (v === 'delivery' || v === 'photo') document.getElementById('mission').value = v;
+      return;
+    }
+    if (id === 'speedMode'){
+      if (v === 'ground' || v === 'air') document.getElementById('speedMode').value = v;
       return;
     }
     if (v === undefined || v === null || v === '' || isNaN(parseFloat(v))) return;

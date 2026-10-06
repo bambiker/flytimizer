@@ -32,6 +32,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 * ⚖️ **Country rules** (height limit, keep-out distances, no-fly sites) for Israel and the United States, with Israel's as the default elsewhere
 * 🔋 **Battery estimate** per leg, adjusted for payload, wind, climbs, cold and battery health, with a reserve warning
 * 🔄 Two plans: **fastest** and **least battery**, each choosing the outbound and return heights independently
+* 💨 Drones that hold a set **ground speed** (DJI waypoint missions, most multirotors) or a set **airspeed** (fixed-wing, or flying flat out), which behave differently with a tailwind
 * 🌧️ Rain, visibility and temperature, with warnings
 * 🗺️ **DJI flight-plan export** (WPML `.kmz` for DJI Pilot 2)
 * 🔗 **Shareable links** that reproduce the route and drone settings; metric or imperial units

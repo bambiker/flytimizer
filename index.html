@@ -527,6 +527,7 @@ details.panel + details.panel{
 /* Grid and flex items don't shrink below their content by default, so
    a long dropdown option would push the field off a phone screen. */
 .mission-grid > *, .field, .field-input{ min-width: 0; }
+.speed-mode{ margin-top: 12px; }
 .field-input select{ width: 100%; text-overflow: ellipsis; }
 
 @media (max-width: 520px){
@@ -961,6 +962,16 @@ details.panel + details.panel{
       </label>
     </div>
     <p class="field-note" id="missionNote"></p>
+    <label class="field speed-mode">
+      Speed in wind
+      <div class="field-input">
+        <select id="speedMode">
+          <option value="ground">Holds its speed over the ground — DJI waypoint missions, most multirotors</option>
+          <option value="air">Holds its speed through the air — fixed-wing, or flying flat out</option>
+        </select>
+      </div>
+    </label>
+    <p class="field-note">Into a headwind both slow down the same way. The difference is with the wind behind: holding ground speed, the drone doesn't go faster but uses less battery; holding airspeed, it goes faster. The DJI flight plan you can download here always holds a set ground speed.</p>
   </section>
 
   <details class="panel" id="droneConfigPanel">
