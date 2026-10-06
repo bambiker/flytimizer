@@ -9,6 +9,8 @@ const test = base.test.extend({
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
     page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
+    // Messages are shown in the page; a blocking alert/prompt is a bug.
+    page.on('dialog', d => { errors.push('dialog: ' + d.message()); d.dismiss(); });
     await use(page);
     base.expect(errors, 'page errors').toEqual([]);
   }
@@ -179,4 +181,52 @@ test('number fields open a numeric keypad on phones', async ({ page }) => {
   const fields = ['dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'health', 'drag', 'payload', 'payloadback'];
   for (const id of fields) await expect(page.locator('#' + id)).toHaveAttribute('inputmode', 'decimal');
   await expect(page.getByRole('textbox', { name: 'Search a place or address' })).toBeVisible();
+});
+
+test('Calculate without a start point says so in the page', async ({ page }) => {
+  await openSite(page, HAIFA, null, '');
+  await page.evaluate(() => history.replaceState(null, '', location.pathname)); // no shared route
+  await page.reload();
+  await page.locator('#calcBtn').click();
+  await expect(page.locator('#calcNotice')).toBeVisible();
+  await expect(page.locator('#calcNotice')).toContainText('Choose a start point first');
+  await page.locator('#calcNotice .notice-close').click();
+  await expect(page.locator('#calcNotice')).toBeHidden();
+});
+
+test('place search: no result is reported in the page, and the query is shown as text', async ({ page }) => {
+  await openSite(page, HAIFA, null, '', { places: { 'Haifa port': [32.82, 35.0] } });
+  const notice = page.locator('#searchNotice');
+
+  await page.locator('#locationSearchInput').fill('<img src=x onerror="window.__xss=1">Nowhere');
+  await page.locator('#locationSearchInput').press('Enter');
+  await expect(notice).toContainText('No location found for "<img src=x onerror="window.__xss=1">Nowhere"');
+  await expect(notice.locator('img')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+
+  // A successful search clears the message.
+  await page.locator('#locationSearchInput').fill('Haifa port');
+  await page.locator('#locationSearchBtn').click();
+  await expect(notice).toBeHidden();
+});
+
+test('Use my location without permission explains what to do instead', async ({ page }) => {
+  await openSite(page, HAIFA, null, '');
+  await page.context().clearPermissions();
+  await page.getByRole('button', { name: 'Use my location' }).click();
+  await expect(page.locator('#searchNotice')).toContainText("Couldn't get your location");
+});
+
+test('if the link cannot be copied, Share shows it ready to copy', async ({ page }) => {
+  await page.context().addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('blocked')) } });
+  });
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+  await waitForResult(page);
+  await page.locator('#shareRouteBtn').click();
+
+  const notice = page.locator('#resultNotice');
+  await expect(notice).toContainText('Copy this link to share the route');
+  await expect(notice.locator('input')).toHaveValue(/from=32\.79400,34\.98900&to=32\.80300,35\.00100/);
+  await expect(notice.locator('input')).toBeFocused();
 });

@@ -6,6 +6,7 @@ import { lat1, lat2, lng1, lng2, marker, setDestination, setstartloc } from './c
 import { DRONE_PRESETS, PRESET_FIELDS, applyDronePreset, updateDroneSummary } from './drone.js';
 import { map } from './map-view.js';
 import { onMissionChange } from './mission.js';
+import { hideNotice, showNotice } from './notice.js';
 import { UNITS_KEY } from './units.js';
 
 // ---------------------------------------------------------------
@@ -87,6 +88,7 @@ export function updateUrlForRoute(){
 export async function shareRoute(){
   var url = routeUrl();
   var btn = document.getElementById('shareRouteBtn');
+  hideNotice('resultNotice');
   if (navigator.share){
     try {
       await navigator.share({ title: 'Flytimizer route', text: 'Optimal drone altitude for this route, with live wind and terrain:', url: url });
@@ -103,7 +105,7 @@ export async function shareRoute(){
       setTimeout(function(){ btn.textContent = label; }, 2000);
     }
   } catch (e){
-    window.prompt('Copy this link to share the route:', url);
+    showNotice('resultNotice', 'Copy this link to share the route:', { copyText: url });
   }
 }
 

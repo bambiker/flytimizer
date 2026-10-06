@@ -1,6 +1,7 @@
 // DJI WPML flight-plan export.
 
 import { getDistanceFromLatLon } from './core.js';
+import { hideNotice, showNotice } from './notice.js';
 import { lastRoute } from './plans.js';
 
 // ---------------------------------------------------------------
@@ -152,12 +153,13 @@ placemarks +
 // button, which is only shown once calcHeight() has found a flyable
 // outbound height (see lastRoute above).
 export async function downloadWPML(missionIdx){
+  hideNotice('resultNotice');
   if (!lastRoute || !lastRoute.missions[missionIdx || 0]){
-    window.alert("There's no flyable route to export yet - calculate a route first.");
+    showNotice('resultNotice', "There's no flyable route to export yet - calculate a route first.");
     return;
   }
   if (typeof JSZip === 'undefined'){
-    window.alert("Couldn't load the file-packaging library (JSZip) - check your internet connection and try again.");
+    showNotice('resultNotice', "Couldn't load the file-packaging library (JSZip) - check your internet connection and try again.");
     return;
   }
 
@@ -185,6 +187,6 @@ export async function downloadWPML(missionIdx){
     setTimeout(function(){ URL.revokeObjectURL(url); }, 10000);
   } catch (err){
     console.error(err);
-    window.alert("Couldn't build the flight-plan file - please try again.");
+    showNotice('resultNotice', "Couldn't build the flight-plan file - please try again.");
   }
 }

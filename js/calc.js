@@ -9,6 +9,7 @@ import { MIN_GROUND_SPEED_MS, formatDuration, getDistanceFromLatLon, groundSpeed
 import { markUnsafe } from './drone.js';
 import { renderHazardsAndRoute } from './map-view.js';
 import { currentMission } from './mission.js';
+import { hideNotice, showNotice } from './notice.js';
 import { BUILDING_AVOID_MAX_COUNT, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_HEIGHT_SAFETY_MARGIN_M, BUILDING_LATERAL_SAFETY_MARGIN_M, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_TYPE_LABEL, MAX_FLIGHT_ALTITUDE_M, getBuildingsNearPath, getHazardsNearRoute } from './osm.js';
 import { renderPlan, setCurrentCalc } from './plans.js';
 import { Progress, estimateLookupSeconds } from './progress.js';
@@ -637,7 +638,7 @@ export function renderPlanSavings(planner, legs, baseline, battOut, battBack){
 export async function calcHeight() {
 
     if (marker==0){
-       window.alert('please choose location');
+       showNotice('calcNotice', 'Choose a start point first: click the map or search for a place.');
        return;
     }
 
@@ -903,6 +904,7 @@ export async function getHeight() {
 
   btn.disabled = true;
   btn.textContent = 'Calculating\u2026';
+  hideNotice('calcNotice');
 
   try {
     await calcHeight();
@@ -911,7 +913,7 @@ export async function getHeight() {
     x.scrollIntoView({behavior: "smooth", block: "start"});
   } catch (err) {
     console.error(err);
-    window.alert('Something went wrong while calculating - please try again.');
+    showNotice('calcNotice', 'Something went wrong while calculating - please try again.');
   } finally {
     Progress.finish(false); // no-op if it already finished
     btn.disabled = false;

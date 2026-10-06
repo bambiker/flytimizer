@@ -2,6 +2,7 @@
 // markers, and the distance/bearing/wind math everything else builds on.
 
 import { map } from './map-view.js';
+import { hideNotice, showNotice } from './notice.js';
 import { rememberStartPoint } from './share.js';
 
 // todo:
@@ -70,10 +71,13 @@ export function useCurrentLocationAsStart(lat, lng){
 
 // "Use my location" button.
 export function getLocation() {
+  hideNotice('searchNotice');
   if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(showPosition);
+    navigator.geolocation.getCurrentPosition(showPosition, function(){
+      showNotice('searchNotice', "Couldn't get your location (it may be turned off or not allowed for this site). Search for a place or click the map instead.");
+    });
   } else {
-    window.alert("Geolocation is not supported by this browser.");
+    showNotice('searchNotice', "This browser can't share your location. Search for a place or click the map instead.");
   }
 }
 
@@ -86,6 +90,7 @@ export async function searchLocation() {
   var input = document.getElementById('locationSearchInput');
   var query = input.value.trim();
   if (!query) { input.focus(); return; }
+  hideNotice('searchNotice');
 
   var btn = document.getElementById('locationSearchBtn');
   var originalLabel = btn.textContent;
@@ -95,13 +100,13 @@ export async function searchLocation() {
   try {
     var result = await geocodeLocation(query);
     if (!result) {
-      window.alert('No location found for "' + query + '". Try a different search.');
+      showNotice('searchNotice', 'No location found for "' + query + '". Try a different search.');
       return;
     }
     useCurrentLocationAsStart(result.lat, result.lng);
   } catch (err) {
     console.error(err);
-    window.alert('Something went wrong while searching for that location - please try again.');
+    showNotice('searchNotice', 'Something went wrong while searching for that location - please try again.');
   } finally {
     btn.disabled = false;
     btn.textContent = originalLabel;
@@ -121,10 +126,6 @@ export function setstartloc(lat, long)
        markerLocation(1, marker1);  
 });      
     }
-//    else { //there is already marker
-//     window.alert(marker)
-//               markerLocation(2, marker1);  
-//         }
 }
 
 

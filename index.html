@@ -707,6 +707,43 @@ details.panel + details.panel{
   margin-bottom: 16px;
 }
 
+.notice{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 8px 10px 8px 14px;
+  border-radius: 4px;
+  font-size: 14px;
+  margin: 12px 0;
+}
+.notice[hidden]{ display: none; }
+.notice > span{ flex: 1 1 200px; }
+.notice-copy{
+  flex: 1 1 100%;
+  order: 3;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.notice-close{
+  background: none;
+  border: 0;
+  color: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
 .no-fly-warning{
   background: var(--danger);
   border: 2px solid var(--danger);
@@ -881,6 +918,7 @@ details.panel + details.panel{
       </div>
       <button class="btn btn-ghost" data-action="locate">Use my location</button>
     </div>
+    <div class="notice" id="searchNotice" role="alert" hidden></div>
   </section>
 
   <section class="panel">
@@ -982,6 +1020,7 @@ details.panel + details.panel{
     </details>
 
   <button class="btn btn-primary" id="calcBtn" data-action="calculate">Find Optimal Route</button>
+  <div class="notice" id="calcNotice" role="alert" hidden></div>
 
   <div class="progress" id="calcProgress" hidden>
     <div class="progress-track" id="progressTrack" role="progressbar" aria-label="Route calculation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
@@ -1034,6 +1073,7 @@ details.panel + details.panel{
       <button class="btn btn-ghost" id="shareRouteBtn" data-action="share">Share this route</button>
       <span class="wpml-buttons" id="wpmlButtons"></span>
     </div>
+    <div class="notice" id="resultNotice" role="alert" hidden></div>
 
     <p class="savings" id="savingsText">Flying the optimal heights saves
     <strong><span id="savesec"></span></strong>
