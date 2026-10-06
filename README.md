@@ -276,6 +276,19 @@ Potential areas for contribution include:
 * Visualization
 * Weather-data integration
 
+### Running the tests
+
+The site itself has no build step, but it has automated tests (run on every pull request by GitHub Actions):
+
+```bash
+npm install
+npx playwright install chromium   # first time only
+npm test
+```
+
+* `tests/unit/` — the calculation and formatting functions, run directly in Node.
+* `tests/e2e/` — the real page in Chromium, with the weather, elevation and OpenStreetMap services replaced by fixed test data, so the tests run offline and give the same result every time.
+
 ---
 
 ## About
