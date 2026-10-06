@@ -22,21 +22,19 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 
 ## Current Features
 
-* 📍 Select a **start point and destination** directly on the map
-* 🌬️ Retrieve wind conditions at different altitudes
-* 🚁 Select a drone model or define custom drone parameters
-* 📦 Account for different payload conditions on outbound and return flights
-* ⬆️ Consider ascent and descent time
-* 💨 Account for wind resistance and drag
-* 🏫 Identify schools, kindergartens, hospitals and playgrounds   
-* 🏢 Maintain a configurable clearance above mapped buildings
-* 🌧️ Display additional weather information such as:
-
-  * Rain probability
-  * Precipitation
-  * Visibility
-* 🔄 Optimize the outbound and return flight heights independently
-* 📊 Compare estimated flight performance at multiple altitudes
+* 📍 Set a **start point and destination** on the map, by place search, or from your current location
+* 🌬️ Live hourly wind forecast at several altitudes, with estimated gusts, and a **48-hour outlook** to pick the best time
+* 🚁 Drone presets (DJI, Autel) or custom drone parameters
+* 📦 **Delivery** missions (different payload on the way back) or **photo / inspection** round trips
+* ⛰️ **Terrain following**: heights are above the ground, using Copernicus GLO-90 elevation
+* 🏢 Clearance above mapped buildings, or a detour around ones too tall to climb over
+* 🏫 Detours around restricted and sensitive sites from OpenStreetMap: schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites
+* ⚖️ **Country rules** (height limit, keep-out distances, no-fly sites) for Israel and the United States, with Israel's as the default elsewhere
+* 🔋 **Battery estimate** per leg, adjusted for payload, wind, climbs, cold and battery health, with a reserve warning
+* 🔄 Two plans: **fastest** and **least battery**, each choosing the outbound and return heights independently
+* 🌧️ Rain, visibility and temperature, with warnings
+* 🗺️ **DJI flight-plan export** (WPML `.kmz` for DJI Pilot 2)
+* 🔗 **Shareable links** that reproduce the route and drone settings; metric or imperial units
 
 ---
 
@@ -46,7 +44,7 @@ The user selects two points on the map:
 
 **Start → Destination**
 
-FLYTIMIZER then evaluates several candidate altitudes between **20 m and 120 m**.
+FLYTIMIZER then evaluates candidate heights above ground from **30 m to 120 m** in 10 m steps, up to the local legal limit.
 
 For each altitude, the system considers factors including:
 
@@ -60,8 +58,10 @@ For each altitude, the system considers factors including:
 * Drag coefficient
 * Payload coefficient
 * Flight distance
+* Terrain along the route
+* Buildings and restricted areas along the route
 
-The system estimates the flight time for each candidate altitude and identifies the altitude with the lowest estimated flight time.
+The system estimates the flight time and battery use for each candidate height, and recommends both the fastest plan and the one that uses the least battery.
 
 The return leg can be evaluated separately because the wind direction relative to the drone's heading is reversed.
 
@@ -178,9 +178,7 @@ The current version does **not** attempt to model every factor affecting a real 
 
 Examples include:
 
-* Detailed battery state-of-charge modeling
-* Battery aging
-* Temperature-dependent battery performance
+* Detailed battery modeling (the battery estimate is a simple physical model, roughly ±20%)
 * Detailed motor/propeller efficiency
 * Turbulence
 * Building-induced local wind fields
@@ -211,20 +209,6 @@ This could allow the optimizer to distinguish between:
 * Wind shadows
 * Exposed rooftops
 * Sheltered areas
-
-### Energy Optimization
-
-Instead of optimizing only estimated flight time, future versions could estimate:
-
-```text
-Battery consumption
-        ↓
-Energy cost
-        ↓
-Remaining battery
-        ↓
-Safe return margin
-```
 
 ### Flight Log Learning
 

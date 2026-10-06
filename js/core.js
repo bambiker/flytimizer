@@ -5,12 +5,6 @@ import { map } from './map-view.js';
 import { hideNotice, showNotice } from './notice.js';
 import { rememberStartPoint } from './share.js';
 
-// todo:
-// if choose start and than use GPs it makes two start marker
-// before calculate height test if there is start and destination
-// tell the user, how much he will save if he fly at 30m, 120m
-// let the user decide horizontal and vertical UAV speed
-
 //Set up some of our variables.
 export var marker = 0; ////Has the user plotted their location marker?
 export var lat1,lat2, lng1, lng2;
