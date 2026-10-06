@@ -13,6 +13,7 @@ import { clearRouteLayers, initMap } from './map-view.js';
 import { onMissionChange } from './mission.js';
 import { hideNotice } from './notice.js';
 import { clearPlans, selectPlan } from './plans.js';
+import { syncRangeLayer } from './range.js';
 import { initSharedState, shareRoute } from './share.js';
 import { resetForecastOffset, setForecastOffset } from './weather.js';
 import { downloadWPML } from './wpml.js';
@@ -72,6 +73,11 @@ document.getElementById('mission').addEventListener('change', onMissionChange);
 document.getElementById('droneModel').addEventListener('change', applyDronePreset);
 ['hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass'].forEach(function(id){
   document.getElementById(id).addEventListener('input', checkCustom);
+});
+
+document.getElementById('rangeToggle').addEventListener('change', function(e){
+  syncRangeLayer();
+  track('toggle_range', { shown: e.target.checked });
 });
 
 initMap();

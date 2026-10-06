@@ -2,7 +2,7 @@
 // so tests can call site.forecastAt(...) etc. Module top levels only
 // declare things (start-up work happens in app.js), so they load in
 // Node without a DOM or Leaflet.
-const FILES = ['core', 'units', 'osm', 'routing', 'terrain', 'battery', 'calc'];
+const FILES = ['core', 'units', 'osm', 'routing', 'terrain', 'battery', 'calc', 'range'];
 
 export async function loadSite(){
   const site = {};

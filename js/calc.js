@@ -5,7 +5,7 @@
 // plans.
 
 import { track } from './analytics.js';
-import { CLIMB_EFFICIENCY, DESCENT_POWER_FACTOR, batteryPct, coldCapacityFactor, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
+import { BATTERY_RESERVE_PCT, CLIMB_EFFICIENCY, DESCENT_POWER_FACTOR, batteryPct, coldCapacityFactor, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
 import { MIN_GROUND_SPEED_MS, airspeedFor, formatDuration, getDistanceFromLatLon, groundSpeed, hourIndexNow, interpDir, lat1, lat2, lng1, lng2, marker, trueBearing } from './core.js';
 import { markUnsafe } from './drone.js';
 import { renderHazardsAndRoute } from './map-view.js';
@@ -13,6 +13,7 @@ import { currentMission } from './mission.js';
 import { hideNotice, showNotice } from './notice.js';
 import { BUILDING_AVOID_MAX_COUNT, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_HEIGHT_SAFETY_MARGIN_M, BUILDING_LATERAL_SAFETY_MARGIN_M, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_TYPE_LABEL, MAX_FLIGHT_ALTITUDE_M, getBuildingsNearPath, getHazardsNearRoute } from './osm.js';
 import { renderPlan, setCurrentCalc } from './plans.js';
+import { rangeExtremes, renderRange } from './range.js';
 import { Progress, estimateLookupSeconds } from './progress.js';
 import { buildingsCrossingPath, computeAvoidanceRoute, maxLateralDeviationM, maxPathDeviationM, minDistanceFromPath } from './routing.js';
 import { MILE_M, altitudePermitChecked, formatDistance, renderRulesInfo, rulesForLocation } from './rules.js';
@@ -139,6 +140,50 @@ export function windByHeight(heights, wx, dronedegrees, inp){
     w.headwindOkBack[i] = !w.crosswindOkBack[i] || w.gsBack[i] > MIN_GROUND_SPEED_MS;
   }
   return w;
+}
+
+// Round-trip range from the start in every direction: how far the
+// drone can fly out and back on one charge, keeping the battery
+// reserve, at whichever allowed and wind-flyable height reaches
+// farthest that way. Flat ground and a straight line each way - no
+// terrain, buildings or restricted areas, which need a real route.
+// Per height and direction the energy is a fixed part (takeoff,
+// landing, the time at the destination) plus a cost per metre for
+// each leg, so the distance comes straight out of the budget.
+// c: { heights, legalOk, wx, inp, battModel, payloadOut, payloadBack,
+//      temperatureC, mission, stepDeg }
+// Returns [{ bearing, distM, heightM }] (distM 0 where the drone
+// can't get anywhere and back), or null without a battery model.
+export var RANGE_STEP_DEG = 5;
+export function roundTripRange(c){
+  var m = c.battModel, inp = c.inp;
+  if (!m) return null;
+  var step = c.stepDeg || RANGE_STEP_DEG;
+  var budgetWh = m.wh * m.usableFraction * coldCapacityFactor(c.temperatureC) * (1 - BATTERY_RESERVE_PCT / 100);
+  var dwellWh = m.hoverW * Math.pow(c.payloadOut, 1.5) * inp.dwellS / 3600;
+  // Delivery lands at the destination; photo turns around in the air.
+  var lands = c.mission !== 'photo';
+  function timing(cruise, climb, desc){ return { total: cruise + climb + desc, cruise: cruise, climb: climb, desc: desc }; }
+  var out = [];
+  for (var b = 0; b < 360; b += step){
+    // windByHeight takes the reverse bearing (destination -> start).
+    var w = windByHeight(c.heights, c.wx, (b + 180) % 360, inp);
+    var best = { bearing: b, distM: 0, heightM: null };
+    for (var i = 0; i < c.heights.length; i++){
+      if (!(c.legalOk[i] && w.windResOk[i] && w.crosswindOkOut[i] && w.crosswindOkBack[i] && w.headwindOkOut[i] && w.headwindOkBack[i])) continue;
+      var h = c.heights[i];
+      var fixedWh = dwellWh +
+        legEnergyFromTiming(m, c.payloadOut, w.airOut[i], timing(0, h / inp.speedup, lands ? h / inp.speeddown : 0), inp.speedup) +
+        legEnergyFromTiming(m, c.payloadBack, w.airBack[i], timing(0, lands ? h / inp.speedupback : 0, h / inp.speeddownback), inp.speedupback);
+      var perMWh =
+        legEnergyFromTiming(m, c.payloadOut, w.airOut[i], timing(1 / w.gsOut[i], 0, 0), inp.speedup) +
+        legEnergyFromTiming(m, c.payloadBack, w.airBack[i], timing(1 / w.gsBack[i], 0, 0), inp.speedupback);
+      var d = (budgetWh - fixedWh) / perMWh;
+      if (d > best.distM) best = { bearing: b, distM: d, heightM: h };
+    }
+    out.push(best);
+  }
+  return out;
 }
 
 // Wind alone can put a lower ceiling on today's flight than the
@@ -910,6 +955,14 @@ export async function calcHeight() {
       payloadOut: payloadOut, payloadBack: payloadBack, speedupback: speedupback, speeddownback: speeddownback
     });
     const plans = planner.plans;
+
+    // How far the drone can get and back from the start, every way.
+    const ranges = roundTripRange({
+      heights: heights, legalOk: legalOk, wx: wx, inp: inp, battModel: battModel,
+      payloadOut: payloadOut, payloadBack: payloadBack, temperatureC: temperatureC, mission: mission
+    });
+    renderRange(startlat, startlng, ranges, marker == 1);
+    const rangeExt = rangeExtremes(ranges);
     // A hold-altitude profile can rescue a leg that terrain following
     // couldn't fly; don't leave the "can't recommend" warning up then.
     if (plans.fast.out && plans.fast.back) document.getElementById('flyWarning').style.display = 'none';
@@ -920,7 +973,8 @@ export async function calcHeight() {
       speed_mode: inp.speedMode,
       country: rules.detected.code || 'unknown',
       points: marker,
-      distance_km: Math.round(routeDist / 100) / 10
+      distance_km: Math.round(routeDist / 100) / 10,
+      range_km: rangeExt ? Math.round(rangeExt.far.distM / 100) / 10 : 0
     });
     renderPlanSavings(planner, legs, baseline, battOut, battBack);
 
