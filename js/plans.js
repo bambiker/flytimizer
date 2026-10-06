@@ -115,7 +115,7 @@ export function renderPlan(){
     battWarning.style.display = 'none';
   }
 
-  // Terrain sentence + side view (outbound leg).
+  // Terrain sentence + side view (both legs).
   var terrainInfo = document.getElementById('terrainInfo');
   if (c.terrainAvailable){
     var text = c.terrainBaseText;
@@ -126,7 +126,7 @@ export function renderPlan(){
       text += ' Outbound (' + planLegLabel(out) + '): climbs ' + fmtLen(po.climbUp) + ' and descends ' + fmtLen(po.climbDown) +
         ' in total, peaking about ' + fmtLen(peakRel) + ' above the takeoff point, between ' + fmtLen(Math.max(0, po.minAGL)) +
         ' and ' + fmtLen(po.maxAGL) + ' above the ground.';
-      renderTerrainProfile(c.terrainSamples, po, c.heights[out.i]);
+      renderTerrainProfile(c.terrainSamples, po, c.heights[out.i], back ? { prof: back.prof, h: c.heights[back.i] } : null);
     } else {
       renderTerrainProfile(null);
     }

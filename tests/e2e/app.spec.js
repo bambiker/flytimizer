@@ -230,3 +230,26 @@ test('if the link cannot be copied, Share shows it ready to copy', async ({ page
   await expect(notice.locator('input')).toHaveValue(/from=32\.79400,34\.98900&to=32\.80300,35\.00100/);
   await expect(notice.locator('input')).toBeFocused();
 });
+
+test('the side view shows both legs', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+  await waitForResult(page);
+
+  const chart = page.locator('#terrainProfile svg');
+  await expect(chart).toContainText('ALTITUDE ABOVE SEA LEVEL (m) — OUTBOUND & RETURN');
+  await expect(chart.locator('path.flight-out')).toHaveCount(1);
+  await expect(chart.locator('path.flight-return')).toHaveCount(1);
+  const back = await page.locator('#heightback').textContent();
+  await expect(chart).toContainText('return (≥' + back + ' m AGL)');
+});
+
+test('when both legs fly the same altitudes, the side view draws one line and says so', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=neo2', { windMul: 0.05, hazards: [], flatGround: true });
+  await waitForResult(page);
+
+  await expect(page.locator('#heightfore')).toHaveText(await page.locator('#heightback').textContent());
+  const chart = page.locator('#terrainProfile svg');
+  await expect(chart).toContainText('outbound & return, same height');
+  await expect(chart.locator('path.flight-out')).toHaveCount(1);
+  await expect(chart.locator('path.flight-return')).toHaveCount(0);
+});
