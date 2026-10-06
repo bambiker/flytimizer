@@ -20,7 +20,7 @@ export function refreshVizTheme(){
   var light = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
   if (light){
     VIZ_COLORS.accent = '#d9670f';
-    VIZ_COLORS.accent2 = '#0e8c7f';
+    VIZ_COLORS.accent2 = '#0a776c';
     VIZ_COLORS.ink = '#172037';
     VIZ_COLORS.muted = '#58658a';
     VIZ_COLORS.line = '#c7cfe0';

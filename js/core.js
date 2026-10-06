@@ -125,6 +125,7 @@ export function setstartloc(lat, long)
 //This function will get the marker's current location and then add the lat/long
 //values to our textfields so that we can save the location.
 export function markerLocation(sd, mark){
+  updateResetButton();
   var currentLocation = mark.getLatLng();
   if (sd === 1){
     lat1 = currentLocation.lat;
@@ -134,6 +135,23 @@ export function markerLocation(sd, mark){
     lat2 = currentLocation.lat;
     lng2 = currentLocation.lng;
   }
+}
+
+// "Start over" is offered once there's a point on the map.
+function updateResetButton(){
+  var btn = document.getElementById('resetBtn');
+  if (btn) btn.hidden = marker === 0;
+}
+
+// Start over: removes both markers, so the next map click or search
+// sets a new start point.
+export function clearMarkers(){
+  if (marker1) marker1.remove();
+  if (marker2) marker2.remove();
+  marker1 = marker2 = undefined;
+  lat1 = lng1 = lat2 = lng2 = undefined;
+  marker = 0;
+  updateResetButton();
 }
 
 // Map click: the first click places the start, the second the

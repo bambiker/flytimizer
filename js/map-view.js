@@ -45,6 +45,13 @@ export function initMap(){
   map.on('click', addMarker);
 }
 
+// Start over: removes the restricted areas, buildings and route.
+export function clearRouteLayers(){
+  hazardLayer.clearLayers();
+  buildingLayer.clearLayers();
+  routeLine.setLatLngs([]);
+}
+
 export function renderHazardsAndRoute(hazards, buildings, path){
   hazardLayer.clearLayers();
   buildingLayer.clearLayers();

@@ -7,19 +7,35 @@
 
 import { applyDronePreset, checkCustom } from './drone.js';
 import { getHeight } from './calc.js';
-import { getLocation, searchLocation } from './core.js';
-import { initMap } from './map-view.js';
+import { clearMarkers, getLocation, searchLocation } from './core.js';
+import { clearRouteLayers, initMap } from './map-view.js';
 import { onMissionChange } from './mission.js';
-import { selectPlan } from './plans.js';
+import { hideNotice } from './notice.js';
+import { clearPlans, selectPlan } from './plans.js';
 import { initSharedState, shareRoute } from './share.js';
-import { setForecastOffset } from './weather.js';
+import { resetForecastOffset, setForecastOffset } from './weather.js';
 import { downloadWPML } from './wpml.js';
+
+// "Start over": clears the points, the route drawn on the map and the
+// result, and the route from the address bar. Drone settings stay.
+function startOver(){
+  clearMarkers();
+  clearRouteLayers();
+  clearPlans();
+  resetForecastOffset();
+  document.getElementById('result').style.display = 'none';
+  ['searchNotice', 'calcNotice', 'resultNotice'].forEach(hideNotice);
+  document.getElementById('locationSearchInput').value = '';
+  try { history.replaceState(null, '', location.pathname); } catch (e){}
+  document.querySelector('.map-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 var ACTIONS = {
   search: searchLocation,
   locate: getLocation,
   calculate: getHeight,
   share: shareRoute,
+  reset: startOver,
   plan: selectPlan,
   forecast: function(hour){ setForecastOffset(Number(hour)); },
   download: function(index){ downloadWPML(Number(index)); }

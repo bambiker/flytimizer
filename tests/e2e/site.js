@@ -6,6 +6,7 @@
 //   overpassFail  Overpass answers HTTP 500
 //   elevFail      the elevation API answers HTTP 500
 //   flatGround    every elevation is 40 m
+//   forecastFail  the forecast API answers HTTP 500
 //   hazards       restricted sites near the route (default: a set
 //                 including one with an HTML-injection name)
 //   buildings     'nearby' (default), 'mixed' or 'many' on the line
@@ -74,7 +75,7 @@ export async function openSite(page, from, to, query, sc = {}){
     const file = path.join(MODULES, m[1], m[2]);
     r.fulfill({ status: 200, body: fs.readFileSync(file), contentType: TYPES[path.extname(file)] });
   });
-  await ctx.route(/api\.open-meteo\.com\/v1\/forecast/, r => json(r, forecast(sc.windMul || 1)));
+  await ctx.route(/api\.open-meteo\.com\/v1\/forecast/, r => sc.forecastFail ? r.fulfill({ status: 500, body: 'error' }) : json(r, forecast(sc.windMul || 1)));
   await ctx.route(/api\.open-meteo\.com\/v1\/elevation/, r => {
     if (sc.elevFail) return r.fulfill({ status: 500, body: 'error' });
     const u = new URL(r.request().url());

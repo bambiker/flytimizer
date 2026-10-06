@@ -639,7 +639,7 @@ export async function calcHeight() {
 
     if (marker==0){
        showNotice('calcNotice', 'Choose a start point first: click the map or search for a place.');
-       return;
+       return false;
     }
 
     // With only a start point, plan a hover there.
@@ -665,7 +665,9 @@ export async function calcHeight() {
     // once we know the hazard-avoidance path, so a route that swings
     // wide around a cluster of hazards still gets building data along
     // that swing (see getBuildingsNearPath below).
-    const windPromise = getJSON();
+    // Settled straight away, so a failed forecast is reported below
+    // rather than as an unhandled rejection while the other lookups run.
+    const windPromise = getJSON().then(function(json){ return { json: json }; }, function(err){ return { error: err }; });
     // Country rules for the start point - looked up alongside the
     // hazards (never fails: falls back to approximate boxes, then to
     // Israel's rules).
@@ -700,7 +702,15 @@ export async function calcHeight() {
     const firstTerrainPromise = getTerrainProfile(avoidance.path)
         .catch(function(err){ console.warn('Terrain lookup failed:', err); return null; });
 
-    const json = await windPromise;  // command waits until completion
+    const wind = await windPromise;
+    if (wind.error){
+      console.warn('Forecast lookup failed:', wind.error);
+      showNotice('calcNotice', "Couldn't load the wind forecast from Open-Meteo, so no heights can be worked out right now. The weather service may be busy - trying again in a minute usually works.",
+        { action: { label: 'Try again', name: 'calculate' } });
+      Progress.finish(false);
+      return false;
+    }
+    const json = wind.json;
     const buildingData = await buildingPromise;
     const buildings = buildingData ? buildingData.buildings : null;
     const buildingList = buildings ? buildings.list : [];
@@ -902,12 +912,15 @@ export async function getHeight() {
   var btn = document.getElementById('calcBtn');
   var originalLabel = btn.textContent;
 
+  var resetBtn = document.getElementById('resetBtn');
+
   btn.disabled = true;
   btn.textContent = 'Calculating\u2026';
+  if (resetBtn) resetBtn.disabled = true;  // the result would land after the reset
   hideNotice('calcNotice');
 
   try {
-    await calcHeight();
+    if (await calcHeight() === false) return;
     var x = document.getElementById("result");
     x.style.display = "block";
     x.scrollIntoView({behavior: "smooth", block: "start"});
@@ -916,6 +929,7 @@ export async function getHeight() {
     showNotice('calcNotice', 'Something went wrong while calculating - please try again.');
   } finally {
     Progress.finish(false); // no-op if it already finished
+    if (resetBtn) resetBtn.disabled = false;
     btn.disabled = false;
     btn.textContent = originalLabel;
   }
