@@ -67,12 +67,12 @@ export var HAZARD_CORRIDOR_DISTANCE_FRACTION = 0.06; // +60 m of half-width per 
 export var HAZARD_TYPE_RADIUS_M = {
   school: 60, kindergarten: 40, hospital: 90, playground: 30,
   nursing_home: 40, university: 120, power: 30,
-  airport: 500, heliport: 50, prison: 100, embassy: 40, military: 150
+  airport: 500, heliport: 50, prison: 100, embassy: 40, military: 150, military_airfield: 500
 };
 export var HAZARD_TYPE_LABEL = {
   school: 'School', kindergarten: 'Kindergarten', hospital: 'Hospital', playground: 'Playground',
   nursing_home: 'Nursing home', university: 'University/college', power: 'Power facility',
-  airport: 'Airport/airfield', heliport: 'Heliport', prison: 'Prison', embassy: 'Embassy', military: 'Military site',
+  airport: 'Airport/airfield', heliport: 'Heliport', prison: 'Prison', embassy: 'Embassy', military: 'Military site', military_airfield: 'Military airfield',
   building: 'Tall building'
 };
 
@@ -213,6 +213,8 @@ export function classifyHazard(tags){
   if (tags.social_facility === 'nursing_home' || tags.amenity === 'nursing_home') return 'nursing_home';
   if (tags.amenity === 'university' || tags.amenity === 'college') return 'university';
   if (tags.power === 'substation' || tags.power === 'plant') return 'power';
+  // Military airfields have their own (larger) keep-out distance.
+  if (tags.military === 'airfield' || (tags.aeroway === 'aerodrome' && (tags.military || tags.landuse === 'military' || tags['aerodrome:type'] === 'military'))) return 'military_airfield';
   if (tags.aeroway === 'aerodrome') return 'airport';
   if (tags.aeroway === 'heliport') return 'heliport';
   if (tags.amenity === 'prison') return 'prison';

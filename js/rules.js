@@ -44,12 +44,14 @@ export var REGULATION_PROFILES = {
     bufferM: {
       airport: 2000,   // no closer than 2 km to a runway or landing strip
       heliport: 2000,  // same runway/landing-strip rule
-      military: 3000,  // 3 km from a military runway (small-UAS rule)
+      military_airfield: 3000,  // 3 km from a military runway (small-UAS rule); other military sites: keep off the site itself
       prison: 1000     // 1 km, distance specified for a Prison Service site
     },
-    noFlyTypes: { airport: true, heliport: true, prison: true, embassy: true, military: true },
+    noFlyTypes: { airport: true, heliport: true, prison: true, embassy: true, military: true, military_airfield: true },
     warnM: {},
-    noFlyNote: {},
+    noFlyNote: {
+      military: 'don\u2019t fly over it: security installations are closed to drones'
+    },
     notes: [
       'Flying higher than 50 m needs a CAAI permit.',
       'Keep well away from people, homes and gatherings (250 m is commonly cited), never fly over people, and keep the drone in visual line of sight.',
@@ -71,11 +73,12 @@ export var REGULATION_PROFILES = {
     // controlled airspace, which surrounds most airports out to
     // roughly 5 miles. So: detour only around the field itself, but
     // warn well beyond it.
-    noFlyTypes: { airport: true, military: true, prison: true },
-    warnM: { airport: 5 * MILE_M },
+    noFlyTypes: { airport: true, military: true, military_airfield: true, prison: true },
+    warnM: { airport: 5 * MILE_M, military_airfield: 5 * MILE_M },
     noFlyNote: {
       airport: 'airspace near airports is usually controlled — you need LAANC authorization before flying',
       military: 'many military sites have FAA drone restrictions over them (14 CFR 99.7)',
+      military_airfield: 'military airfields have controlled or restricted airspace around them — check B4UFLY before flying',
       prison: 'some correctional facilities have FAA drone restrictions over them (14 CFR 99.7)'
     },
     notes: [

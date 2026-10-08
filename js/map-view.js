@@ -75,7 +75,7 @@ export function renderHazardsAndRoute(hazards, buildings, path){
     // click inside it still sets a point.
     if (hz.clearance > hz.radius + 1){
       L.circle([hz.lat, hz.lng], {
-        radius: hz.clearance, color: hazardStyle.color, weight: 1.5, dashArray: '4 6', fill: false, opacity: 0.8
+        radius: hz.clearance, color: hazardStyle.color, weight: 2.5, dashArray: '4 6', fill: false, opacity: 0.95
       }).bindTooltip(label + ' \u2014 keep-out distance ' + fmtDist(hz.buffer), { sticky: true }).addTo(hazardLayer);
     }
   }
