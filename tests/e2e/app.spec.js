@@ -127,6 +127,31 @@ test('a detour that swings out of view zooms the map out to show the whole route
   })).toBe(true);
 });
 
+test('a military site near the route gets no 3 km detour; a military airfield gets the 3 km keep-out', async ({ page }) => {
+  // A 2.6 km route, with a military site 2.95 km south of its middle:
+  // a 3 km keep-out would just reach the line.
+  const to = [HAIFA[0], HAIFA[1] + 0.028];
+  const site = tags => [{ type: 'node', id: 50, lat: HAIFA[0] - 0.02668, lon: HAIFA[1] + 0.014, tags }];
+  await openSite(page, HAIFA, to, 'drone=mini4pro', { hazards: site({ landuse: 'military' }) });
+  await waitForResult(page);
+  await expect(page.locator('#detourNote')).toHaveText('');
+  await expect(page.locator('#noFlyWarning')).toBeHidden();
+
+  await openSite(page, HAIFA, to, 'drone=mini4pro', { hazards: site({ military: 'airfield' }) });
+  await waitForResult(page);
+  // Both ends are inside its keep-out, so it's a warning rather than a detour.
+  await expect(page.locator('#noFlyWarning')).toContainText('Military airfield — keep-out distance around 3 km');
+  await expect(page.locator('#hazardInfo')).toContainText('Military airfield at the start and destination');
+});
+
+test('a military site right on the route: the route keeps off it and warns not to fly over it', async ({ page }) => {
+  const to = [HAIFA[0], HAIFA[1] + 0.028];
+  await openSite(page, HAIFA, to, 'drone=mini4pro', { hazards: [{ type: 'node', id: 60, lat: HAIFA[0], lon: HAIFA[1] + 0.014, tags: { landuse: 'military' } }] });
+  await waitForResult(page);
+  await expect(page.locator('#noFlyWarning')).toContainText('Military site — don’t fly over it');
+  await expect(page.locator('#detourNote')).toContainText('detour around 1 restricted area');
+});
+
 test('public shelters tagged as military bunkers are not treated as military sites', async ({ page }) => {
   const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [

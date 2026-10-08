@@ -45,7 +45,22 @@ test('classifyHazard: air-raid shelters tagged as bunkers are not military sites
   assert.equal(site.classifyHazard({ military: 'trench' }), null);
   assert.equal(site.classifyHazard({ amenity: 'shelter', military: 'yes' }), null);
   assert.equal(site.classifyHazard({ military: 'base' }), 'military');
-  assert.equal(site.classifyHazard({ military: 'airfield' }), 'military');
+  assert.equal(site.classifyHazard({ military: 'airfield' }), 'military_airfield');
+  assert.equal(site.classifyHazard({ aeroway: 'aerodrome', landuse: 'military' }), 'military_airfield');
+  assert.equal(site.classifyHazard({ aeroway: 'aerodrome', 'aerodrome:type': 'military' }), 'military_airfield');
+  assert.equal(site.classifyHazard({ aeroway: 'aerodrome' }), 'airport');
   assert.equal(site.classifyHazard({ landuse: 'military' }), 'military');
   assert.equal(site.classifyHazard({ landuse: 'military', military: 'bunker' }), 'military');
+});
+
+test('Israel: 3 km keep-out only around military airfields; other military sites just keep off the site', () => {
+  const IL = site.REGULATION_PROFILES.IL;
+  const [base, field] = site.applyRulesToHazards([
+    { lat: 32, lng: 35, type: 'military', radius: 200 },
+    { lat: 32, lng: 35, type: 'military_airfield', radius: 800 }
+  ], IL);
+  assert.equal(base.clearance, 200 + IL.defaultBufferM);
+  assert.equal(base.noFly, true);
+  assert.equal(field.clearance, 3800);
+  assert.equal(field.noFly, true);
 });
