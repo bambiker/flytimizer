@@ -1195,6 +1195,38 @@ details.panel + details.panel{
   <details class="panel" id="whatsNew">
     <summary>What's new</summary>
     <div class="disclosure-body">
+      <p class="changelog-date">8 Oct 2026</p>
+      <ul>
+        <li><b>Round-trip range</b> on the map: how far the drone can fly
+        from the start and still get back with a 20% reserve, in every
+        direction with today's wind. Works with just a start point.</li>
+        <li><b>Speed in wind</b> setting: drones that hold their speed
+        over the ground (DJI waypoint missions, most multirotors) or
+        through the air (fixed-wing, or flying flat out) &mdash; they
+        behave differently with a tailwind.</li>
+        <li>Building heights: where OpenStreetMap doesn't say how tall a
+        building is, the average building height around it from the EU's
+        Global Human Settlement Layer is used instead of a 7 m guess.</li>
+        <li>Detours explained on the map: a dashed ring shows the
+        keep-out distance around each restricted area, and the map zooms
+        out to show the whole route.</li>
+        <li>Restricted areas: public shelters are no longer counted as
+        military sites, the 3 km keep-out in Israel now applies only to
+        military airfields, and a start or destination inside a keep-out
+        zone no longer sends the route out to the zone's edge and
+        back.</li>
+        <li>The side view shows both legs, and says so when they fly the
+        same altitudes.</li>
+        <li><b>Start over</b> button; on phones the recommended heights
+        come first, number fields open a number keypad, and the mission
+        settings fit the screen.</li>
+        <li>Messages appear in the page instead of pop-ups, including a
+        clear message with <b>Try again</b> when the forecast can't be
+        loaded.</li>
+        <li>Better accessibility and contrast in light and dark mode.</li>
+        <li>New <a href="guides/">guides</a> on drone altitude, battery
+        and routes in wind.</li>
+      </ul>
       <p class="changelog-date">5 Oct 2026</p>
       <ul>
         <li>48-hour outlook: see the wind and rain for every hour ahead
@@ -1317,8 +1349,8 @@ details.panel + details.panel{
   <!-- Bump data-updated (and the What's new list) on every release.
        If the GitHub repo is reachable, the latest commit date
        replaces it automatically when it's newer. -->
-  <p class="updated" id="lastUpdated" data-updated="2026-10-05">
-    Updated <time id="lastUpdatedDate" datetime="2026-10-05">5 Oct 2026</time>
+  <p class="updated" id="lastUpdated" data-updated="2026-10-08">
+    Updated <time id="lastUpdatedDate" datetime="2026-10-08">8 Oct 2026</time>
   </p>
 
   <script>
