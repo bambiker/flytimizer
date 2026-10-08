@@ -363,6 +363,31 @@ test('the side view shows both legs', async ({ page }) => {
   await expect(chart).toContainText('return (≥' + back + ' m AGL)');
 });
 
+// Last point of an SVG path's d attribute, as [x, y].
+function lastPoint(d){
+  const nums = d.replace(/Z\s*$/, '').trim().split(/[ML ,]+/).filter(Boolean).map(Number);
+  return nums.slice(-2);
+}
+
+test('photo missions turn around in the air: the side view doesn\'t land at the destination', async ({ page }) => {
+  for (const [mission, lands] of [['delivery', true], ['photo', false]]){
+    await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro&mission=' + mission, { hazards: [], windMul: 0.3 });
+    await waitForResult(page);
+    const chart = page.locator('#terrainProfile svg');
+    const ground = await chart.locator('path[fill-opacity="0.28"]').getAttribute('d');
+    // The ground outline ends with the destination, then the bottom corner.
+    const pts = ground.replace(/Z\s*$/, '').trim().split(' L');
+    const groundY = Number(pts[pts.length - 2].split(',')[1]);
+    const [, outY] = lastPoint(await chart.locator('path.flight-out').getAttribute('d'));
+    if (lands) expect(Math.abs(outY - groundY)).toBeLessThan(0.5);
+    else expect(groundY - outY).toBeGreaterThan(5);   // still well above the ground there
+    const info = await page.locator('#terrainInfo').textContent();
+    const [, up, down] = info.match(/climbs (\d+) m and descends (\d+) m/).map(Number);
+    if (lands) expect(down).toBeGreaterThan(0);
+    else expect(down).toBeLessThan(up);
+  }
+});
+
 test('when both legs fly the same altitudes, the side view draws one line and says so', async ({ page }) => {
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=neo2', { windMul: 0.05, hazards: [], flatGround: true });
   await waitForResult(page);
