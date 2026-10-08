@@ -87,7 +87,7 @@ export function renderHazardsAndRoute(hazards, buildings, path){
       weight: 1.5,
       fillColor: '#f2994a',
       fillOpacity: 0.16
-    }).bindTooltip('Building \u2014 ~' + fmtLen(b.height) + ' tall').addTo(buildingLayer);
+    }).bindTooltip('Building \u2014 ~' + fmtLen(b.height) + ' tall' + (b.heightSource === 'osm' ? '' : b.heightSource === 'ghsl' ? ' (area average, GHSL)' : ' (guess)')).addTo(buildingLayer);
   }
   routeLine.setLatLngs(path.map(function(p){ return [p.lat, p.lng]; }));
   // A detour can swing well outside the view; zoom out to show the

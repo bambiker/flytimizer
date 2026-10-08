@@ -8,7 +8,7 @@ What it does:
 - Checks every height from 30 m to 120 m above ground, in 10 m steps, up to the local legal limit, and picks the best one for each leg (the outbound and return legs face opposite winds).
 - Uses the hourly wind forecast (Open-Meteo) at 10, 80 and 120 m, estimates gusts at each height, and rules out heights where gusts exceed the drone's rated wind resistance or the crosswind is too strong.
 - Follows the terrain (Copernicus GLO-90 elevation), so heights stay above ground level along the whole route.
-- Detours around schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites (OpenStreetMap), and clears or avoids buildings.
+- Detours around schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites (OpenStreetMap), and clears or avoids buildings (heights from OpenStreetMap, or where it has none, the EU Global Human Settlement Layer's average building height).
 - Applies country rules (height limit, keep-out distances) for Israel and the United States; elsewhere it applies Israel's rules as a cautious default.
 - Models both ways a drone flies in wind: holding a set ground speed (DJI waypoint missions, most multirotors; a tailwind saves battery, not time) or holding its airspeed (fixed-wing, or flying flat out; a tailwind makes it faster).
 - Estimates battery use per leg (payload, climbs, wind, airspeed, cold, battery health) and warns below a 20% reserve; offers a fastest plan and a least-battery plan.

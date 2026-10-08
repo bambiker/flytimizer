@@ -457,8 +457,19 @@ export function renderBuildingInfo(r){
         ? (' the ' + fmtLen(r.effectiveCeilingM) + ' ceiling that today\'s wind allows (below the ' + fmtLen(r.legalCapM) + ' height limit)')
         : (' the ' + fmtLen(r.legalCapM) + ' height limit');
       var tooTallNote = document.createElement('span');
-      tooTallNote.innerHTML = ' ' + tooTallOnRoute.length + ' building' + (tooTallOnRoute.length===1?' is':'s are') + ' taller than' + ceilingNote + ' (up to about ' + fmtLen(tallestTooTall) + ') — climbing over ' + (tooTallOnRoute.length===1?'it':'them') + " isn't possible within that limit, so the route is detoured sideways around " + (tooTallOnRoute.length===1?'it':'them') + ' instead, with a ' + fmtLen(BUILDING_LATERAL_SAFETY_MARGIN_M) + ' clearance.';
+      tooTallNote.innerHTML = ' ' + tooTallOnRoute.length + ' building' + (tooTallOnRoute.length===1?' is':'s are') + ' too tall to clear by ' + fmtLen(BUILDING_HEIGHT_SAFETY_MARGIN_M) + ' within' + ceilingNote + ' (up to about ' + fmtLen(tallestTooTall) + ') — climbing over ' + (tooTallOnRoute.length===1?'it':'them') + " isn't possible within that limit, so the route is detoured sideways around " + (tooTallOnRoute.length===1?'it':'them') + ' instead, with a ' + fmtLen(BUILDING_LATERAL_SAFETY_MARGIN_M) + ' clearance.';
       buildingInfo.appendChild(tooTallNote);
+    }
+
+    var ghsl = buildings.ghsl;
+    if (ghsl && ghsl.raised > 0){
+      var ghslNote = document.createElement('span');
+      ghslNote.innerHTML = ' OpenStreetMap has no height for ' + ghsl.checked + ' of these buildings; ' + ghsl.raised + (ghsl.raised===1?' was':' were') + ' raised to the average building height around ' + (ghsl.raised===1?'it':'them') + ' from the EU\u2019s Global Human Settlement Layer (2018) — an estimate, which can be well below a single tall tower.';
+      buildingInfo.appendChild(ghslNote);
+    } else if (ghsl && ghsl.failed){
+      var ghslFail = document.createElement('span');
+      ghslFail.innerHTML = ' OpenStreetMap has no height for some of these buildings, and the backup height data couldn\u2019t be loaded, so their heights are rough guesses from the building type.';
+      buildingInfo.appendChild(ghslFail);
     }
 
     if (r.leftCheckedArea){

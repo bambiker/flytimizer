@@ -27,7 +27,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 * 🚁 Drone presets (DJI, Autel) or custom drone parameters
 * 📦 **Delivery** missions (different payload on the way back) or **photo / inspection** round trips
 * ⛰️ **Terrain following**: heights are above the ground, using Copernicus GLO-90 elevation
-* 🏢 Clearance above mapped buildings, or a detour around ones too tall to climb over
+* 🏢 Clearance above mapped buildings, or a detour around ones too tall to climb over; where OpenStreetMap has no height for a building, the average building height around it from the EU's Global Human Settlement Layer (GHS-BUILT-H, 2018) is used instead of a guess
 * 🏫 Detours around restricted and sensitive sites from OpenStreetMap: schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites
 * ⚖️ **Country rules** (height limit, keep-out distances, no-fly sites) for Israel and the United States, with Israel's as the default elsewhere
 * 🔋 **Battery estimate** per leg, adjusted for payload, wind, climbs, cold and battery health, with a reserve warning

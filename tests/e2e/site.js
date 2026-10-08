@@ -10,12 +10,16 @@
 //   jszipFail     the JSZip script can't be downloaded
 //   hazards       restricted sites near the route (default: a set
 //                 including one with an HTML-injection name)
-//   buildings     'nearby' (default), 'mixed' or 'many' on the line
+//   buildings     'nearby' (default), 'mixed', 'many' or 'untagged' (no
+//                 height tags) on the line
+//   ghsl          building height (m) the GHSL height file gives around
+//                 the route (default: the file can't be downloaded)
 //   country       ISO code Nominatim reports (default 'il')
 //   imperial      saved unit preference
 //   places        place-search results: { 'query text': [lat, lng] }
 import fs from 'node:fs';
 import path from 'node:path';
+import { makeGhslTiff, rangeOf } from '../ghsl-fixture.js';
 
 const ROOT = path.join(import.meta.dirname, '..', '..');
 const MODULES = path.join(ROOT, 'node_modules');
@@ -100,6 +104,8 @@ export async function openSite(page, from, to, query, sc = {}){
       let els;
       if (kind === 'mixed'){
         els = [0.3, 0.5, 0.7].map((t, k) => ({ type: 'way', id: 100 + k, center: along(t), geometry: square(along(t), 0.00008), tags: { building: 'yes', height: ['12', '200', '25'][k] } }));
+      } else if (kind === 'untagged'){
+        els = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map((t, k) => ({ type: 'way', id: 300 + k, center: along(t), geometry: square(along(t), 0.00008), tags: { building: 'yes' } }));
       } else if (kind === 'many'){
         els = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map((t, k) => ({ type: 'way', id: 200 + k, center: along(t), geometry: square(along(t), 0.00008), tags: { building: 'yes', height: String(8 + k * 5) } }));
       } else {
@@ -116,6 +122,15 @@ export async function openSite(page, from, to, query, sc = {}){
     ];
     json(r, { elements: hazards });
   });
+
+  if (sc.ghsl !== undefined){
+    const tiff = makeGhslTiff({ x0: Math.min(flo, tlo) - 0.05, y0: Math.max(fla, tla) + 0.05, dx: 0.005, width: 40, height: 40, tile: 16, value: () => sc.ghsl });
+    await ctx.route(/jrc-ghsl\.s3\./, r => {
+      const part = rangeOf(tiff, r.request().headers()['range']);
+      if (!part) return r.fulfill({ status: 200, body: tiff });
+      r.fulfill({ status: 206, body: part, headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'image/tiff' } });
+    });
+  }
 
   const q = 'from=' + from.join(',') + (to ? '&to=' + to.join(',') : '') + (query ? '&' + query : '');
   await page.goto(SITE + '/index.html?' + q);
