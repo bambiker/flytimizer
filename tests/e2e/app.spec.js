@@ -152,6 +152,22 @@ test('a military site right on the route: the route keeps off it and warns not t
   await expect(page.locator('#detourNote')).toContainText('detour around 1 restricted area');
 });
 
+test('buildings with no height in OpenStreetMap get the GHSL average height around them', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { buildings: 'untagged', ghsl: 24, hazards: [], flatGround: true });
+  await waitForResult(page);
+  await expect(page.locator('#buildingInfo')).toContainText('6 were raised to the average building height around them');
+  await expect(page.locator('#buildingInfo')).toContainText('the tallest one we still climb over is about 24 m');
+  // 24 m + the 20 m margin: nothing lower than 44 m is recommended.
+  expect(Number(await page.locator('#heightfore').textContent())).toBeGreaterThanOrEqual(44);
+});
+
+test('if the GHSL heights can\'t be loaded, untagged buildings keep a type guess and the result says so', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { buildings: 'untagged', hazards: [] });
+  await waitForResult(page);
+  await expect(page.locator('#buildingInfo')).toContainText('the backup height data couldn’t be loaded');
+  await expect(page.locator('#buildingInfo')).toContainText('about 7 m');
+});
+
 test('public shelters tagged as military bunkers are not treated as military sites', async ({ page }) => {
   const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [
@@ -187,7 +203,7 @@ test('photo mission in imperial units: one round-trip mission, tall building det
   await expect(page.locator('#unitFore')).toHaveText('ft');
   await expect(page.locator('#distance')).toHaveText(/mi|ft/);
   await expect(page.locator('#buildingInfo')).toContainText('3 of which sit on the direct line');
-  await expect(page.locator('#buildingInfo')).toContainText('taller than');
+  await expect(page.locator('#buildingInfo')).toContainText(/too tall to clear by \d+ ft within/);
   const kmz = await downloadMission(page);
   expect(kmz.name).toBe('flytimizer-round-trip.kmz');
 });

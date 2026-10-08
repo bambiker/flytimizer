@@ -2,6 +2,7 @@
 // geometry and tag parsing, Overpass access, and the hazard/building lookups.
 
 import { deg2rad, getDistanceFromLatLon } from './core.js';
+import { ghslHeights } from './ghsl.js';
 import { Progress } from './progress.js';
 import { minDistanceFromPath } from './routing.js';
 import { applyRulesToHazards } from './rules.js';
@@ -190,6 +191,38 @@ export function estimateBuildingHeight(tags){
   if (Object.prototype.hasOwnProperty.call(BUILDING_TYPE_HEIGHT_M, type)) return BUILDING_TYPE_HEIGHT_M[type];
 
   return BUILDING_HEIGHT_FALLBACK_M;
+}
+
+// True when OSM actually says how tall the building is (a height or a
+// level count), rather than leaving it to a guess.
+export function buildingHeightTagged(tags){
+  tags = tags || {};
+  return [tags.height, tags['building:height'], tags['building:levels'], tags.levels].some(function(v){ return parseMetersTag(v) !== null; });
+}
+
+// Buildings whose height OSM doesn't give are raised to the GHSL
+// average building height around them, when that's higher than the
+// type-based guess (see ghsl.js). Never lowers a height. Returns
+// { checked, raised, failed }.
+export async function fillMissingBuildingHeights(list){
+  var guessed = list.filter(function(b){ return b.heightSource === 'guess'; });
+  if (guessed.length === 0) return { checked: 0, raised: 0, failed: false };
+  var hs;
+  try {
+    hs = await ghslHeights(guessed);
+  } catch (err){
+    console.warn('GHSL building heights unavailable:', err);
+    return { checked: 0, raised: 0, failed: true };
+  }
+  var raised = 0;
+  guessed.forEach(function(b, k){
+    if (typeof hs[k] === 'number' && hs[k] > b.height){
+      b.height = Math.round(hs[k]);
+      b.heightSource = 'ghsl';
+      raised++;
+    }
+  });
+  return { checked: guessed.length, raised: raised, failed: false };
 }
 
 // Same idea as estimateBuildingHeight, but guessing how wide the
@@ -498,24 +531,24 @@ export async function getBuildingsNearPath(path, straightDistM){
   var elements = data.elements || [];
 
   var buildingCount = 0;
-  var maxHeight = 0;
   var buildingList = [];
 
   for (var i = 0; i < elements.length; i++){
     var tags = elements[i].tags || {};
     if (tags.building){
       buildingCount++;
-      var h = estimateBuildingHeight(tags);
-      if (h > maxHeight) maxHeight = h;
       var bpos = elementLatLng(elements[i]);
       if (bpos){
-        buildingList.push({ lat: bpos.lat, lng: bpos.lng, height: h, radius: estimateBuildingFootprintRadius(tags) });
+        buildingList.push({ lat: bpos.lat, lng: bpos.lng, height: estimateBuildingHeight(tags),
+          heightSource: buildingHeightTagged(tags) ? 'osm' : 'guess', radius: estimateBuildingFootprintRadius(tags) });
       }
     }
   }
+  var ghsl = await fillMissingBuildingHeights(buildingList);
+  var maxHeight = buildingList.reduce(function(m, b){ return Math.max(m, b.height); }, 0);
 
   return {
-    buildings: { count: buildingCount, maxHeight: maxHeight, list: buildingList },
+    buildings: { count: buildingCount, maxHeight: maxHeight, list: buildingList, ghsl: ghsl },
     buildingHalfWidthUsed: buildingHalfWidth
   };
 }
