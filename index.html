@@ -714,6 +714,7 @@ details.panel + details.panel{
   font-size: 14px;
 }
 .range-info p{ margin: 0 0 6px; }
+.range-guide{ margin-left: 14px; font-size: 13px; color: var(--accent-text); }
 .range-toggle{ display:inline-flex; align-items:center; gap:6px; color: var(--muted); font-size: 13px; cursor:pointer; }
 .savings{
   color: var(--muted);
@@ -1127,6 +1128,7 @@ details.panel + details.panel{
     <div class="range-info" id="rangeInfo" style="display:none">
       <p id="rangeText"></p>
       <label class="range-toggle"><input type="checkbox" id="rangeToggle" checked> Show range on the map</label>
+      <a class="range-guide" href="guides/how-far-can-my-drone-fly-and-return.html">How the range works</a>
     </div>
 
     <div class="no-fly-warning" id="noFlyWarning" style="display:none"></div>
@@ -1224,8 +1226,8 @@ details.panel + details.panel{
         clear message with <b>Try again</b> when the forecast can't be
         loaded.</li>
         <li>Better accessibility and contrast in light and dark mode.</li>
-        <li>New <a href="guides/">guides</a> on drone altitude, battery
-        and routes in wind.</li>
+        <li>New <a href="guides/">guides</a> on drone altitude, battery,
+        round-trip range and routes in wind.</li>
       </ul>
       <p class="changelog-date">5 Oct 2026</p>
       <ul>

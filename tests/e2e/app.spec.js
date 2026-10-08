@@ -489,7 +489,7 @@ test('usage events are sent to analytics, without coordinates', async ({ page })
   expect(JSON.stringify(events)).not.toMatch(/32\.79|34\.98|35\.00|32\.80/);
 });
 
-for (const guide of ['guides/', 'guides/best-drone-altitude-in-wind.html', 'guides/drone-battery-in-wind.html', 'guides/is-the-straight-line-the-best-drone-route.html']){
+for (const guide of ['guides/', 'guides/best-drone-altitude-in-wind.html', 'guides/drone-battery-in-wind.html', 'guides/is-the-straight-line-the-best-drone-route.html', 'guides/how-far-can-my-drone-fly-and-return.html']){
   for (const scheme of ['light', 'dark']){
     test('guide page ' + guide + ' has no accessibility problems (' + scheme + ')', async ({ page }) => {
       await page.emulateMedia({ colorScheme: scheme });
