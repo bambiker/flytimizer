@@ -130,10 +130,15 @@ export function renderPlan(){
       var po = out.prof;
       var peakRel = -Infinity;
       po.pts.forEach(function(p){ peakRel = Math.max(peakRel, p.alt - c.terrainSamples[0].g); });
-      text += ' Outbound (' + planLegLabel(out) + '): climbs ' + fmtLen(po.climbUp) + ' and descends ' + fmtLen(po.climbDown) +
+      // A photo mission doesn't land at the destination, so its outbound
+      // leg doesn't make that last descent.
+      var lastS = c.terrainSamples[c.terrainSamples.length - 1];
+      var descends = c.mission === 'photo' ? po.climbDown - Math.max(0, po.pts[po.pts.length - 1].alt - lastS.g) : po.climbDown;
+      text += ' Outbound (' + planLegLabel(out) + '): climbs ' + fmtLen(po.climbUp) + ' and descends ' + fmtLen(Math.max(0, descends)) +
         ' in total, peaking about ' + fmtLen(peakRel) + ' above the takeoff point, between ' + fmtLen(Math.max(0, po.minAGL)) +
         ' and ' + fmtLen(po.maxAGL) + ' above the ground.';
-      renderTerrainProfile(c.terrainSamples, po, c.heights[out.i], back ? { prof: back.prof, h: c.heights[back.i] } : null);
+      renderTerrainProfile(c.terrainSamples, po, c.heights[out.i], back ? { prof: back.prof, h: c.heights[back.i] } : null,
+        { turnInAir: c.mission === 'photo' });
     } else {
       renderTerrainProfile(null);
     }

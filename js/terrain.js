@@ -392,7 +392,13 @@ export function profileWaypoints(samples, prof){
 // When both legs fly the same altitudes, one line is drawn and the
 // legend says so; otherwise the return leg is a wider band under the
 // outbound line, so stretches where they coincide show both colours.
-export function renderTerrainProfile(samples, prof, h, back){
+// opts.turnInAir: a photo/inspection mission turns around in the air
+// at the destination instead of landing there (the calculation skips
+// that landing and takeoff too), so the lines don't drop to the ground
+// there; the return line instead meets the outbound line's last
+// altitude, showing any climb or descent between the two legs.
+export function renderTerrainProfile(samples, prof, h, back, opts){
+  opts = opts || {};
   var el = document.getElementById('terrainProfile');
   if (!el) return;
   if (!samples || !prof || samples[samples.length - 1].s < 1){
@@ -420,11 +426,14 @@ export function renderTerrainProfile(samples, prof, h, back){
   samples.forEach(function(p){ ground += ' L' + X(p.s).toFixed(1) + ',' + Y(p.g).toFixed(1); });
   ground += ' L' + X(total) + ',' + Y(y0) + ' Z';
   var ceiling = samples.map(function(p, i){ return (i ? 'L' : 'M') + X(p.s).toFixed(1) + ',' + Y(p.g + MAX_AGL_M).toFixed(1); }).join(' ');
-  // A leg's line, from the ground at the start to the ground at the destination.
-  function flightPath(pts){
+  // A leg's line, from the ground at the start to the ground at the
+  // destination - or, when turning in the air, to `endAlt` there.
+  function flightPath(pts, endAlt){
     var d = pts.map(function(p, i){ return (i ? 'L' : 'M') + X(p.s).toFixed(1) + ',' + Y(p.alt).toFixed(1); }).join(' ');
-    return 'M' + X(0) + ',' + Y(samples[0].g) + ' L' + d.slice(1) + ' L' + X(total) + ',' + Y(samples[samples.length - 1].g);
+    var end = endAlt === undefined ? samples[samples.length - 1].g : endAlt;
+    return 'M' + X(0) + ',' + Y(samples[0].g) + ' L' + d.slice(1) + ' L' + X(total) + ',' + Y(end).toFixed(1);
   }
+  var outEndAlt = outPts[outPts.length - 1].alt;
 
   var mono = 'font-family="JetBrains Mono, monospace" font-size="10"';
   var ticks = '';
@@ -466,8 +475,8 @@ export function renderTerrainProfile(samples, prof, h, back){
       ticks +
       '<path d="' + ground + '" fill="' + VIZ_COLORS.muted + '" fill-opacity="0.28" stroke="' + VIZ_COLORS.muted + '" stroke-width="1"/>' +
       '<path d="' + ceiling + '" fill="none" stroke="' + VIZ_COLORS.danger + '" stroke-width="1" stroke-dasharray="4 3"/>' +
-      (backPts && !sameAlt ? '<path class="flight-return" d="' + flightPath(backPts) + '" fill="none" stroke="' + VIZ_COLORS.accent2 + '" stroke-width="5" stroke-linejoin="round"/>' : '') +
-      '<path class="flight-out" d="' + flightPath(outPts) + '" fill="none" stroke="' + VIZ_COLORS.accent + '" stroke-width="2.2" stroke-linejoin="round"/>' +
+      (backPts && !sameAlt ? '<path class="flight-return" d="' + flightPath(backPts, opts.turnInAir ? outEndAlt : undefined) + '" fill="none" stroke="' + VIZ_COLORS.accent2 + '" stroke-width="5" stroke-linejoin="round"/>' : '') +
+      '<path class="flight-out" d="' + flightPath(outPts, opts.turnInAir ? outEndAlt : undefined) + '" fill="none" stroke="' + VIZ_COLORS.accent + '" stroke-width="2.2" stroke-linejoin="round"/>' +
       '<text x="' + padL + '" y="' + (H - 8) + '" ' + mono + ' fill="' + VIZ_COLORS.muted + '">start</text>' +
       '<text x="' + (W - padR) + '" y="' + (H - 8) + '" text-anchor="end" ' + mono + ' fill="' + VIZ_COLORS.muted + '">' + distLabel + '</text>' +
     '</svg>';
