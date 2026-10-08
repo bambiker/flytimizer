@@ -485,7 +485,7 @@ export function renderHazardInfo(r){
     var detourText = avoidance.hazardsAvoided > 0
       ? "The route on the map now detours around " + avoidance.hazardsAvoided + " of them."
       : "The straight-line route already clears all of them.";
-    hazardInfo.innerHTML = "Found " + hazards.length + " restricted area" + (hazards.length===1?'':'s') + " (schools, hospitals, power infrastructure, airports and more) near this route, marked in red on the map. " + detourText;
+    hazardInfo.innerHTML = "Found " + hazards.length + " restricted area" + (hazards.length===1?'':'s') + " (schools, hospitals, power infrastructure, airports and more) near this route, marked in red on the map, with a dashed ring for the keep-out distance the route stays outside. " + detourText;
 
     var trappedList = avoidance.trapped || [];
     if (trappedList.length > 0){
@@ -497,7 +497,7 @@ export function renderHazardInfo(r){
       });
       var trappedWarning = document.createElement('span');
       trappedWarning.className = 'warning-hint';
-      trappedWarning.innerHTML = ' Your ' + trappedNames.join(', and your ') + ' is within its normal clearance distance — taking off or landing there is fine, but the route can only steer clear of it once it\'s away from that point.';
+      trappedWarning.innerHTML = ' Your ' + trappedNames.join(', and your ') + ' is inside its keep-out distance, so the route can\'t stay outside it — it just doesn\'t get any closer to the site than it has to.';
       hazardInfo.appendChild(trappedWarning);
     }
 
@@ -762,7 +762,7 @@ export async function calcHeight() {
     const hazardHalfWidthUsed = hazardData ? hazardData.hazardHalfWidthUsed : HAZARD_CORRIDOR_HALF_WIDTH_M;
 
     const hazardObstacles = hazards.map(function(h){
-      return { lat: h.lat, lng: h.lng, clearance: h.clearance, kind: 'hazard', type: h.type, name: h.name };
+      return { lat: h.lat, lng: h.lng, clearance: h.clearance, radius: h.radius, kind: 'hazard', type: h.type, name: h.name };
     });
     // First pass: route around hazards only. This is also the final
     // route if no buildings end up needing a detour of their own.

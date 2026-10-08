@@ -325,8 +325,27 @@ export function computeAvoidanceRoute(lat1, lng1, lat2, lng2, obstacles){
     return empty;
   }
 
-  var pathNodes = findPathAroundCircles(startP, destP, circles, trappedForStart, trappedForDest);
-  var smoothed = smoothPath(pathNodes, circles, trappedForStart, trappedForDest);
+  // A zone the start or destination is inside isn't routed out of and
+  // back into (a 2-3 km airport or military zone otherwise sends the
+  // route kilometres out of its way):
+  //  - one end inside: the route doesn't get any closer to the site
+  //    than that end already is;
+  //  - both ends inside: there's no staying out, so it only keeps off
+  //    the site itself (its mapped size, without the keep-out distance).
+  // Either way the zone is still reported as a warning (trapped).
+  var routingCircles = circles.map(function(c, i){
+    var dStart = Math.sqrt(c.x * c.x + c.y * c.y);
+    var dDest = Math.sqrt((destP.x - c.x) * (destP.x - c.x) + (destP.y - c.y) * (destP.y - c.y));
+    var inStart = dStart < c.r, inDest = dDest < c.r;
+    var r = c.r;
+    if (inStart && inDest) r = Math.min(obstacles[i].radius || 0, r);
+    if (inStart) r = Math.min(r, dStart - 1);
+    if (inDest) r = Math.min(r, dDest - 1);
+    return { x: c.x, y: c.y, r: Math.max(0, r), kind: c.kind };
+  });
+
+  var pathNodes = findPathAroundCircles(startP, destP, routingCircles, [], []);
+  var smoothed = smoothPath(pathNodes, routingCircles, [], []);
 
   var path = smoothed.map(toLatLng);
   var totalDist = 0;

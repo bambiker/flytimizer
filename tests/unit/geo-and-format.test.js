@@ -39,3 +39,13 @@ test('escapeHtml escapes every HTML-significant character', () => {
     '&lt;img src=x onerror=&quot;a(&#39;b&#39;)&quot;&gt;&amp;');
   assert.equal(site.escapeHtml(42), '42');
 });
+
+test('classifyHazard: air-raid shelters tagged as bunkers are not military sites', () => {
+  assert.equal(site.classifyHazard({ military: 'bunker', name: 'מקלט ציבורי' }), null);
+  assert.equal(site.classifyHazard({ military: 'trench' }), null);
+  assert.equal(site.classifyHazard({ amenity: 'shelter', military: 'yes' }), null);
+  assert.equal(site.classifyHazard({ military: 'base' }), 'military');
+  assert.equal(site.classifyHazard({ military: 'airfield' }), 'military');
+  assert.equal(site.classifyHazard({ landuse: 'military' }), 'military');
+  assert.equal(site.classifyHazard({ landuse: 'military', military: 'bunker' }), 'military');
+});
