@@ -27,6 +27,7 @@ Limitations: a planning aid, not a guarantee of safety or legality. OpenStreetMa
 - [What altitude should I fly my drone in wind?](https://bambiker.github.io/flytimizer/guides/best-drone-altitude-in-wind.html): wind shear, headwind vs tailwind asymmetry, and different altitudes per leg, with worked examples
 - [How does wind affect drone battery life?](https://bambiker.github.io/flytimizer/guides/drone-battery-in-wind.html): why wind drains the battery; payload, climbs, cold and battery age
 - [Is the straight line the best drone route?](https://bambiker.github.io/flytimizer/guides/is-the-straight-line-the-best-drone-route.html): terrain, buildings, restricted sites and wind, with a planning checklist
+- [How far can my drone fly and still get back?](https://bambiker.github.io/flytimizer/guides/how-far-can-my-drone-fly-and-return.html): round-trip range in wind by direction, with payload and cold, and how to see it on the map for any drone and start point
 
 ## Optional
 
