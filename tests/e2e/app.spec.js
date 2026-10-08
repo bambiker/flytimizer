@@ -100,6 +100,44 @@ test('wind stronger than the drone can handle gives a clear no-fly warning', asy
   await expect(page.locator('#wpmlButtons button')).toHaveCount(0);
 });
 
+test('the keep-out distance the route detours around is drawn on the map', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+  await waitForResult(page);
+  // The heliport (Israel: 2 km) is drawn as a dashed ring at that distance.
+  const rings = page.locator('.leaflet-overlay-pane path[stroke-dasharray="4 6"]');
+  await expect(rings).toHaveCount(3);
+  await expect(page.locator('#hazardInfo')).toContainText('dashed ring for the keep-out distance');
+  await expect(page.locator('#hazardInfo')).toContainText("doesn't get any closer to the site than it has to");
+});
+
+test('a detour that swings out of view zooms the map out to show the whole route', async ({ page }) => {
+  // An airfield halfway along a 6 km route: 2.5 km around it is well outside the first view.
+  const to = [HAIFA[0], HAIFA[1] + 0.064];
+  await openSite(page, HAIFA, to, 'drone=mini4pro', { hazards: [
+    { type: 'node', id: 40, lat: HAIFA[0], lon: HAIFA[1] + 0.032, tags: { aeroway: 'aerodrome', name: 'Field' } }
+  ] });
+  await waitForResult(page);
+  await expect(page.locator('#hazardInfo')).toContainText('detours around 1 of them');
+  // Both measured at once (the page may still be scrolling). Leaflet
+  // clips lines at the map's edge, so "fits" means clear of it.
+  await expect.poll(() => page.evaluate(() => {
+    const m = document.getElementById('map').getBoundingClientRect();
+    const r = document.querySelector('.leaflet-overlay-pane path[stroke="#2f6fed"]').getBoundingClientRect();
+    return r.left > m.left + 10 && r.top > m.top + 10 && r.right < m.right - 10 && r.bottom < m.bottom - 10;
+  })).toBe(true);
+});
+
+test('public shelters tagged as military bunkers are not treated as military sites', async ({ page }) => {
+  const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [
+    { type: 'node', id: 30, lat: mid[0] + 0.0005, lon: mid[1], tags: { military: 'bunker', amenity: 'shelter', name: 'מקלט ציבורי' } },
+    { type: 'node', id: 31, lat: mid[0] - 0.0005, lon: mid[1], tags: { military: 'bunker', name: 'מקלט 8' } }
+  ] });
+  await waitForResult(page);
+  await expect(page.locator('#noFlyWarning')).toBeHidden();
+  await expect(page.locator('#hazardInfo')).toContainText('No schools, hospitals');
+});
+
 test('a failed OpenStreetMap lookup is reported, not silently ignored', async ({ page }) => {
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=air3', { overpassFail: true });
   await waitForResult(page);

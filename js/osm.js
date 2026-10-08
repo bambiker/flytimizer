@@ -202,6 +202,8 @@ export function estimateBuildingFootprintRadius(tags){
   return BUILDING_FOOTPRINT_FALLBACK_M;
 }
 
+export var NOT_MILITARY_SITE = { bunker: true, trench: true, shelter: true, no: true };
+
 export function classifyHazard(tags){
   tags = tags || {};
   if (tags.amenity === 'school') return 'school';
@@ -215,7 +217,12 @@ export function classifyHazard(tags){
   if (tags.aeroway === 'heliport') return 'heliport';
   if (tags.amenity === 'prison') return 'prison';
   if (tags.diplomatic === 'embassy') return 'embassy';
-  if (tags.military || tags.landuse === 'military') return 'military';
+  if (tags.landuse === 'military') return 'military';
+  // Bunkers and trenches are mostly public air-raid shelters (very
+  // common in Israel, often tagged military=bunker) - not military
+  // sites with a keep-out distance. A real base is still found through
+  // its outline (landuse=military or military=base etc.).
+  if (tags.military && !NOT_MILITARY_SITE[tags.military] && tags.amenity !== 'shelter') return 'military';
   return null;
 }
 
@@ -418,7 +425,7 @@ export async function getHazardsNearRoute(lat1, lng1, lat2, lng2, bearingDeg, ru
     'nwr["power"~"^(substation|plant)$"];' +
     'nwr["aeroway"~"^(aerodrome|heliport)$"];' +
     'nwr["diplomatic"="embassy"];' +
-    'nwr["military"];' +
+    'nwr["military"]["military"!~"^(bunker|trench|shelter|no)$"];' +
     'nwr["landuse"="military"];' +
     ');out geom;';
 
