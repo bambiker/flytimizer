@@ -18,9 +18,13 @@ What it does
                |horizontal acceleration|, |yaw rate|
    airspeed = |ground velocity - wind|. Wind is not in the logs, so one
    wind vector per day is estimated together with the model.
-4. Converts energy (Wh) into battery % with a Wh-per-% figure measured per
-   battery (battery serial number when the log has one, or --battery-map).
-   This is where two different batteries matter.
+4. Converts energy (Wh) into battery % with a Wh-per-% CURVE that depends
+   on the battery % itself. DJI's charge level counts charge (mAh), and
+   the voltage is lower when the battery is low, so the last percents hold
+   less energy than the first ones. The curve is measured from every 1%
+   step in the logs (energy drawn between two changes of the charge
+   level), per battery when that battery has enough steps (serial number
+   from the logs, or --battery-map), otherwise from all batteries.
 5. Leave-one-out validation: each flight in turn is predicted by a model
    fitted on all the other flights, and compared with what its battery
    actually did. Compared side by side:
@@ -31,8 +35,11 @@ What it does
                    the same day (what you would know before flying)
        own wind  - this model, wind fitted on the test flight itself
                    (an upper bound: not available before the flight)
-       energy/%  - the TRUE energy of the flight converted with the
-                   training Wh/% - isolates the battery-conversion error
+       E/% flat  - the TRUE energy of the flight converted with one fixed
+                   Wh/% - isolates the battery-conversion error
+       E/% curve - the same with the Wh/% curve; the drop from 'E/% flat'
+                   is what the curve buys
+   All model methods (no wind, same day, own wind) use the curve.
 6. --route: predicts battery % along a planned route and when it reaches
    the reserve and empty.
 
@@ -103,7 +110,10 @@ FEATURES = [
 SPEC = SimpleNamespace(wh=11.5, minutes=19.0, mass=0.151, vmax=12.0,
                        test_speed=6.0, climb_eff=0.6, descent_factor=0.9)
 
-METHODS = ["naive", "spec", "no wind", "same day", "own wind", "energy/%"]
+METHODS = ["naive", "spec", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
+
+MIN_STEPS_PER_BATTERY = 40    # 1% steps needed for a battery's own curve
+SOC_GRID = np.arange(-30.0, 100.001, 0.05)   # for energy <-> % conversion
 
 
 # ---------------------------------------------------------------------
@@ -250,9 +260,32 @@ def load_flight(path, battery_map):
         axis_check=_gps_axis_check(b),
         soc_start=soc_start,
         soc_end=soc_end,
+        steps=soc_steps(d),
         temp=float(d["temp"].mean()) if d["temp"].notna().any() else np.nan,
         serial_cols=battery_serial_columns(raw.columns),
     )
+
+
+def soc_steps(d):
+    """Energy drawn for each whole 1% of the charge level.
+
+    Each step runs from the row where the level drops to L until the row
+    where it drops below L, all in the air. The first and last levels of
+    a flight are partial and left out, and so are steps where the level
+    went up (gauge corrections) or jumped by more than 2%.
+    """
+    soc = d["soc"].where(d["soc"] > 0).ffill().to_numpy()
+    ce = np.concatenate([[0.0], np.cumsum(d["eJ"].to_numpy())])
+    air = d["air"].to_numpy()
+    change = np.where(np.isfinite(soc[1:]) & np.isfinite(soc[:-1])
+                      & (soc[1:] != soc[:-1]))[0] + 1
+    rows = []
+    for a, b in zip(change[:-1], change[1:]):
+        level, before, after = soc[a], soc[a - 1], soc[b]
+        if not (before > level > after) or level - after > 2 or not air[a:b].all():
+            continue
+        rows.append((level, (ce[b] - ce[a]) / 3600.0, level - after))
+    return pd.DataFrame(rows, columns=["level", "wh", "drop"])
 
 
 def _corr(a, b):
@@ -476,11 +509,67 @@ def wh_per_pct(flights, battery=None):
     return e / drop, drop / secs, ("same battery" if same else "all batteries")
 
 
+def fit_wh_curve(flights, battery=None, degree=1):
+    """Wh per 1% as a polynomial in the battery %, fitted to the 1% steps.
+    Uses the battery's own steps when it has enough of them."""
+    def steps_of(fs):
+        parts = [f.steps for f in fs if len(f.steps)]
+        return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+    own = [f for f in flights if battery not in (None, "unknown") and f.battery == battery]
+    st, src = steps_of(own), "same battery"
+    if len(st) < MIN_STEPS_PER_BATTERY:
+        st, src = steps_of(flights), "all batteries"
+    if len(st) < 10 * (degree + 1):
+        whp, _, src = wh_per_pct(flights, battery)
+        return SimpleNamespace(coef=np.array([whp]), lo=0.0, hi=100.0, n=0,
+                               src=f"flat ({src}, too few 1% steps)")
+
+    # Mid-point of each step: level L covers the charge from L down to L-1.
+    x = st["level"].to_numpy() - 0.5 * st["drop"].to_numpy()
+    y = (st["wh"] / st["drop"]).to_numpy()
+    w = st["drop"].to_numpy()
+    keep = np.ones(len(x), bool)
+    for _ in range(2):   # drop stalled-gauge outliers, then refit
+        coef = np.polyfit(x[keep], y[keep], degree, w=np.sqrt(w[keep]))
+        res = y - np.polyval(coef, x)
+        mad = 1.4826 * np.median(np.abs(res[keep] - np.median(res[keep])))
+        keep = np.abs(res) <= 3.5 * max(mad, 1e-4)
+    coef = np.polyfit(x[keep], y[keep], degree, w=np.sqrt(w[keep]))
+    return SimpleNamespace(coef=coef, lo=float(x.min()), hi=float(x.max()),
+                           n=int(keep.sum()), src=src)
+
+
+def curve_whp(curve, soc):
+    """Wh per 1% at this battery %; never below a quarter of the mid value."""
+    floor = 0.25 * np.polyval(curve.coef, 50.0)
+    return np.maximum(np.polyval(curve.coef, np.asarray(soc, float)), floor)
+
+
+def _curve_energy(curve):
+    """Energy from 0% up to each SOC_GRID point (Wh), increasing."""
+    whp = curve_whp(curve, SOC_GRID)
+    step = SOC_GRID[1] - SOC_GRID[0]
+    e = np.concatenate([[0.0], np.cumsum(0.5 * (whp[1:] + whp[:-1]) * step)])
+    return e - np.interp(0.0, SOC_GRID, e)
+
+
+def energy_between(curve, soc_hi, soc_lo):
+    e = _curve_energy(curve)
+    return np.interp(soc_hi, SOC_GRID, e) - np.interp(soc_lo, SOC_GRID, e)
+
+
+def soc_after(curve, soc0, energy_wh):
+    """Battery % left after drawing energy_wh (scalar or array) from soc0."""
+    e = _curve_energy(curve)
+    return np.interp(np.interp(soc0, SOC_GRID, e) - np.asarray(energy_wh, float), e, SOC_GRID)
+
+
 # ---------------------------------------------------------------------
 # Leave-one-out
 # ---------------------------------------------------------------------
 
-def leave_one_out(flights, group):
+def leave_one_out(flights, group, degree):
     key = (lambda f: f.session) if group == "day" else (lambda f: f.name)
     evals = [f for f in flights
              if f.soc_drop >= MIN_SOC_DROP_FOR_EVAL and f.duration_s >= MIN_EVAL_AIRBORNE_S]
@@ -504,6 +593,7 @@ def leave_one_out(flights, group):
         whp, rate, whp_src = wh_per_pct(train, f.battery)
         if not np.isfinite(whp):
             continue
+        curve = fit_wh_curve(train, f.battery, degree)
         dur = f.bins["dur"].to_numpy()
         same_day = model["winds"].get(f.session)
         own = estimate_wind(model["beta"], [f])
@@ -517,18 +607,21 @@ def leave_one_out(flights, group):
         drop = {
             "naive": rate * f.duration_s,
             "spec": np.sum(power["spec"] * dur) / 3600.0 / SPEC.wh * 100.0,
-            "energy/%": f.energy_wh / whp,
+            "E/% flat": f.energy_wh / whp,
+            "E/% curve": f.soc_start - soc_after(curve, f.soc_start, f.energy_wh),
         }
         for m in ("no wind", "same day", "own wind"):
-            drop[m] = np.sum(power[m] * dur) / 3600.0 / whp
+            e = np.sum(power[m] * dur) / 3600.0
+            drop[m] = f.soc_start - soc_after(curve, f.soc_start, e)
 
         y = f.bins["P"].to_numpy()
         res = SimpleNamespace(
-            flight=f, whp=whp, whp_src=whp_src, drop=drop,
+            flight=f, whp=whp, whp_src=whp_src, curve=curve, drop=drop,
             has_same_day=same_day is not None,
             own_wind=own, same_day_wind=same_day,
             r2={m: r2(y, p) for m, p in power.items()},
-            soc_pred=f.soc_start - np.cumsum(power["same day"] * dur) / 3600.0 / whp,
+            soc_pred=soc_after(curve, f.soc_start,
+                               np.cumsum(power["same day"] * dur) / 3600.0),
         )
         results.append(res)
 
@@ -548,7 +641,7 @@ def _print_loo(results):
     print("battery % used in the flight: actual vs predicted")
     hdr = f"  {'flight':38s} {'bat':>6s} {'min':>5s} {'actual':>6s}"
     for m in METHODS:
-        hdr += f" {m:>8s}"
+        hdr += f" {m:>9s}"
     print(hdr)
     for r in results:
         f = r.flight
@@ -556,7 +649,7 @@ def _print_loo(results):
                 f"{f.duration_s / 60:5.1f} {f.soc_drop:6.0f}")
         for m in METHODS:
             mark = "*" if m == "same day" and not r.has_same_day else " "
-            line += f" {r.drop[m]:7.1f}{mark}"
+            line += f" {r.drop[m]:8.1f}{mark}"
         print(line)
     print("  * no other flight that day - wind taken as calm")
 
@@ -577,17 +670,16 @@ def _print_loo(results):
         print(f"  {m:10s} {np.mean(np.abs(err)):7.2f} {np.mean(err):+7.2f} "
               f"{100 * np.mean(rel):7.1f}% {np.nanmean(np.abs(end_err)):9.1f} m {r2txt}")
     print()
-    print("  'energy/%' uses the flight's TRUE energy, so its error is only the")
-    print("  Wh-per-% conversion (battery identity, temperature, age, 1% steps).")
-    print("  If it is as large as the model errors, the battery side is the")
-    print("  bottleneck; if it is small, the power/wind side is.")
+    print("  'E/% flat' and 'E/% curve' use the flight's TRUE energy, so their")
+    print("  error is only the Wh-per-% conversion (fixed value vs the curve by")
+    print("  battery %). The model methods all use the curve.")
 
 
 # ---------------------------------------------------------------------
 # Whole-data report
 # ---------------------------------------------------------------------
 
-def report_full_model(flights, model):
+def report_full_model(flights, model, degree):
     print()
     print("=" * 78)
     print("POWER MODEL (all flights)")
@@ -620,19 +712,46 @@ def report_full_model(flights, model):
     print("BATTERY: energy per 1% of charge")
     print("=" * 78)
     print(f"  {'flight':38s} {'battery':>12s} {'temp':>5s} {'min':>5s} "
-          f"{'used %':>6s} {'Wh':>6s} {'Wh/%':>6s}")
+          f"{'start':>5s} {'used %':>6s} {'Wh':>6s} {'Wh/%':>6s}")
     for f in flights:
         whp = f.energy_wh / f.soc_drop if f.soc_drop >= MIN_SOC_DROP_FOR_WH else np.nan
         temp = f"{f.temp:5.1f}" if np.isfinite(f.temp) else f"{'-':>5s}"
         print(f"  {f.name[:38]:38s} {f.battery[-12:]:>12s} {temp} "
-              f"{f.duration_s / 60:5.1f} {f.soc_drop:6.0f} {f.energy_wh:6.2f} "
-              f"{whp:6.3f}")
+              f"{f.duration_s / 60:5.1f} {f.soc_start:5.0f} {f.soc_drop:6.0f} "
+              f"{f.energy_wh:6.2f} {whp:6.3f}")
+
+    batteries = sorted({f.battery for f in flights})
+    curves = {"all": fit_wh_curve(flights, None, degree)}
+    for bat in batteries:
+        c = fit_wh_curve(flights, bat, degree)
+        if c.src == "same battery":
+            curves[bat[-6:]] = c
+
     print()
-    for bat in sorted({f.battery for f in flights}):
-        whp, _, _ = wh_per_pct([f for f in flights if f.battery == bat])
-        if np.isfinite(whp):
-            print(f"  battery {bat}: {whp:.3f} Wh per %  ->  {100 * whp:.1f} Wh "
-                  f"for 100%  (spec {SPEC.wh} Wh)")
+    print("Wh per 1% by battery % - measured from every whole 1% step in the")
+    print("logs, and the fitted curve(s):")
+    steps = pd.concat([f.steps for f in flights if len(f.steps)], ignore_index=True) \
+        if any(len(f.steps) for f in flights) else pd.DataFrame(columns=["level", "wh", "drop"])
+    hdr = f"  {'battery %':>9s} {'steps':>6s} {'measured':>9s}"
+    for k in curves:
+        hdr += f" {'curve ' + k:>13s}"
+    print(hdr)
+    for top in range(100, 0, -10):
+        g = steps[(steps["level"] <= top) & (steps["level"] > top - 10)]
+        meas = g["wh"].sum() / g["drop"].sum() if len(g) else np.nan
+        line = f"  {top - 10:3d}-{top:<3d}   {len(g):6d} {meas:9.4f}"
+        for c in curves.values():
+            line += f" {float(curve_whp(c, top - 5)):13.4f}"
+        print(line)
+    for k, c in curves.items():
+        note = f", measured between {c.lo:.0f}% and {c.hi:.0f}%" if c.n else ""
+        print(f"  curve {k}: {c.n} steps ({c.src}{note}); "
+              f"100->0%: {energy_between(c, 100, 0):.2f} Wh, "
+              f"100->20%: {energy_between(c, 100, 20):.2f} Wh  (spec {SPEC.wh} Wh)")
+    lo = curves["all"].lo
+    if curves["all"].n and lo > 5:
+        print(f"  [note] below {lo:.0f}% the curve is extrapolated - no logged flight "
+              f"went that low")
 
 
 # ---------------------------------------------------------------------
@@ -728,9 +847,10 @@ def route_report(model, flights, args, loo_results):
     route = read_route(args.route, args.speed)
     sim = simulate_route(route, args.climb_speed, args.descent_speed,
                          args.accel, args.yaw_rate)
-    whp, _, src = wh_per_pct(flights, args.battery)
+    whp, _, _ = wh_per_pct(flights, args.battery)
     if not np.isfinite(whp):
         sys.exit("[error] no flight used enough battery to measure Wh per %")
+    curve = fit_wh_curve(flights, args.battery, args.curve_degree)
 
     if args.wind_day:
         if args.wind_day not in model["winds"]:
@@ -743,7 +863,7 @@ def route_report(model, flights, args, loo_results):
         X = design(sim["vn"], sim["ve"], sim["up"], sim["acc"], sim["yawr"], w, model["va_max"])
         p = np.clip(X @ model["beta"], 0, None)
         t = np.cumsum(sim["dur"].to_numpy())
-        soc = args.soc - np.cumsum(p * sim["dur"].to_numpy()) / 3600.0 / whp
+        soc = soc_after(curve, args.soc, np.cumsum(p * sim["dur"].to_numpy()) / 3600.0)
         return t, soc, p
 
     t, soc, p = run(wind)
@@ -757,7 +877,7 @@ def route_report(model, flights, args, loo_results):
     print(f"waypoints: {len(alt)}   horizontal distance: {dist:.0f} m   "
           f"flight time: {t[-1] / 60:.1f} min")
     print(f"wind: {wind_from_text(wind)}   battery: {args.battery or 'all'} "
-          f"({whp:.3f} Wh/%, {src})   start: {args.soc:.0f}%")
+          f"(Wh/% curve: {curve.src})   start: {args.soc:.0f}%")
     if model["va_max"] < np.max(np.hypot(sim["vn"] - wind[0], sim["ve"] - wind[1])):
         print(f"[warn] the route needs airspeeds above the {model['va_max']:.1f} m/s "
               f"seen in the logs; power there is extrapolated")
@@ -790,7 +910,7 @@ def route_report(model, flights, args, loo_results):
             print(f"reaches {label} at {t[k] / 60:.1f} min, on leg "
                   f"{'up' if legs[k] == 0 else legs[k]} - ROUTE NOT FLYABLE")
         else:
-            extra = (soc[-1] - level) * whp * 3600.0 / mean_w
+            extra = energy_between(curve, soc[-1], level) * 3600.0 / mean_w
             print(f"{label}: not reached; at this route's average power it would be "
                   f"reached after {(t[-1] + extra) / 60:.1f} min in total")
 
@@ -804,16 +924,34 @@ def route_report(model, flights, args, loo_results):
 # Plots
 # ---------------------------------------------------------------------
 
-def save_plots(out_dir, loo_results, route_curve, reserve):
+def save_plots(out_dir, loo_results, route_curve, reserve, flights, curve):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     os.makedirs(out_dir, exist_ok=True)
+
+    steps = [f.steps.assign(battery=f.battery) for f in flights if len(f.steps)]
+    if steps:
+        st = pd.concat(steps, ignore_index=True)
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        for bat, g in st.groupby("battery"):
+            ax.scatter(g["level"] - 0.5 * g["drop"], g["wh"] / g["drop"],
+                       s=8, alpha=0.35, label=f"1% steps, battery {bat[-6:]}")
+        x = np.linspace(0, 100, 101)
+        ax.plot(x, curve_whp(curve, x), color="black", label="fitted curve")
+        ax.axvspan(0, curve.lo, color="grey", alpha=0.15, label="extrapolated")
+        ax.set_xlabel("battery %")
+        ax.set_ylabel("Wh per 1%")
+        ax.set_title("Energy in each 1% of the charge level")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        fig.savefig(os.path.join(out_dir, "wh_per_pct.png"), dpi=120)
+        plt.close(fig)
     if loo_results:
         fig, ax = plt.subplots(figsize=(6.5, 6))
         actual = [r.flight.soc_drop for r in loo_results]
-        for m in ("naive", "spec", "same day", "energy/%"):
+        for m in ("naive", "spec", "same day", "E/% flat", "E/% curve"):
             ax.scatter(actual, [r.drop[m] for r in loo_results], label=m, s=22)
         top = max(actual + [r.drop[m] for r in loo_results for m in METHODS]) * 1.05
         ax.plot([0, top], [0, top], color="black", linewidth=0.8)
@@ -881,6 +1019,9 @@ def parse_args():
     p.add_argument("--wind-speed", type=float, default=0.0, help="m/s")
     p.add_argument("--wind-from", type=float, default=0.0, help="deg, where it blows from")
     p.add_argument("--wind-day", help="use the wind estimated for this logged day (YYYY-MM-DD)")
+    p.add_argument("--curve-degree", type=int, choices=[0, 1, 2], default=1,
+                   help="Wh-per-%% curve vs battery %%: 0 flat, 1 straight line "
+                        "(default), 2 quadratic")
     p.add_argument("--save-model", help="write the fitted model as JSON")
     p.add_argument("--plot-dir", help="save plots (PNG) in this folder")
     return p.parse_args()
@@ -891,17 +1032,18 @@ def main():
     flights = load_all(args.path, read_battery_map(args.battery_map))
 
     model = fit_model(flights)
-    report_full_model(flights, model)
+    report_full_model(flights, model, args.curve_degree)
 
-    loo = [] if args.loo == "off" else leave_one_out(flights, args.loo)
+    loo = [] if args.loo == "off" else leave_one_out(flights, args.loo, args.curve_degree)
 
     route_curve = route_report(model, flights, args, loo) if args.route else None
 
     if args.save_model:
         batteries = {}
         for bat in sorted({f.battery for f in flights}):
-            whp, _, _ = wh_per_pct([f for f in flights if f.battery == bat])
-            batteries[bat] = whp if np.isfinite(whp) else None
+            c = fit_wh_curve(flights, bat, args.curve_degree)
+            batteries[bat] = {"poly_coef_high_first": [float(v) for v in c.coef],
+                              "source": c.src}
         with open(args.save_model, "w") as fh:
             json.dump({
                 "features": FEATURES,
@@ -909,12 +1051,13 @@ def main():
                 "beta": [float(c) for c in model["beta"]],
                 "va_max": model["va_max"],
                 "winds_north_east": {k: list(v) for k, v in model["winds"].items()},
-                "wh_per_pct": batteries,
+                "wh_per_pct_vs_battery_pct": batteries,
             }, fh, indent=2)
         print(f"model saved to {args.save_model}")
 
     if args.plot_dir:
-        save_plots(args.plot_dir, loo, route_curve, args.reserve)
+        save_plots(args.plot_dir, loo, route_curve, args.reserve, flights,
+                   fit_wh_curve(flights, None, args.curve_degree))
 
 
 if __name__ == "__main__":
