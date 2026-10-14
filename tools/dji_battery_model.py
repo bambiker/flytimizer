@@ -654,10 +654,16 @@ def _print_loo(results):
     print("  * no other flight that day - wind taken as calm")
 
     print()
-    print("summary (errors in battery percentage points; endurance = time to 0%")
-    print("at the flight's average rate, extrapolated)")
-    print(f"  {'method':10s} {'MAE %':>7s} {'bias %':>7s} {'MAE rel':>8s} "
-          f"{'endur. MAE':>11s} {'power R2':>9s}")
+    print("summary - each scored flight's predicted battery use vs the actual one:")
+    print("  R2       across flights (1 = perfect, 0 = no better than the average)")
+    print("  MAE      average miss, in % of a full battery (80% predicted, 78% used")
+    print("           = a 2% miss)")
+    print("  RMSE     the same, weighting big misses more")
+    print("  bias     average signed miss (+ = predicts more use than happened)")
+    print("  MAE rel  average miss as a share of the battery that flight used")
+    print("  endur.   miss in minutes on time to 0%, at the flight's average rate")
+    print(f"  {'method':10s} {'R2':>6s} {'MAE %':>7s} {'RMSE %':>7s} {'bias %':>7s} "
+          f"{'MAE rel':>8s} {'endur.':>8s}")
     for m in METHODS:
         err = np.array([r.drop[m] - r.flight.soc_drop for r in results])
         rel = np.array([abs(r.drop[m] - r.flight.soc_drop) / r.flight.soc_drop for r in results])
@@ -665,10 +671,11 @@ def _print_loo(results):
             _endurance_min(r.flight.soc_start, r.drop[m], r.flight.duration_s)
             - _endurance_min(r.flight.soc_start, r.flight.soc_drop, r.flight.duration_s)
             for r in results])
-        r2s = [r.r2[m] for r in results if m in r.r2]
-        r2txt = f"{np.nanmedian(r2s):9.2f}" if r2s else f"{'-':>9s}"
-        print(f"  {m:10s} {np.mean(np.abs(err)):7.2f} {np.mean(err):+7.2f} "
-              f"{100 * np.mean(rel):7.1f}% {np.nanmean(np.abs(end_err)):9.1f} m {r2txt}")
+        actual = np.array([r.flight.soc_drop for r in results])
+        flights_r2 = r2(actual, actual + err)
+        print(f"  {m:10s} {flights_r2:6.3f} {np.mean(np.abs(err)):7.2f} "
+              f"{np.sqrt(np.mean(err ** 2)):7.2f} {np.mean(err):+7.2f} "
+              f"{100 * np.mean(rel):7.1f}% {np.nanmean(np.abs(end_err)):6.1f} m")
     print()
     print("  'E/% flat' and 'E/% curve' use the flight's TRUE energy, so their")
     print("  error is only the Wh-per-% conversion (fixed value vs the curve by")
