@@ -153,6 +153,10 @@ test('a military site right on the route: the route keeps off it and warns not t
 });
 
 test('buildings with no height in OpenStreetMap get the GHSL average height around them', async ({ page }) => {
+  // The fake forecast's wind changes hour by hour; at some UTC hours (5, 10,
+  // 11, 20) it caps the height below what this test needs. Fly at noon.
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { buildings: 'untagged', ghsl: 24, hazards: [], flatGround: true });
   await waitForResult(page);
   await expect(page.locator('#buildingInfo')).toContainText('6 were raised to the average building height around them');
