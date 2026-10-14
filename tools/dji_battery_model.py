@@ -541,8 +541,19 @@ def fit_wh_curve(flights, battery=None, degree=1):
         mad = 1.4826 * np.median(np.abs(res[keep] - np.median(res[keep])))
         keep = np.abs(res) <= 3.5 * max(mad, 1e-4)
     coef = np.polyfit(x[keep], y[keep], degree, w=np.sqrt(w[keep]))
-    return SimpleNamespace(coef=coef, lo=float(x.min()), hi=float(x.max()),
-                           n=int(keep.sum()), src=src)
+    curve = SimpleNamespace(coef=coef, lo=float(x.min()), hi=float(x.max()),
+                            n=int(keep.sum()), src=src)
+
+    # The steps give the curve's shape, but not its level: dropping the
+    # outliers removes the long steps where the gauge stalled and keeps
+    # the quick ones where it catches up, which biases the steps low.
+    # Scale the curve so it matches the energy of whole flights.
+    pool = own if src == "same battery" else flights
+    pool = [f for f in pool if f.soc_drop >= MIN_SOC_DROP_FOR_WH]
+    if pool:
+        predicted = sum(energy_between(curve, f.soc_start, f.soc_end) for f in pool)
+        curve.coef = coef * sum(f.energy_wh for f in pool) / predicted
+    return curve
 
 
 def curve_whp(curve, soc):
