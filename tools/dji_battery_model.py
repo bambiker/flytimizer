@@ -134,7 +134,11 @@ def battery_serial_columns(columns):
 
 
 def flight_session(raw, name):
-    """The flight's date, used to group flights that shared the same wind."""
+    """The flight's date, used to group flights that shared the same wind.
+    The file name comes first: some logs carry a corrupt dateTime."""
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", name)
+    if m:
+        return m.group(1)
     if DATETIME_COL in raw.columns:
         try:
             parsed = pd.to_datetime(raw[DATETIME_COL], errors="coerce")
@@ -143,8 +147,7 @@ def flight_session(raw, name):
                 return str(parsed.iloc[0].date())
         except (ValueError, TypeError):
             pass
-    m = re.search(r"(\d{4}-\d{2}-\d{2})", name)
-    return m.group(1) if m else "unknown-date"
+    return "unknown-date"
 
 
 def flight_battery(raw, name, battery_map):
