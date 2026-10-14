@@ -29,7 +29,10 @@ What it does
    fitted on all the other flights, and compared with what its battery
    actually did. Compared side by side:
        naive     - average %/minute of the training flights
-       spec      - the Flytimizer site's spec-sheet model (js/battery.js)
+       site old  - the Flytimizer site's battery estimate (js/battery.js)
+                   with the Neo 2 spec sheet: 11.5 Wh, 19 min
+       site new  - the same with the preset calibrated from these logs:
+                   10 Wh, 11.5 min
        no wind   - this model, wind assumed zero
        same day  - this model, wind estimated from the OTHER flights of
                    the same day (what you would know before flying)
@@ -109,8 +112,10 @@ FEATURES = [
 # (js/battery.js), used as the "spec" comparison.
 SPEC = SimpleNamespace(wh=11.5, minutes=19.0, mass=0.151, vmax=12.0,
                        test_speed=6.0, climb_eff=0.6, descent_factor=0.9)
+# The site's Neo 2 preset after it was calibrated from these logs.
+SPEC_NEW = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.5})
 
-METHODS = ["naive", "spec", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
+METHODS = ["naive", "site old", "site new", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
 
 MIN_STEPS_PER_BATTERY = 40    # 1% steps needed for a battery's own curve
 SOC_GRID = np.arange(-30.0, 100.001, 0.05)   # for energy <-> % conversion
@@ -569,7 +574,7 @@ def soc_after(curve, soc0, energy_wh):
 # Leave-one-out
 # ---------------------------------------------------------------------
 
-def leave_one_out(flights, group, degree):
+def leave_one_out(flights, group, degree, long_min):
     key = (lambda f: f.session) if group == "day" else (lambda f: f.name)
     evals = [f for f in flights
              if f.soc_drop >= MIN_SOC_DROP_FOR_EVAL and f.duration_s >= MIN_EVAL_AIRBORNE_S]
@@ -599,14 +604,16 @@ def leave_one_out(flights, group, degree):
         own = estimate_wind(model["beta"], [f])
 
         power = {
-            "spec": spec_power(f),
+            "site old": spec_power(f, SPEC),
+            "site new": spec_power(f, SPEC_NEW),
             "no wind": predict_power(model, f, (0.0, 0.0)),
             "same day": predict_power(model, f, same_day or (0.0, 0.0)),
             "own wind": predict_power(model, f, own),
         }
         drop = {
             "naive": rate * f.duration_s,
-            "spec": np.sum(power["spec"] * dur) / 3600.0 / SPEC.wh * 100.0,
+            "site old": np.sum(power["site old"] * dur) / 3600.0 / SPEC.wh * 100.0,
+            "site new": np.sum(power["site new"] * dur) / 3600.0 / SPEC_NEW.wh * 100.0,
             "E/% flat": f.energy_wh / whp,
             "E/% curve": f.soc_start - soc_after(curve, f.soc_start, f.energy_wh),
         }
@@ -625,7 +632,7 @@ def leave_one_out(flights, group, degree):
         )
         results.append(res)
 
-    _print_loo(results)
+    _print_loo(results, long_min)
     return results
 
 
@@ -636,7 +643,35 @@ def _endurance_min(soc_start, drop, duration_s):
     return soc_start * duration_s / drop / 60.0
 
 
-def _print_loo(results):
+def _print_summary(results, title, legend=False):
+    print()
+    print(f"summary, {title} ({len(results)} flights) - each flight's predicted")
+    print("battery use vs the actual one:")
+    if legend:
+        print("  R2       across flights (1 = perfect, 0 = no better than the average)")
+        print("  MAE      average miss, in % of a full battery (80% predicted, 78% used")
+        print("           = a 2% miss)")
+        print("  RMSE     the same, weighting big misses more")
+        print("  bias     average signed miss (+ = predicts more use than happened)")
+        print("  MAE rel  average miss as a share of the battery that flight used")
+        print("  endur.   miss in minutes on time to 0%, at the flight's average rate")
+    print(f"  {'method':10s} {'R2':>6s} {'MAE %':>7s} {'RMSE %':>7s} {'bias %':>7s} "
+          f"{'MAE rel':>8s} {'endur.':>8s}")
+    for m in METHODS:
+        err = np.array([r.drop[m] - r.flight.soc_drop for r in results])
+        rel = np.array([abs(r.drop[m] - r.flight.soc_drop) / r.flight.soc_drop for r in results])
+        end_err = np.array([
+            _endurance_min(r.flight.soc_start, r.drop[m], r.flight.duration_s)
+            - _endurance_min(r.flight.soc_start, r.flight.soc_drop, r.flight.duration_s)
+            for r in results])
+        actual = np.array([r.flight.soc_drop for r in results])
+        flights_r2 = r2(actual, actual + err)
+        print(f"  {m:10s} {flights_r2:6.3f} {np.mean(np.abs(err)):7.2f} "
+              f"{np.sqrt(np.mean(err ** 2)):7.2f} {np.mean(err):+7.2f} "
+              f"{100 * np.mean(rel):7.1f}% {np.nanmean(np.abs(end_err)):6.1f} m")
+
+
+def _print_loo(results, long_min):
     print()
     print("battery % used in the flight: actual vs predicted")
     hdr = f"  {'flight':38s} {'bat':>6s} {'min':>5s} {'actual':>6s}"
@@ -653,29 +688,14 @@ def _print_loo(results):
         print(line)
     print("  * no other flight that day - wind taken as calm")
 
-    print()
-    print("summary - each scored flight's predicted battery use vs the actual one:")
-    print("  R2       across flights (1 = perfect, 0 = no better than the average)")
-    print("  MAE      average miss, in % of a full battery (80% predicted, 78% used")
-    print("           = a 2% miss)")
-    print("  RMSE     the same, weighting big misses more")
-    print("  bias     average signed miss (+ = predicts more use than happened)")
-    print("  MAE rel  average miss as a share of the battery that flight used")
-    print("  endur.   miss in minutes on time to 0%, at the flight's average rate")
-    print(f"  {'method':10s} {'R2':>6s} {'MAE %':>7s} {'RMSE %':>7s} {'bias %':>7s} "
-          f"{'MAE rel':>8s} {'endur.':>8s}")
-    for m in METHODS:
-        err = np.array([r.drop[m] - r.flight.soc_drop for r in results])
-        rel = np.array([abs(r.drop[m] - r.flight.soc_drop) / r.flight.soc_drop for r in results])
-        end_err = np.array([
-            _endurance_min(r.flight.soc_start, r.drop[m], r.flight.duration_s)
-            - _endurance_min(r.flight.soc_start, r.flight.soc_drop, r.flight.duration_s)
-            for r in results])
-        actual = np.array([r.flight.soc_drop for r in results])
-        flights_r2 = r2(actual, actual + err)
-        print(f"  {m:10s} {flights_r2:6.3f} {np.mean(np.abs(err)):7.2f} "
-              f"{np.sqrt(np.mean(err ** 2)):7.2f} {np.mean(err):+7.2f} "
-              f"{100 * np.mean(rel):7.1f}% {np.nanmean(np.abs(end_err)):6.1f} m")
+    _print_summary(results, "all scored flights", legend=True)
+    long_ = [r for r in results if r.flight.soc_drop >= long_min]
+    if len(long_) >= 3:
+        _print_summary(long_, f"long flights only (used {long_min:.0f}% or more)")
+    else:
+        print()
+        print(f"only {len(long_)} flight(s) used {long_min:.0f}% or more - too few for a "
+              f"score of their own (try --long-min)")
     print()
     print("  'E/% flat' and 'E/% curve' use the flight's TRUE energy, so their")
     print("  error is only the Wh-per-% conversion (fixed value vs the curve by")
@@ -958,7 +978,7 @@ def save_plots(out_dir, loo_results, route_curve, reserve, flights, curve):
     if loo_results:
         fig, ax = plt.subplots(figsize=(6.5, 6))
         actual = [r.flight.soc_drop for r in loo_results]
-        for m in ("naive", "spec", "same day", "E/% flat", "E/% curve"):
+        for m in ("naive", "site old", "site new", "no wind", "E/% curve"):
             ax.scatter(actual, [r.drop[m] for r in loo_results], label=m, s=22)
         top = max(actual + [r.drop[m] for r in loo_results for m in METHODS]) * 1.05
         ax.plot([0, top], [0, top], color="black", linewidth=0.8)
@@ -1026,6 +1046,9 @@ def parse_args():
     p.add_argument("--wind-speed", type=float, default=0.0, help="m/s")
     p.add_argument("--wind-from", type=float, default=0.0, help="deg, where it blows from")
     p.add_argument("--wind-day", help="use the wind estimated for this logged day (YYYY-MM-DD)")
+    p.add_argument("--long-min", type=float, default=25.0,
+                   help="also score only the flights that used at least this "
+                        "much battery (%%, default 25)")
     p.add_argument("--curve-degree", type=int, choices=[0, 1, 2], default=1,
                    help="Wh-per-%% curve vs battery %%: 0 flat, 1 straight line "
                         "(default), 2 quadratic")
@@ -1041,7 +1064,7 @@ def main():
     model = fit_model(flights)
     report_full_model(flights, model, args.curve_degree)
 
-    loo = [] if args.loo == "off" else leave_one_out(flights, args.loo, args.curve_degree)
+    loo = [] if args.loo == "off" else leave_one_out(flights, args.loo, args.curve_degree, args.long_min)
 
     route_curve = route_report(model, flights, args, loo) if args.route else None
 
