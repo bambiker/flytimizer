@@ -31,8 +31,11 @@ What it does
        naive     - average %/minute of the training flights
        site old  - the Flytimizer site's battery estimate (js/battery.js)
                    with the Neo 2 spec sheet: 11.5 Wh, 19 min
-       site new  - the same with the preset calibrated from these logs:
-                   10 Wh, 11.5 min
+       site 24   - the same with the preset from PR #24: 10 Wh, 11.5 min,
+                   default speed curve
+       site new  - the site's current Neo 2 preset: 10 Wh, 11.4 min, plus
+                   the speed curve and climb efficiency measured from
+                   these logs
        no wind   - this model, wind assumed zero
        same day  - this model, wind estimated from the OTHER flights of
                    the same day (what you would know before flying)
@@ -45,6 +48,9 @@ What it does
    All model methods (no wind, same day, own wind) use the curve.
 6. --route: predicts battery % along a planned route and when it reaches
    the reserve and empty.
+7. Wind effects: for each flight, how much battery the (estimated) wind
+   cost compared with calm air and its worst 10 seconds, and how far the
+   drone drifted, by GPS, while it was hovering.
 
 Usage
 -----
@@ -111,11 +117,15 @@ FEATURES = [
 # The site's DJI Neo 2 preset (js/drone.js) and battery model constants
 # (js/battery.js), used as the "spec" comparison.
 SPEC = SimpleNamespace(wh=11.5, minutes=19.0, mass=0.151, vmax=12.0,
-                       test_speed=6.0, climb_eff=0.6, descent_factor=0.9)
-# The site's Neo 2 preset after it was calibrated from these logs.
-SPEC_NEW = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.5})
+                       test_speed=6.0, climb_eff=0.6, descent_factor=0.9,
+                       curve_a=-0.2, curve_b=0.5)
+# The Neo 2 preset from PR #24: energy and flight time from these logs.
+SPEC_24 = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.5})
+# The current Neo 2 preset: also its own speed curve and climb efficiency.
+SPEC_NEW = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.4,
+                              "curve_a": 0.1, "curve_b": 0.47, "climb_eff": 0.19})
 
-METHODS = ["naive", "site old", "site new", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
+METHODS = ["naive", "site old", "site 24", "site new", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
 
 MIN_STEPS_PER_BATTERY = 40    # 1% steps needed for a battery's own curve
 SOC_GRID = np.arange(-30.0, 100.001, 0.05)   # for energy <-> % conversion
@@ -482,15 +492,19 @@ def wind_vector(speed, from_deg):
 # Site spec-sheet model (js/battery.js), for comparison
 # ---------------------------------------------------------------------
 
-def _airspeed_factor(v, vmax):
-    x = np.clip(np.asarray(v, float) / max(vmax, 0.1), 0, 1.2)
-    return 1 - 0.2 * x + 0.5 * x ** 3
+def _airspeed_factor(v, spec):
+    x = np.clip(np.asarray(v, float) / max(spec.vmax, 0.1), 0, 1.2)
+    return 1 + spec.curve_a * x + spec.curve_b * x ** 3
+
+
+def _spec_hover(spec):
+    return spec.wh * 60.0 / spec.minutes / _airspeed_factor(spec.test_speed, spec)
 
 
 def spec_power(f, spec=SPEC):
-    hover = spec.wh * 60.0 / spec.minutes / _airspeed_factor(spec.test_speed, spec.vmax)
+    hover = _spec_hover(spec)
     b = f.bins
-    cruise = hover * _airspeed_factor(np.hypot(b["vn"], b["ve"]), spec.vmax)
+    cruise = hover * _airspeed_factor(np.hypot(b["vn"], b["ve"]), spec)
     climb = hover + spec.mass * 9.81 * b["up"].clip(lower=0) / spec.climb_eff
     return np.where(b["up"] > 0.3, climb,
                     np.where(b["up"] < -0.3, hover * spec.descent_factor, cruise))
@@ -616,6 +630,7 @@ def leave_one_out(flights, group, degree, long_min):
 
         power = {
             "site old": spec_power(f, SPEC),
+            "site 24": spec_power(f, SPEC_24),
             "site new": spec_power(f, SPEC_NEW),
             "no wind": predict_power(model, f, (0.0, 0.0)),
             "same day": predict_power(model, f, same_day or (0.0, 0.0)),
@@ -624,6 +639,7 @@ def leave_one_out(flights, group, degree, long_min):
         drop = {
             "naive": rate * f.duration_s,
             "site old": np.sum(power["site old"] * dur) / 3600.0 / SPEC.wh * 100.0,
+            "site 24": np.sum(power["site 24"] * dur) / 3600.0 / SPEC_24.wh * 100.0,
             "site new": np.sum(power["site new"] * dur) / 3600.0 / SPEC_NEW.wh * 100.0,
             "E/% flat": f.energy_wh / whp,
             "E/% curve": f.soc_start - soc_after(curve, f.soc_start, f.energy_wh),
@@ -729,14 +745,14 @@ def report_full_model(flights, model, degree):
         print(f"  {name:20s} {c:9.3f}")
 
     print()
-    print("level flight power vs airspeed (model / site spec model):")
+    print("level flight power vs airspeed (model / site old / site new):")
     for v in (0, 3, 6, 9, 12):
         if v > model["va_max"] + 0.5:
             break
         p = design([v], [0], [0], [0], [0], (0, 0)) @ model["beta"]
-        hover = SPEC.wh * 60 / SPEC.minutes / _airspeed_factor(SPEC.test_speed, SPEC.vmax)
-        ps = hover * _airspeed_factor(v, SPEC.vmax)
-        print(f"  {v:4.0f} m/s: {p[0]:6.1f} W / {ps:6.1f} W")
+        po = _spec_hover(SPEC) * _airspeed_factor(v, SPEC)
+        pn = _spec_hover(SPEC_NEW) * _airspeed_factor(v, SPEC_NEW)
+        print(f"  {v:4.0f} m/s: {p[0]:6.1f} W / {po:6.1f} W / {pn:6.1f} W")
     print(f"  (highest airspeed in the data: {model['va_max']:.1f} m/s)")
 
     print()
@@ -790,6 +806,156 @@ def report_full_model(flights, model, degree):
     if curves["all"].n and lo > 5:
         print(f"  [note] below {lo:.0f}% the curve is extrapolated - no logged flight "
               f"went that low")
+
+
+# ---------------------------------------------------------------------
+# Wind effects: battery and drift
+# ---------------------------------------------------------------------
+
+HOVER_MAX_SPEED = 0.3     # m/s ground speed, to count as holding position
+HOVER_MAX_CLIMB = 0.2     # m/s vertical
+HOVER_MIN_S = 5.0         # shortest hover worth measuring
+
+
+def _rolling_max(x, n):
+    """Largest mean of n consecutive values, and where its window starts."""
+    if len(x) < n:
+        return float(np.mean(x)) if len(x) else np.nan, 0
+    m = np.convolve(x, np.ones(n) / n, mode="valid")
+    k = int(np.argmax(m))
+    return float(m[k]), k
+
+
+def hover_drift(f):
+    """Hover stretches (holding position for 5 s or more) and how far the
+    drone wandered from where each one started, from its GPS position.
+    GPS itself wanders by a metre or two, so small values are noise."""
+    b = f.bins
+    lat, lon = b["lat"].to_numpy(), b["lon"].to_numpy()
+    if not (np.isfinite(lat).sum() > 10 and np.nanmax(np.abs(lat)) > 1):
+        return []
+    still = ((np.hypot(b["vn"], b["ve"]) < HOVER_MAX_SPEED)
+             & (b["up"].abs() < HOVER_MAX_CLIMB)).to_numpy()
+    t = np.cumsum(b["dur"].to_numpy())
+    out, i = [], 0
+    while i < len(still):
+        if not still[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(still) and still[j + 1]:
+            j += 1
+        seg = slice(i, j + 1)
+        length = t[j] - t[i] + b["dur"].iloc[i]
+        if length >= HOVER_MIN_S and np.isfinite(lat[i]) and np.isfinite(lon[i]):
+            dn = (lat[seg] - lat[i]) * 111320.0
+            de = (lon[seg] - lon[i]) * 111320.0 * np.cos(np.radians(lat[i]))
+            d = np.hypot(dn, de)
+            out.append(SimpleNamespace(start_min=t[i] / 60.0, length_s=length,
+                                       max_m=float(np.nanmax(d)),
+                                       end_m=float(d[np.isfinite(d)][-1])))
+        i = j + 1
+    return out
+
+
+def wind_report(flights, model, degree):
+    """How much battery the wind cost each flight, its single worst
+    moment, and how far the drone drifted while hovering."""
+    print()
+    print("=" * 78)
+    print("WIND EFFECTS")
+    print("=" * 78)
+    print("battery: the same flight (same ground track) predicted with the wind")
+    print("and in calm air - the difference is what the wind cost. 'day' uses")
+    print("the wind estimated for that day, 'own' the wind fitted to that flight")
+    print("alone (noisier). 'peak' is the worst 10 s: the most extra power the")
+    print("wind demanded, and when.")
+    print()
+    print(f"  {'flight':38s} {'wind (day)':>22s} {'+% day':>7s} {'+% own':>7s} "
+          f"{'+Wh':>6s} {'share':>6s} {'peak W':>7s} {'at min':>6s}")
+    rows = []
+    for f in flights:
+        dur = f.bins["dur"].to_numpy()
+        if dur.sum() < 30:
+            continue
+        w_day = model["winds"].get(f.session, (0.0, 0.0))
+        w_own = estimate_wind(model["beta"], [f])
+        calm = predict_power(model, f, (0.0, 0.0))
+        e_calm = np.sum(calm * dur) / 3600.0
+        curve = fit_wh_curve(flights, f.battery, degree)
+        soc0 = f.soc_start if np.isfinite(f.soc_start) else 100.0
+
+        def extra_pct(w):
+            e = np.sum(predict_power(model, f, w) * dur) / 3600.0
+            used = lambda energy: soc0 - soc_after(curve, soc0, energy)  # noqa: E731
+            return used(e) - used(e_calm), e - e_calm
+
+        pct_day, wh_day = extra_pct(w_day)
+        pct_own, _ = extra_pct(w_own)
+        extra_w = predict_power(model, f, w_day) - calm
+        peak, k = _rolling_max(extra_w, 10)
+        at_min = np.cumsum(dur)[k] / 60.0 if len(dur) else np.nan
+        share = 100.0 * wh_day / e_calm if e_calm > 0 else np.nan
+        rows.append(SimpleNamespace(f=f, pct_day=pct_day, pct_own=pct_own,
+                                    wh=wh_day, peak=peak, wind=w_day,
+                                    per_min=pct_day / (dur.sum() / 60.0)))
+        print(f"  {f.name[:38]:38s} {wind_from_text(w_day):>22s} {pct_day:+7.1f} "
+              f"{pct_own:+7.1f} {wh_day:+6.2f} {share:+5.1f}% {peak:+7.1f} {at_min:6.1f}")
+
+    if rows:
+        worst = max(rows, key=lambda r: r.pct_day)
+        peak = max(rows, key=lambda r: r.peak)
+        print()
+        print(f"  most battery lost to wind: {worst.f.name} - {worst.pct_day:+.1f}% "
+              f"of the battery ({worst.per_min:+.2f}% per minute)")
+        print(f"  hardest moment: {peak.f.name} - {peak.peak:+.1f} W extra for 10 s")
+
+    print()
+    print("drift: hover stretches (ground speed under 0.3 m/s for 5 s or more)")
+    print("and how far the drone moved from where each began, by GPS. GPS")
+    print("wanders 1-2 m on its own. 'air' is how far the day's wind carries")
+    print("the air in one minute - how far the drone would go if it stopped")
+    print("holding position.")
+    print()
+    print(f"  {'flight':38s} {'hovers':>6s} {'secs':>5s} {'median m':>9s} "
+          f"{'max m':>6s} {'at min':>6s} {'air m/min':>9s}")
+    drift_rows = []
+    for f in flights:
+        hv = hover_drift(f)
+        w = model["winds"].get(f.session, (0.0, 0.0))
+        air = np.hypot(*w) * 60.0
+        if not hv:
+            print(f"  {f.name[:38]:38s} {'-':>6s} {'':>5s} {'':>9s} {'':>6s} {'':>6s} {air:9.0f}")
+            continue
+        top = max(hv, key=lambda h: h.max_m)
+        med = float(np.median([h.max_m for h in hv]))
+        secs = sum(h.length_s for h in hv)
+        drift_rows.append(SimpleNamespace(f=f, top=top, med=med, wind=np.hypot(*w)))
+        print(f"  {f.name[:38]:38s} {len(hv):6d} {secs:5.0f} {med:9.1f} "
+              f"{top.max_m:6.1f} {top.start_min:6.1f} {air:9.0f}")
+
+    if drift_rows:
+        worst = max(drift_rows, key=lambda r: r.top.max_m)
+        print()
+        print(f"  largest hover drift: {worst.f.name} - {worst.top.max_m:.1f} m over "
+              f"{worst.top.length_s:.0f} s, starting at minute {worst.top.start_min:.1f}")
+
+    # By day: does a windier day mean more battery and more drift?
+    days = sorted({r.f.session for r in rows})
+    if days:
+        print()
+        print("by day:")
+        print(f"  {'day':10s} {'wind':>22s} {'battery %/min':>14s} {'median drift m':>15s}")
+        for d in days:
+            rr = [r for r in rows if r.f.session == d]
+            dd = [r.med for r in drift_rows if r.f.session == d]
+            drift = f"{np.median(dd):15.1f}" if dd else f"{'-':>15s}"
+            print(f"  {d:10s} {wind_from_text(rr[0].wind):>22s} "
+                  f"{np.mean([r.per_min for r in rr]):+14.2f} {drift}")
+    print()
+    print("  The wind here is estimated from the power data, not measured. On")
+    print("  days with little wind both effects are small and mostly noise.")
+    return rows, drift_rows
 
 
 # ---------------------------------------------------------------------
@@ -989,7 +1155,7 @@ def save_plots(out_dir, loo_results, route_curve, reserve, flights, curve):
     if loo_results:
         fig, ax = plt.subplots(figsize=(6.5, 6))
         actual = [r.flight.soc_drop for r in loo_results]
-        for m in ("naive", "site old", "site new", "no wind", "E/% curve"):
+        for m in ("naive", "site old", "site 24", "site new", "no wind"):
             ax.scatter(actual, [r.drop[m] for r in loo_results], label=m, s=22)
         top = max(actual + [r.drop[m] for r in loo_results for m in METHODS]) * 1.05
         ax.plot([0, top], [0, top], color="black", linewidth=0.8)
@@ -1057,6 +1223,8 @@ def parse_args():
     p.add_argument("--wind-speed", type=float, default=0.0, help="m/s")
     p.add_argument("--wind-from", type=float, default=0.0, help="deg, where it blows from")
     p.add_argument("--wind-day", help="use the wind estimated for this logged day (YYYY-MM-DD)")
+    p.add_argument("--no-wind-report", action="store_true",
+                   help="skip the wind effects section (battery and drift)")
     p.add_argument("--long-min", type=float, default=25.0,
                    help="also score only the flights that used at least this "
                         "much battery (%%, default 25)")
@@ -1074,6 +1242,8 @@ def main():
 
     model = fit_model(flights)
     report_full_model(flights, model, args.curve_degree)
+    if not args.no_wind_report:
+        wind_report(flights, model, args.curve_degree)
 
     loo = [] if args.loo == "off" else leave_one_out(flights, args.loo, args.curve_degree, args.long_min)
 
