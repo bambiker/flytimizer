@@ -48,6 +48,9 @@ What it does
    All model methods (no wind, same day, own wind) use the curve.
 6. --route: predicts battery % along a planned route and when it reaches
    the reserve and empty.
+7. Wind effects: for each flight, how much battery the (estimated) wind
+   cost compared with calm air and its worst 10 seconds, and how far the
+   drone drifted, by GPS, while it was hovering.
 
 Usage
 -----
@@ -806,6 +809,156 @@ def report_full_model(flights, model, degree):
 
 
 # ---------------------------------------------------------------------
+# Wind effects: battery and drift
+# ---------------------------------------------------------------------
+
+HOVER_MAX_SPEED = 0.3     # m/s ground speed, to count as holding position
+HOVER_MAX_CLIMB = 0.2     # m/s vertical
+HOVER_MIN_S = 5.0         # shortest hover worth measuring
+
+
+def _rolling_max(x, n):
+    """Largest mean of n consecutive values, and where its window starts."""
+    if len(x) < n:
+        return float(np.mean(x)) if len(x) else np.nan, 0
+    m = np.convolve(x, np.ones(n) / n, mode="valid")
+    k = int(np.argmax(m))
+    return float(m[k]), k
+
+
+def hover_drift(f):
+    """Hover stretches (holding position for 5 s or more) and how far the
+    drone wandered from where each one started, from its GPS position.
+    GPS itself wanders by a metre or two, so small values are noise."""
+    b = f.bins
+    lat, lon = b["lat"].to_numpy(), b["lon"].to_numpy()
+    if not (np.isfinite(lat).sum() > 10 and np.nanmax(np.abs(lat)) > 1):
+        return []
+    still = ((np.hypot(b["vn"], b["ve"]) < HOVER_MAX_SPEED)
+             & (b["up"].abs() < HOVER_MAX_CLIMB)).to_numpy()
+    t = np.cumsum(b["dur"].to_numpy())
+    out, i = [], 0
+    while i < len(still):
+        if not still[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(still) and still[j + 1]:
+            j += 1
+        seg = slice(i, j + 1)
+        length = t[j] - t[i] + b["dur"].iloc[i]
+        if length >= HOVER_MIN_S and np.isfinite(lat[i]) and np.isfinite(lon[i]):
+            dn = (lat[seg] - lat[i]) * 111320.0
+            de = (lon[seg] - lon[i]) * 111320.0 * np.cos(np.radians(lat[i]))
+            d = np.hypot(dn, de)
+            out.append(SimpleNamespace(start_min=t[i] / 60.0, length_s=length,
+                                       max_m=float(np.nanmax(d)),
+                                       end_m=float(d[np.isfinite(d)][-1])))
+        i = j + 1
+    return out
+
+
+def wind_report(flights, model, degree):
+    """How much battery the wind cost each flight, its single worst
+    moment, and how far the drone drifted while hovering."""
+    print()
+    print("=" * 78)
+    print("WIND EFFECTS")
+    print("=" * 78)
+    print("battery: the same flight (same ground track) predicted with the wind")
+    print("and in calm air - the difference is what the wind cost. 'day' uses")
+    print("the wind estimated for that day, 'own' the wind fitted to that flight")
+    print("alone (noisier). 'peak' is the worst 10 s: the most extra power the")
+    print("wind demanded, and when.")
+    print()
+    print(f"  {'flight':38s} {'wind (day)':>22s} {'+% day':>7s} {'+% own':>7s} "
+          f"{'+Wh':>6s} {'share':>6s} {'peak W':>7s} {'at min':>6s}")
+    rows = []
+    for f in flights:
+        dur = f.bins["dur"].to_numpy()
+        if dur.sum() < 30:
+            continue
+        w_day = model["winds"].get(f.session, (0.0, 0.0))
+        w_own = estimate_wind(model["beta"], [f])
+        calm = predict_power(model, f, (0.0, 0.0))
+        e_calm = np.sum(calm * dur) / 3600.0
+        curve = fit_wh_curve(flights, f.battery, degree)
+        soc0 = f.soc_start if np.isfinite(f.soc_start) else 100.0
+
+        def extra_pct(w):
+            e = np.sum(predict_power(model, f, w) * dur) / 3600.0
+            used = lambda energy: soc0 - soc_after(curve, soc0, energy)  # noqa: E731
+            return used(e) - used(e_calm), e - e_calm
+
+        pct_day, wh_day = extra_pct(w_day)
+        pct_own, _ = extra_pct(w_own)
+        extra_w = predict_power(model, f, w_day) - calm
+        peak, k = _rolling_max(extra_w, 10)
+        at_min = np.cumsum(dur)[k] / 60.0 if len(dur) else np.nan
+        share = 100.0 * wh_day / e_calm if e_calm > 0 else np.nan
+        rows.append(SimpleNamespace(f=f, pct_day=pct_day, pct_own=pct_own,
+                                    wh=wh_day, peak=peak, wind=w_day,
+                                    per_min=pct_day / (dur.sum() / 60.0)))
+        print(f"  {f.name[:38]:38s} {wind_from_text(w_day):>22s} {pct_day:+7.1f} "
+              f"{pct_own:+7.1f} {wh_day:+6.2f} {share:+5.1f}% {peak:+7.1f} {at_min:6.1f}")
+
+    if rows:
+        worst = max(rows, key=lambda r: r.pct_day)
+        peak = max(rows, key=lambda r: r.peak)
+        print()
+        print(f"  most battery lost to wind: {worst.f.name} - {worst.pct_day:+.1f}% "
+              f"of the battery ({worst.per_min:+.2f}% per minute)")
+        print(f"  hardest moment: {peak.f.name} - {peak.peak:+.1f} W extra for 10 s")
+
+    print()
+    print("drift: hover stretches (ground speed under 0.3 m/s for 5 s or more)")
+    print("and how far the drone moved from where each began, by GPS. GPS")
+    print("wanders 1-2 m on its own. 'air' is how far the day's wind carries")
+    print("the air in one minute - how far the drone would go if it stopped")
+    print("holding position.")
+    print()
+    print(f"  {'flight':38s} {'hovers':>6s} {'secs':>5s} {'median m':>9s} "
+          f"{'max m':>6s} {'at min':>6s} {'air m/min':>9s}")
+    drift_rows = []
+    for f in flights:
+        hv = hover_drift(f)
+        w = model["winds"].get(f.session, (0.0, 0.0))
+        air = np.hypot(*w) * 60.0
+        if not hv:
+            print(f"  {f.name[:38]:38s} {'-':>6s} {'':>5s} {'':>9s} {'':>6s} {'':>6s} {air:9.0f}")
+            continue
+        top = max(hv, key=lambda h: h.max_m)
+        med = float(np.median([h.max_m for h in hv]))
+        secs = sum(h.length_s for h in hv)
+        drift_rows.append(SimpleNamespace(f=f, top=top, med=med, wind=np.hypot(*w)))
+        print(f"  {f.name[:38]:38s} {len(hv):6d} {secs:5.0f} {med:9.1f} "
+              f"{top.max_m:6.1f} {top.start_min:6.1f} {air:9.0f}")
+
+    if drift_rows:
+        worst = max(drift_rows, key=lambda r: r.top.max_m)
+        print()
+        print(f"  largest hover drift: {worst.f.name} - {worst.top.max_m:.1f} m over "
+              f"{worst.top.length_s:.0f} s, starting at minute {worst.top.start_min:.1f}")
+
+    # By day: does a windier day mean more battery and more drift?
+    days = sorted({r.f.session for r in rows})
+    if days:
+        print()
+        print("by day:")
+        print(f"  {'day':10s} {'wind':>22s} {'battery %/min':>14s} {'median drift m':>15s}")
+        for d in days:
+            rr = [r for r in rows if r.f.session == d]
+            dd = [r.med for r in drift_rows if r.f.session == d]
+            drift = f"{np.median(dd):15.1f}" if dd else f"{'-':>15s}"
+            print(f"  {d:10s} {wind_from_text(rr[0].wind):>22s} "
+                  f"{np.mean([r.per_min for r in rr]):+14.2f} {drift}")
+    print()
+    print("  The wind here is estimated from the power data, not measured. On")
+    print("  days with little wind both effects are small and mostly noise.")
+    return rows, drift_rows
+
+
+# ---------------------------------------------------------------------
 # Route prediction
 # ---------------------------------------------------------------------
 
@@ -1070,6 +1223,8 @@ def parse_args():
     p.add_argument("--wind-speed", type=float, default=0.0, help="m/s")
     p.add_argument("--wind-from", type=float, default=0.0, help="deg, where it blows from")
     p.add_argument("--wind-day", help="use the wind estimated for this logged day (YYYY-MM-DD)")
+    p.add_argument("--no-wind-report", action="store_true",
+                   help="skip the wind effects section (battery and drift)")
     p.add_argument("--long-min", type=float, default=25.0,
                    help="also score only the flights that used at least this "
                         "much battery (%%, default 25)")
@@ -1087,6 +1242,8 @@ def main():
 
     model = fit_model(flights)
     report_full_model(flights, model, args.curve_degree)
+    if not args.no_wind_report:
+        wind_report(flights, model, args.curve_degree)
 
     loo = [] if args.loo == "off" else leave_one_out(flights, args.loo, args.curve_degree, args.long_min)
 
