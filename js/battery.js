@@ -1,5 +1,7 @@
 // Battery use estimate.
 
+import { DRONE_PRESETS } from './drone.js';
+
 // ---------------------------------------------------------------
 // Battery estimate
 //
@@ -15,6 +17,9 @@
 //  - Climbing adds the work of lifting the drone (m*g*climb rate)
 //    divided by a propulsion efficiency; descending costs slightly
 //    less than hovering.
+//  - A preset can replace the speed curve and the climb efficiency
+//    with figures measured from that drone's flight logs (its
+//    `power` entry in drone.js); other drones use the defaults.
 //  - Payload: the app's payload coefficient multiplies weight, and
 //    lift power grows with weight^1.5 (rotor momentum theory).
 //  - Cold: below 15 C usable capacity drops (about 18% at 0 C).
@@ -28,9 +33,19 @@ export var SPEC_TEST_SPEED_MS = 6;     // ~21.6 km/h, DJI's flight-time test spe
 export var CLIMB_EFFICIENCY = 0.6;     // share of electrical power turned into climb work
 export var DESCENT_POWER_FACTOR = 0.9; // descending vs hovering
 
-export function airspeedPowerFactor(v, vmax){
+// Power at airspeed v as a multiple of hover power. curve = { a, b }
+// for 1 + a*x + b*x^3 with x = v / top speed; the default dips a
+// little at moderate speed.
+export var DEFAULT_POWER_CURVE = { a: -0.2, b: 0.5 };
+
+export function airspeedPowerFactor(v, vmax, curve){
+  var c = curve || DEFAULT_POWER_CURVE;
   var x = Math.min(Math.max(v / Math.max(vmax, 0.1), 0), 1.2);
-  return 1 - 0.2 * x + 0.5 * x * x * x;
+  return 1 + c.a * x + c.b * x * x * x;
+}
+
+export function climbEfficiency(model){
+  return model.climbEff || CLIMB_EFFICIENCY;
 }
 
 export function coldCapacityFactor(tempC){
@@ -46,13 +61,21 @@ export function readBatteryModel(){
   var vmax = parseFloat(document.getElementById('hor').value);
   if (!(wh > 0) || !(minutes > 0) || !(massKg > 0) || !(vmax > 0)) return null;
   if (!(health > 0)) health = 100;
+  // A preset is only selected while its fields are untouched (editing
+  // one switches the picker to Custom), so its measured curve applies.
+  var picker = document.getElementById('droneModel');
+  var preset = picker && DRONE_PRESETS[picker.value];
+  var power = (preset && preset.power) || {};
+  var curve = power.curve || DEFAULT_POWER_CURVE;
   var specPowerW = wh * 60 / minutes;
   return {
     wh: wh,
     usableFraction: Math.min(health, 100) / 100,
     massKg: massKg,
     vmax: vmax,
-    hoverW: specPowerW / airspeedPowerFactor(SPEC_TEST_SPEED_MS, vmax)
+    curve: curve,
+    climbEff: power.climbEff || CLIMB_EFFICIENCY,
+    hoverW: specPowerW / airspeedPowerFactor(SPEC_TEST_SPEED_MS, vmax, curve)
   };
 }
 
@@ -60,8 +83,8 @@ export function readBatteryModel(){
 export function legEnergyWh(model, payloadCoef, airspeed, horTimeS, climbUpM, climbDownM, upSpeed, downSpeed){
   if (!isFinite(horTimeS)) return Infinity;
   var baseW = model.hoverW * Math.pow(Math.max(payloadCoef, 0.1), 1.5);
-  var cruiseW = baseW * airspeedPowerFactor(airspeed, model.vmax);
-  var climbW = baseW + model.massKg * payloadCoef * 9.81 * upSpeed / CLIMB_EFFICIENCY;
+  var cruiseW = baseW * airspeedPowerFactor(airspeed, model.vmax, model.curve);
+  var climbW = baseW + model.massKg * payloadCoef * 9.81 * upSpeed / climbEfficiency(model);
   var descW = baseW * DESCENT_POWER_FACTOR;
   var joules = cruiseW * horTimeS + climbW * (climbUpM / upSpeed) + descW * (climbDownM / downSpeed);
   return joules / 3600;
@@ -96,8 +119,8 @@ export function profileTiming(prof, samples, gs, upSpeed, downSpeed, opts){
 export function legEnergyFromTiming(model, payloadCoef, airspeed, timing, upSpeed){
   if (!timing || !isFinite(timing.total)) return Infinity;
   var baseW = model.hoverW * Math.pow(Math.max(payloadCoef, 0.1), 1.5);
-  var cruiseW = baseW * airspeedPowerFactor(airspeed, model.vmax);
-  var climbW = baseW + model.massKg * payloadCoef * 9.81 * upSpeed / CLIMB_EFFICIENCY;
+  var cruiseW = baseW * airspeedPowerFactor(airspeed, model.vmax, model.curve);
+  var climbW = baseW + model.massKg * payloadCoef * 9.81 * upSpeed / climbEfficiency(model);
   var descW = baseW * DESCENT_POWER_FACTOR;
   return (cruiseW * timing.cruise + climbW * timing.climb + descW * timing.desc) / 3600;
 }

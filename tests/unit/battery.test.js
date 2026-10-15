@@ -41,6 +41,25 @@ test('readBatteryModel calibrates hover power from the rated flight time', () =>
   assert.equal(model({ ftime: '' }), null);
 });
 
+test('a preset with a measured power curve (Neo 2) uses it; other drones keep the default', () => {
+  const neo = model({ droneModel: 'neo2', batt: '10', ftime: '11.4' });
+  assert.deepEqual(neo.curve, { a: 0.1, b: 0.47 });
+  assert.equal(neo.climbEff, 0.19);
+  near(neo.hoverW, 47.4, 0.1);   // measured hover power
+  assert.ok(site.airspeedPowerFactor(6, 12, neo.curve) > 1);   // no dip at moderate speed
+  // Rated test still uses the whole battery with the measured curve.
+  near(site.batteryPct(neo, site.legEnergyWh(neo, 1, site.SPEC_TEST_SPEED_MS, 11.4 * 60, 0, 0, 5, 3), 20), 100, 1e-9);
+  // Climbing costs m*g/efficiency per m/s on top of hovering: ~7.8 W per m/s.
+  const hover60 = site.legEnergyWh(neo, 1, 0, 60, 0, 0, 5, 3);
+  const climb60 = site.legEnergyWh(neo, 1, 0, 0, 300, 0, 5, 3);
+  near((climb60 - hover60) * 3600 / 60 / 5, 0.151 * 9.81 / 0.19, 1e-9);
+
+  const other = model({ droneModel: 'mini4pro' });
+  assert.equal(other.curve, site.DEFAULT_POWER_CURVE);
+  assert.equal(other.climbEff, site.CLIMB_EFFICIENCY);
+  assert.equal(model().curve, site.DEFAULT_POWER_CURVE);   // custom drone
+});
+
 test('flying the rated test (6 m/s, still air, no payload) for the rated time uses the whole battery', () => {
   const m = model();
   const wh = site.legEnergyWh(m, 1, site.SPEC_TEST_SPEED_MS, 19 * 60, 0, 0, 5, 3);

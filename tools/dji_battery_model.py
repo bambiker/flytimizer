@@ -31,8 +31,11 @@ What it does
        naive     - average %/minute of the training flights
        site old  - the Flytimizer site's battery estimate (js/battery.js)
                    with the Neo 2 spec sheet: 11.5 Wh, 19 min
-       site new  - the same with the preset calibrated from these logs:
-                   10 Wh, 11.5 min
+       site 24   - the same with the preset from PR #24: 10 Wh, 11.5 min,
+                   default speed curve
+       site new  - the site's current Neo 2 preset: 10 Wh, 11.4 min, plus
+                   the speed curve and climb efficiency measured from
+                   these logs
        no wind   - this model, wind assumed zero
        same day  - this model, wind estimated from the OTHER flights of
                    the same day (what you would know before flying)
@@ -111,11 +114,15 @@ FEATURES = [
 # The site's DJI Neo 2 preset (js/drone.js) and battery model constants
 # (js/battery.js), used as the "spec" comparison.
 SPEC = SimpleNamespace(wh=11.5, minutes=19.0, mass=0.151, vmax=12.0,
-                       test_speed=6.0, climb_eff=0.6, descent_factor=0.9)
-# The site's Neo 2 preset after it was calibrated from these logs.
-SPEC_NEW = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.5})
+                       test_speed=6.0, climb_eff=0.6, descent_factor=0.9,
+                       curve_a=-0.2, curve_b=0.5)
+# The Neo 2 preset from PR #24: energy and flight time from these logs.
+SPEC_24 = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.5})
+# The current Neo 2 preset: also its own speed curve and climb efficiency.
+SPEC_NEW = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.4,
+                              "curve_a": 0.1, "curve_b": 0.47, "climb_eff": 0.19})
 
-METHODS = ["naive", "site old", "site new", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
+METHODS = ["naive", "site old", "site 24", "site new", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
 
 MIN_STEPS_PER_BATTERY = 40    # 1% steps needed for a battery's own curve
 SOC_GRID = np.arange(-30.0, 100.001, 0.05)   # for energy <-> % conversion
@@ -482,15 +489,19 @@ def wind_vector(speed, from_deg):
 # Site spec-sheet model (js/battery.js), for comparison
 # ---------------------------------------------------------------------
 
-def _airspeed_factor(v, vmax):
-    x = np.clip(np.asarray(v, float) / max(vmax, 0.1), 0, 1.2)
-    return 1 - 0.2 * x + 0.5 * x ** 3
+def _airspeed_factor(v, spec):
+    x = np.clip(np.asarray(v, float) / max(spec.vmax, 0.1), 0, 1.2)
+    return 1 + spec.curve_a * x + spec.curve_b * x ** 3
+
+
+def _spec_hover(spec):
+    return spec.wh * 60.0 / spec.minutes / _airspeed_factor(spec.test_speed, spec)
 
 
 def spec_power(f, spec=SPEC):
-    hover = spec.wh * 60.0 / spec.minutes / _airspeed_factor(spec.test_speed, spec.vmax)
+    hover = _spec_hover(spec)
     b = f.bins
-    cruise = hover * _airspeed_factor(np.hypot(b["vn"], b["ve"]), spec.vmax)
+    cruise = hover * _airspeed_factor(np.hypot(b["vn"], b["ve"]), spec)
     climb = hover + spec.mass * 9.81 * b["up"].clip(lower=0) / spec.climb_eff
     return np.where(b["up"] > 0.3, climb,
                     np.where(b["up"] < -0.3, hover * spec.descent_factor, cruise))
@@ -616,6 +627,7 @@ def leave_one_out(flights, group, degree, long_min):
 
         power = {
             "site old": spec_power(f, SPEC),
+            "site 24": spec_power(f, SPEC_24),
             "site new": spec_power(f, SPEC_NEW),
             "no wind": predict_power(model, f, (0.0, 0.0)),
             "same day": predict_power(model, f, same_day or (0.0, 0.0)),
@@ -624,6 +636,7 @@ def leave_one_out(flights, group, degree, long_min):
         drop = {
             "naive": rate * f.duration_s,
             "site old": np.sum(power["site old"] * dur) / 3600.0 / SPEC.wh * 100.0,
+            "site 24": np.sum(power["site 24"] * dur) / 3600.0 / SPEC_24.wh * 100.0,
             "site new": np.sum(power["site new"] * dur) / 3600.0 / SPEC_NEW.wh * 100.0,
             "E/% flat": f.energy_wh / whp,
             "E/% curve": f.soc_start - soc_after(curve, f.soc_start, f.energy_wh),
@@ -729,14 +742,14 @@ def report_full_model(flights, model, degree):
         print(f"  {name:20s} {c:9.3f}")
 
     print()
-    print("level flight power vs airspeed (model / site spec model):")
+    print("level flight power vs airspeed (model / site old / site new):")
     for v in (0, 3, 6, 9, 12):
         if v > model["va_max"] + 0.5:
             break
         p = design([v], [0], [0], [0], [0], (0, 0)) @ model["beta"]
-        hover = SPEC.wh * 60 / SPEC.minutes / _airspeed_factor(SPEC.test_speed, SPEC.vmax)
-        ps = hover * _airspeed_factor(v, SPEC.vmax)
-        print(f"  {v:4.0f} m/s: {p[0]:6.1f} W / {ps:6.1f} W")
+        po = _spec_hover(SPEC) * _airspeed_factor(v, SPEC)
+        pn = _spec_hover(SPEC_NEW) * _airspeed_factor(v, SPEC_NEW)
+        print(f"  {v:4.0f} m/s: {p[0]:6.1f} W / {po:6.1f} W / {pn:6.1f} W")
     print(f"  (highest airspeed in the data: {model['va_max']:.1f} m/s)")
 
     print()
@@ -989,7 +1002,7 @@ def save_plots(out_dir, loo_results, route_curve, reserve, flights, curve):
     if loo_results:
         fig, ax = plt.subplots(figsize=(6.5, 6))
         actual = [r.flight.soc_drop for r in loo_results]
-        for m in ("naive", "site old", "site new", "no wind", "E/% curve"):
+        for m in ("naive", "site old", "site 24", "site new", "no wind"):
             ax.scatter(actual, [r.drop[m] for r in loo_results], label=m, s=22)
         top = max(actual + [r.drop[m] for r in loo_results for m in METHODS]) * 1.05
         ax.plot([0, top], [0, top], color="black", linewidth=0.8)
