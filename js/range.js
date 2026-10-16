@@ -59,6 +59,13 @@ export function renderRange(lat, lng, ranges, fit){
       ? ', but only ' + fmtDist(ext.near.distM) + ' toward the ' + compassWord(ext.near.bearing) + ' because of the wind'
       : ' in every direction') +
     '. Straight out and back at your set speed; terrain, buildings and restricted areas aren’t counted, and most rules also require keeping the drone in sight.';
+  drawRangeOutline(lat, lng, ranges, fit);
+}
+
+// The dashed outline on the map (replacing any earlier one).
+export function drawRangeOutline(lat, lng, ranges, fit){
+  rangeLayer.clearLayers();
+  if (!rangeExtremes(ranges)) return;
   var pts = ranges.map(function(r){
     var p = destinationPoint(lat, lng, r.bearing, r.distM);
     return [p.lat, p.lng];

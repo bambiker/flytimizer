@@ -168,6 +168,50 @@ test('if the GHSL heights can\'t be loaded, untagged buildings keep a type guess
   await expect(page.locator('#buildingInfo')).toContainText('about 7 m');
 });
 
+test('Conditions here: satellites, Kp, highest height in the wind and range at the start point', async ({ page }) => {
+  await openSite(page, HAIFA, null, 'drone=mavic3classic');
+  await page.getByRole('button', { name: 'Conditions here' }).click();
+  const card = page.locator('#conditionsCard');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('Conditions at the start point');
+  await expect(card).toContainText(/~\d+ navigation satellites above 10° \(GPS \d+, Galileo \d+/);
+  const total = Number((await card.textContent()).match(/~(\d+) navigation/)[1]);
+  expect(total).toBeGreaterThanOrEqual(10);
+  expect(total).toBeLessThanOrEqual(25);
+  await expect(card).toContainText('Kp 2: quiet');
+  // Israel: 50 m limit unless there's a permit.
+  await expect(card).toContainText(/Up to \d+ m above the ground/);
+  await expect(card).toContainText(/Up to [\d.]+ km toward the \w+/);
+  await expect(page.locator('.leaflet-overlay-pane path[stroke="#14b8a6"]')).toHaveCount(1);
+  // Start over hides it.
+  await page.getByRole('button', { name: 'Start over' }).click();
+  await expect(card).toBeHidden();
+});
+
+test('Conditions here with no point on the map uses your location, and says what it couldn\'t load', async ({ page }) => {
+  await page.context().grantPermissions(['geolocation'], { origin: 'https://flytimizer.test' });
+  await page.context().setGeolocation({ latitude: HAIFA[0], longitude: HAIFA[1] });
+  await openSite(page, HAIFA, null, 'drone=mini4pro', { gnssFail: true, kp: 5.67 });
+  await page.evaluate(() => history.replaceState(null, '', location.pathname));
+  await page.reload();
+  await expect(page.locator('.leaflet-marker-icon')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Conditions here' }).click();
+  const card = page.locator('#conditionsCard');
+  await expect(card).toContainText('Conditions at your location');
+  await expect(page.locator('.leaflet-marker-icon')).toHaveCount(1);
+  await expect(card).toContainText('Couldn’t load the satellite orbits right now');
+  await expect(card).toContainText('Kp 6: geomagnetic storm');
+});
+
+test('Conditions here without location access explains what to do instead', async ({ page }) => {
+  await openSite(page, HAIFA, null, '');
+  await page.evaluate(() => history.replaceState(null, '', location.pathname));
+  await page.reload();
+  await page.getByRole('button', { name: 'Conditions here' }).click();
+  await expect(page.locator('#searchNotice')).toContainText('Click the map or search for a place first');
+  await expect(page.locator('#conditionsCard')).toBeHidden();
+});
+
 test('public shelters tagged as military bunkers are not treated as military sites', async ({ page }) => {
   const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [

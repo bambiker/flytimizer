@@ -12,6 +12,8 @@
 //                 including one with an HTML-injection name)
 //   buildings     'nearby' (default), 'mixed', 'many' or 'untagged' (no
 //                 height tags) on the line
+//   gnssFail      CelesTrak answers HTTP 403 (no satellite orbits)
+//   kp            Kp index NOAA reports for now (default 2.33)
 //   ghsl          building height (m) the GHSL height file gives around
 //                 the route (default: the file can't be downloaded)
 //   country       ISO code Nominatim reports (default 'il')
@@ -121,6 +123,25 @@ export async function openSite(page, from, to, query, sc = {}){
       { type: 'node', id: 12, lat: fla + (tla - fla) * 0.5 + 0.001, lon: flo + (tlo - flo) * 0.5, tags: { aeroway: 'heliport', name: 'Pad' } }
     ];
     json(r, { elements: hazards });
+  });
+
+  // Satellite orbits: a GPS-like constellation of 30 (6 planes x 5) and
+  // a Galileo-like one of 24 (3 x 8); the others are empty.
+  await ctx.route(/celestrak\.org\/NORAD\/elements\/gp\.php/, r => {
+    if (sc.gnssFail) return r.fulfill({ status: 403, body: 'blocked' });
+    const group = new URL(r.request().url()).searchParams.get('GROUP');
+    const epoch = new Date(Date.now() - 86400e3).toISOString().slice(0, 19);
+    const sats = [];
+    const planes = group === 'gps-ops' ? [6, 5, 55, 2.00563] : group === 'galileo' ? [3, 8, 56, 1.70475] : null;
+    if (planes) for (let p = 0; p < planes[0]; p++) for (let k = 0; k < planes[1]; k++){
+      sats.push({ OBJECT_NAME: group + p + k, EPOCH: epoch, MEAN_MOTION: planes[3], ECCENTRICITY: 0.005, INCLINATION: planes[2],
+        RA_OF_ASC_NODE: p * 360 / planes[0], ARG_OF_PERICENTER: 0, MEAN_ANOMALY: k * 360 / planes[1] + p * 15 });
+    }
+    json(r, sats.length ? sats : []);
+  });
+  await ctx.route(/services\.swpc\.noaa\.gov/, r => {
+    const t = new Date(Date.now() - 3600e3).toISOString().replace('T', ' ').slice(0, 19);
+    json(r, [['time_tag', 'kp', 'observed', 'noaa_scale'], [t, String(sc.kp !== undefined ? sc.kp : 2.33), 'estimated', null]]);
   });
 
   if (sc.ghsl !== undefined){
