@@ -5,7 +5,7 @@
 // plans.
 
 import { track } from './analytics.js';
-import { BATTERY_RESERVE_PCT, CLIMB_EFFICIENCY, DESCENT_POWER_FACTOR, batteryPct, coldCapacityFactor, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
+import { BATTERY_RESERVE_PCT, DESCENT_POWER_FACTOR, batteryPct, climbEfficiency, coldCapacityFactor, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
 import { MIN_GROUND_SPEED_MS, airspeedFor, formatDuration, getDistanceFromLatLon, groundSpeed, hourIndexNow, interpDir, lat1, lat2, lng1, lng2, marker, trueBearing } from './core.js';
 import { markUnsafe } from './drone.js';
 import { renderHazardsAndRoute } from './map-view.js';
@@ -669,7 +669,7 @@ export function buildPlans(c){
       if (dz > 0){
         var tc = dz / c.speedupback;
         t += tc;
-        if (battModel) wh += (baseBackW + battModel.massKg * c.payloadBack * 9.81 * c.speedupback / CLIMB_EFFICIENCY) * tc / 3600;
+        if (battModel) wh += (baseBackW + battModel.massKg * c.payloadBack * 9.81 * c.speedupback / climbEfficiency(battModel)) * tc / 3600;
       } else if (dz < 0){
         var td = -dz / c.speeddownback;
         t += td;

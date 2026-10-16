@@ -6,14 +6,24 @@
 // ---------------------------------------------------------------
 
 // batt = battery energy (Wh), ftime = rated max flight time (min),
-// mass = takeoff weight (kg) - all from the manufacturers' spec
-// sheets; used by the battery estimate.
+// mass = takeoff weight (kg) - from the manufacturers' spec sheets,
+// used by the battery estimate. Except the Neo 2: its batt and ftime
+// are measured from 18 real flight logs (two packs) with
+// tools/dji_battery_model.py - 10 Wh between 100% and 0% on the
+// battery gauge, 47 W hovering and about 52.5 W in level flight at
+// 6 m/s, which is 11.4 min on that energy. The spec sheet's 11.5 Wh /
+// 19 min made the estimate about a third too low.
+// power (optional) = the speed curve and climb efficiency measured
+// from a drone's logs, replacing the defaults in battery.js. The Neo 2
+// draws more power the faster it flies (no dip at moderate speed), and
+// climbing costs it about 7.7 W per m/s.
 export var DRONE_PRESETS = {
   mavic3classic: { name: 'DJI Mavic 3 Classic', hor: 21, asc: 8, des: 6, windres: 12, batt: 77, ftime: 46, mass: 0.895 },
   mini4pro:      { name: 'DJI Mini 4 Pro',       hor: 16, asc: 5, des: 5, windres: 10.7, batt: 18.96, ftime: 34, mass: 0.249 },
   air3:          { name: 'DJI Air 3',            hor: 21, asc: 10, des: 10, windres: 12, batt: 62.6, ftime: 46, mass: 0.72 },
   matrice300:    { name: 'DJI Matrice 300 RTK',  hor: 23, asc: 6, des: 5, windres: 12, batt: 548, ftime: 55, mass: 6.3 },
-  neo2:          { name: 'DJI Neo 2',            hor: 12, asc: 5, des: 3, windres: 10.7, batt: 11.5, ftime: 19, mass: 0.151 },
+  neo2:          { name: 'DJI Neo 2',            hor: 12, asc: 5, des: 3, windres: 10.7, batt: 10, ftime: 11.4, mass: 0.151,
+                   power: { curve: { a: 0.1, b: 0.47 }, climbEff: 0.19 } },
   evolite:       { name: 'Autel EVO Lite+',      hor: 18, asc: 5, des: 4, windres: 10.6, batt: 68.7, ftime: 40, mass: 0.835 }
 };
 // Fields a preset fills in (the rest - payload, drag, battery health -
