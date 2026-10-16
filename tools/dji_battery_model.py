@@ -50,7 +50,10 @@ What it does
    the reserve and empty.
 7. Wind effects: for each flight, how much battery the (estimated) wind
    cost compared with calm air and its worst 10 seconds, and how far the
-   drone drifted, by GPS, while it was hovering.
+   drone drifted, by GPS, while it was hovering. Then the same summed
+   over each whole flight (battery, and how far the wind would have
+   carried the drone - sideways, head-on and while hovering), the flight
+   where each is largest, and cumulative plots with --plot-dir.
 
 Usage
 -----
@@ -958,6 +961,124 @@ def wind_report(flights, model, degree):
     return rows, drift_rows
 
 
+MOVING_MIN_SPEED = 1.0    # m/s ground speed: below this, the wind is all push
+
+
+def wind_integrals(flights, model, degree):
+    """The wind's effect summed over each whole flight, as curves over
+    time and as totals, and the flight where each total is largest.
+
+    battery: extra % used versus the same ground track in calm air.
+    drift:   how far the wind would have carried the drone had it not
+             held its track - the integral of the wind over time (m),
+             split into the part across the track (sideways push), the
+             part along it (head- or tailwind), and the part while
+             hovering. The drone cancels all of it; that cancelling is
+             what costs the battery.
+    """
+    print()
+    print("=" * 78)
+    print("WIND EFFECTS OVER WHOLE FLIGHTS (integrals)")
+    print("=" * 78)
+    print("battery: extra % the wind cost, summed over the flight.")
+    print("drift: how far the wind would have carried the drone over the flight")
+    print("had it not fought back (m): 'total' = all of it, 'side' = across the")
+    print("direction of travel, 'head' = against it (minus = tailwind), 'hover'")
+    print("= while holding position. Uses the wind estimated for each day.")
+    print()
+    print(f"  {'flight':38s} {'min':>5s} {'wind m/s':>8s} {'+bat %':>7s} "
+          f"{'total m':>8s} {'side m':>7s} {'head m':>7s} {'hover m':>7s}")
+    out = []
+    for f in flights:
+        b = f.bins
+        dur = b["dur"].to_numpy()
+        if dur.sum() < 30:
+            continue
+        w = np.array(model["winds"].get(f.session, (0.0, 0.0)))
+        vn, ve = b["vn"].to_numpy(), b["ve"].to_numpy()
+        gs = np.hypot(vn, ve)
+        moving = gs >= MOVING_MIN_SPEED
+        tn = np.where(moving, vn / np.maximum(gs, 1e-9), 0.0)
+        te = np.where(moving, ve / np.maximum(gs, 1e-9), 0.0)
+        along = w[0] * tn + w[1] * te              # + = wind from behind
+        side = np.abs(w[0] * te - w[1] * tn)
+        ws = float(np.hypot(*w))
+
+        total_m = np.cumsum(ws * dur)
+        side_m = np.cumsum(np.where(moving, side, 0.0) * dur)
+        head_m = np.cumsum(np.where(moving, -along, 0.0) * dur)
+        hover_m = np.cumsum(np.where(moving, 0.0, ws) * dur)
+
+        curve = fit_wh_curve(flights, f.battery, degree)
+        soc0 = f.soc_start if np.isfinite(f.soc_start) else 100.0
+        e_wind = np.cumsum(predict_power(model, f, tuple(w)) * dur) / 3600.0
+        e_calm = np.cumsum(predict_power(model, f, (0.0, 0.0)) * dur) / 3600.0
+        extra_pct = soc_after(curve, soc0, e_calm) - soc_after(curve, soc0, e_wind)
+
+        r = SimpleNamespace(f=f, t_min=np.cumsum(dur) / 60.0, wind=ws,
+                            bat=extra_pct, total=total_m, side=side_m,
+                            head=head_m, hover=hover_m)
+        out.append(r)
+        print(f"  {f.name[:38]:38s} {r.t_min[-1]:5.1f} {ws:8.1f} {extra_pct[-1]:+7.1f} "
+              f"{total_m[-1]:8.0f} {side_m[-1]:7.0f} {head_m[-1]:+7.0f} {hover_m[-1]:7.0f}")
+
+    if not out:
+        return out
+    print()
+    print("largest over a whole flight:")
+    for label, key, unit in (("battery lost to wind", "bat", "%"),
+                             ("total wind drift", "total", " m"),
+                             ("sideways push", "side", " m"),
+                             ("headwind", "head", " m")):
+        r = max(out, key=lambda x: getattr(x, key)[-1])
+        v = getattr(r, key)[-1]
+        fmt = f"{v:+.1f}" if unit == "%" else f"{v:.0f}"
+        print(f"  {label:22s} {r.f.name}  {fmt}{unit}  "
+              f"({r.t_min[-1]:.1f} min, wind {r.wind:.1f} m/s)")
+    longest = max(out, key=lambda x: x.t_min[-1])
+    print(f"  {'longest flight':22s} {longest.f.name}  {longest.t_min[-1]:.1f} min, "
+          f"wind cost {longest.bat[-1]:+.1f}%, drift {longest.total[-1]:.0f} m")
+    print()
+    print("  These drift distances are what the drone had to cancel, not how far")
+    print("  it actually moved: it held its track. The measured drift is in the")
+    print("  hover table above.")
+    return out
+
+
+def save_wind_plots(out_dir, integrals):
+    if not integrals:
+        return
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    os.makedirs(out_dir, exist_ok=True)
+    top_bat = max(integrals, key=lambda r: r.bat[-1])
+    top_drift = max(integrals, key=lambda r: r.total[-1])
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
+    for r in integrals:
+        ax1.plot(r.t_min, r.bat, color="grey", alpha=0.35, linewidth=1)
+        ax2.plot(r.t_min, r.total, color="grey", alpha=0.35, linewidth=1)
+    ax1.plot(top_bat.t_min, top_bat.bat, linewidth=2.2,
+             label=f"most: {top_bat.f.name[-26:]}")
+    ax2.plot(top_drift.t_min, top_drift.total, linewidth=2.2,
+             label=f"most: {top_drift.f.name[-26:]} (total)")
+    ax2.plot(top_drift.t_min, top_drift.side, linewidth=1.5, linestyle="--",
+             label="same flight, sideways")
+    ax1.axhline(0, color="black", linewidth=0.8)
+    ax1.set_xlabel("minutes into the flight")
+    ax1.set_ylabel("extra battery % from wind (cumulative)")
+    ax1.set_title("Battery the wind cost, over each flight")
+    ax2.set_xlabel("minutes into the flight")
+    ax2.set_ylabel("wind drift cancelled (m, cumulative)")
+    ax2.set_title("How far the wind would have carried the drone")
+    ax1.legend(fontsize=8)
+    ax2.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "wind_integrals.png"), dpi=120)
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------------
 # Route prediction
 # ---------------------------------------------------------------------
@@ -1244,6 +1365,9 @@ def main():
     report_full_model(flights, model, args.curve_degree)
     if not args.no_wind_report:
         wind_report(flights, model, args.curve_degree)
+        integrals = wind_integrals(flights, model, args.curve_degree)
+        if args.plot_dir:
+            save_wind_plots(args.plot_dir, integrals)
 
     loo = [] if args.loo == "off" else leave_one_out(flights, args.loo, args.curve_degree, args.long_min)
 
