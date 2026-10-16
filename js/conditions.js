@@ -9,6 +9,7 @@ import { BATTERY_RESERVE_PCT, readBatteryModel } from './battery.js';
 import { CANDIDATE_HEIGHTS_M, forecastAt, readFlightInputs, roundTripRange, windByHeight } from './calc.js';
 import { hourIndexNow, lat1, lng1, marker, useCurrentLocationAsStart } from './core.js';
 import { kpIndexNow, kpLabel, visibleSatellites } from './gnss.js';
+import { checkGpsCountry, gpsCheckHtml } from './spoof.js';
 import { currentMission } from './mission.js';
 import { hideNotice, showNotice } from './notice.js';
 import { MAX_FLIGHT_ALTITUDE_M } from './osm.js';
@@ -46,7 +47,7 @@ function whereNow(){
     if (!navigator.geolocation) return reject(new Error('unsupported'));
     navigator.geolocation.getCurrentPosition(function(pos){
       useCurrentLocationAsStart(pos.coords.latitude, pos.coords.longitude);
-      resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, mine: true });
+      resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, mine: true });
     }, reject, { timeout: 15000 });
   });
 }
@@ -81,12 +82,18 @@ export async function checkConditions(){
       getJSON().catch(function(err){ console.warn('Forecast lookup failed:', err); return null; }),
       rulesForLocation(place.lat, place.lng),
       visibleSatellites(place.lat, place.lng, now).catch(function(){ return null; }),
-      kpIndexNow()
+      kpIndexNow(),
+      place.mine ? checkGpsCountry(place.lat, place.lng).catch(function(){ return null; }) : null
     ]);
-    var json = results[0], rules = results[1], sats = results[2], kp = results[3];
+    var json = results[0], rules = results[1], sats = results[2], kp = results[3], gpsCheck = results[4];
     chooseUnits(rules);
     var legalCapM = altitudePermitChecked() ? MAX_FLIGHT_ALTITUDE_M : Math.min(MAX_FLIGHT_ALTITUDE_M, rules.profile.maxAglM);
     var html = '';
+    if (gpsCheck){
+      html += row('GPS position check', gpsCheckHtml(gpsCheck, place.accuracy) +
+        (gpsCheck.status === 'likely' || gpsCheck.status === 'possible' ? ' The figures below are for the reported position: click where you really are on the map and press Conditions here again.' : ''));
+      track('gps_check', { result: gpsCheck.status, from: 'conditions' });
+    }
 
     html += row('Satellites', sats
       ? '<strong>~' + sats.total + '</strong> navigation satellites above ' + 10 + '° (' +

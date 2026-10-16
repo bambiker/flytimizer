@@ -14,6 +14,7 @@
 //                 height tags) on the line
 //   gnssFail      CelesTrak answers HTTP 403 (no satellite orbits)
 //   kp            Kp index NOAA reports for now (default 2.33)
+//   ipCountry     country of the internet connection (default 'IL')
 //   ghsl          building height (m) the GHSL height file gives around
 //                 the route (default: the file can't be downloaded)
 //   country       ISO code Nominatim reports (default 'il')
@@ -139,6 +140,7 @@ export async function openSite(page, from, to, query, sc = {}){
     }
     json(r, sats.length ? sats : []);
   });
+  await ctx.route(/get\.geojs\.io|api\.country\.is/, r => json(r, { country: sc.ipCountry || 'IL' }));
   await ctx.route(/services\.swpc\.noaa\.gov/, r => {
     const t = new Date(Date.now() - 3600e3).toISOString().replace('T', ' ').slice(0, 19);
     json(r, [['time_tag', 'kp', 'observed', 'noaa_scale'], [t, String(sc.kp !== undefined ? sc.kp : 2.33), 'estimated', null]]);

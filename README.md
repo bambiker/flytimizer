@@ -31,7 +31,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 * 🏫 Detours around restricted and sensitive sites from OpenStreetMap: schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites
 * ⚖️ **Country rules** (height limit, keep-out distances, no-fly sites) for Israel and the United States, with Israel's as the default elsewhere
 * 🔋 **Battery estimate** per leg, adjusted for payload, wind, climbs, cold and battery health, with a reserve warning
-* 📡 **Conditions here** button: for the start point (or your location), the predicted number of navigation satellites overhead (GPS, Galileo, GLONASS, BeiDou, from CelesTrak orbits), the Kp index (NOAA), the highest height today's wind allows for your drone, and the round-trip range
+* 📡 **Conditions here** button: for the start point (or your location), the predicted number of navigation satellites overhead (GPS, Galileo, GLONASS, BeiDou, from CelesTrak orbits), the Kp index (NOAA), the highest height today's wind allows for your drone, and the round-trip range; with your own location it also checks for **GPS spoofing** (a position in another country than your internet connection and time zone, e.g. the common fake fix at Beirut airport)
 * 🧭 **Round-trip range** drawn on the map: how far the drone can fly from the start and still get back with the reserve, in every direction, with today's wind
 * 🔄 Two plans: **fastest** and **least battery**, each choosing the outbound and return heights independently
 * 💨 Drones that hold a set **ground speed** (DJI waypoint missions, most multirotors) or a set **airspeed** (fixed-wing, or flying flat out), which behave differently with a tailwind
