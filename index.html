@@ -288,6 +288,22 @@ details.panel + details.panel{
 }
 .map-buttons [hidden]{ display: none; }
 
+.conditions{
+  margin-top: 12px;
+  border-left: 3px solid var(--accent-2);
+  padding: 2px 0 2px 12px;
+  font-size: 14px;
+}
+.conditions[hidden]{ display: none; }
+.conditions .cond-head{ margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+.conditions dl{ margin: 0; display: grid; gap: 8px; }
+.conditions .cond-row{ display: grid; grid-template-columns: minmax(110px, 30%) 1fr; gap: 10px; }
+.conditions dt{ color: var(--muted); }
+.conditions dd{ margin: 0; }
+@media (max-width: 560px){
+  .conditions .cond-row{ grid-template-columns: 1fr; gap: 2px; }
+}
+
 .location-search{
   display:flex;
   gap: 8px;
@@ -948,10 +964,12 @@ details.panel + details.panel{
       </div>
       <div class="map-buttons">
         <button class="btn btn-ghost" data-action="locate">Use my location</button>
+        <button class="btn btn-ghost" id="conditionsBtn" data-action="conditions">Conditions here</button>
         <button class="btn btn-ghost" id="resetBtn" data-action="reset" hidden>Start over</button>
       </div>
     </div>
     <div class="notice" id="searchNotice" role="alert" hidden></div>
+    <div class="conditions" id="conditionsCard" aria-live="polite" hidden></div>
   </section>
 
   <section class="panel">

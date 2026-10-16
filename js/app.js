@@ -8,6 +8,7 @@
 import { track } from './analytics.js';
 import { applyDronePreset, checkCustom } from './drone.js';
 import { getHeight } from './calc.js';
+import { checkConditions, hideConditions } from './conditions.js';
 import { clearMarkers, getLocation, searchLocation } from './core.js';
 import { clearRouteLayers, initMap } from './map-view.js';
 import { onMissionChange } from './mission.js';
@@ -24,6 +25,7 @@ function startOver(){
   clearMarkers();
   clearRouteLayers();
   clearPlans();
+  hideConditions();
   resetForecastOffset();
   document.getElementById('result').style.display = 'none';
   ['searchNotice', 'calcNotice', 'resultNotice'].forEach(hideNotice);
@@ -35,6 +37,7 @@ function startOver(){
 var ACTIONS = {
   search: searchLocation,
   locate: getLocation,
+  conditions: checkConditions,
   calculate: getHeight,
   share: shareRoute,
   reset: startOver,
