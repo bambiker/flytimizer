@@ -207,6 +207,47 @@ test('Conditions here with no point on the map uses your location, and says what
   await expect(card).toContainText('Kp 6: geomagnetic storm');
 });
 
+base.test.describe('GPS spoofing check (Israeli time zone)', () => {
+  test.use({ timezoneId: 'Asia/Jerusalem', permissions: ['geolocation'] });
+  const BEIRUT_AIRPORT = { latitude: 33.8209, longitude: 35.4884, accuracy: 9 };
+
+  async function openWithoutPoints(page, geo, sc){
+    await page.context().setGeolocation(geo);
+    await openSite(page, HAIFA, null, 'drone=mini4pro', sc);
+    await page.evaluate(() => history.replaceState(null, '', location.pathname));
+    await page.reload();
+  }
+
+  test('a position at Beirut airport while the network says Israel is flagged as likely spoofed', async ({ page }) => {
+    await openWithoutPoints(page, BEIRUT_AIRPORT, { country: 'lb', ipCountry: 'IL' });
+    await page.getByRole('button', { name: 'Use my location' }).click();
+    await expect(page.locator('#searchNotice')).toContainText('GPS spoofing likely: your device puts you near Beirut airport, a common fake position, but your internet connection and time zone say Israel');
+
+    await page.getByRole('button', { name: 'Conditions here' }).click();
+    await expect(page.locator('#conditionsCard')).toContainText('Conditions at the start point');
+  });
+
+  test('Conditions here from your location checks it against the network', async ({ page }) => {
+    await openWithoutPoints(page, BEIRUT_AIRPORT, { country: 'lb', ipCountry: 'IL' });
+    await page.getByRole('button', { name: 'Conditions here' }).click();
+    const card = page.locator('#conditionsCard');
+    await expect(card).toContainText('GPS spoofing likely');
+    await expect(card).toContainText('The figures below are for the reported position');
+    await expect(card.locator('a[href="https://gpsjam.org/"]')).toHaveCount(1);
+  });
+
+  test('a normal position gives no warning, and the card says it matches', async ({ page }) => {
+    await openWithoutPoints(page, { latitude: HAIFA[0], longitude: HAIFA[1], accuracy: 6 }, { ipCountry: 'IL' });
+    await page.getByRole('button', { name: 'Use my location' }).click();
+    await expect(page.locator('.leaflet-marker-icon')).toHaveCount(1);
+    await page.waitForTimeout(300);
+    await expect(page.locator('#searchNotice')).toBeHidden();
+    await page.getByRole('button', { name: 'Start over' }).click();
+    await page.getByRole('button', { name: 'Conditions here' }).click();
+    await expect(page.locator('#conditionsCard')).toContainText('✓ Your location matches your network (Israel). Reported accuracy ±6 m.');
+  });
+});
+
 test('Conditions here without location access explains what to do instead', async ({ page }) => {
   await openSite(page, HAIFA, null, '');
   await page.evaluate(() => history.replaceState(null, '', location.pathname));

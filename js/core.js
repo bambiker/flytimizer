@@ -5,6 +5,7 @@ import { track } from './analytics.js';
 import { map } from './map-view.js';
 import { hideNotice, showNotice } from './notice.js';
 import { rememberStartPoint } from './share.js';
+import { checkGpsCountry, gpsCheckHtml } from './spoof.js';
 
 //Set up some of our variables.
 export var marker = 0; ////Has the user plotted their location marker?
@@ -82,7 +83,15 @@ export function getLocation() {
 }
 
 export function showPosition(position) {
-  useCurrentLocationAsStart(position.coords.latitude, position.coords.longitude);
+  var lat = position.coords.latitude, lng = position.coords.longitude;
+  useCurrentLocationAsStart(lat, lng);
+  // Warn if the position looks spoofed (see spoof.js).
+  checkGpsCountry(lat, lng).then(function(a){
+    track('gps_check', { result: a.status, from: 'use_location' });
+    if (a.status === 'likely' || a.status === 'possible'){
+      showNotice('searchNotice', gpsCheckHtml(a, position.coords.accuracy).replace(/<[^>]+>/g, '').replace(/ GPS interference map\./, ''));
+    }
+  }, function(err){ console.warn('GPS check failed:', err); });
 }
 
 // Place search box: geocode the text and put the start point there.
