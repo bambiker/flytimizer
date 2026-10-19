@@ -18,6 +18,7 @@ import { Progress, estimateLookupSeconds } from './progress.js';
 import { buildingsCrossingPath, computeAvoidanceRoute, maxLateralDeviationM, maxPathDeviationM, minDistanceFromPath } from './routing.js';
 import { MILE_M, altitudePermitChecked, formatDistance, renderRulesInfo, rulesForLocation } from './rules.js';
 import { updateUrlForRoute } from './share.js';
+import { skippedSiteTypes, splitHazards } from './sites.js';
 import { MAX_AGL_M, buildAltitudeProfile, buildingAltitudeRequirements, flatTerrainProfile, getTerrainProfile, renderTerrainProfile, reverseSamples, setMaxAglM } from './terrain.js';
 import { chooseUnits, escapeHtml, fmtDist, fmtLen, fmtSpeed, unitsImperial } from './units.js';
 import { renderCompassRose } from './visuals.js';
@@ -482,7 +483,19 @@ export function renderBuildingInfo(r){
   buildingInfo.style.display = 'block';
 }
 
-// r: { hazardData, hazards, avoidance, leftCheckedArea, deviationM, halfWidthUsed }
+// " 3 more (schools, playgrounds) in grey aren't avoided - your settings."
+function ignoredNote(ignored){
+  if (!ignored || ignored.length === 0) return '';
+  var kinds = [];
+  ignored.forEach(function(h){
+    var k = (HAZARD_TYPE_LABEL[h.type] || h.type).toLowerCase();
+    if (kinds.indexOf(k) === -1) kinds.push(k);
+  });
+  return ' ' + ignored.length + ' more (' + kinds.join(', ') + '), shown in grey, ' + (ignored.length === 1 ? 'isn\u2019t' : 'aren\u2019t') +
+    ' avoided because of your Restricted areas settings.';
+}
+
+// r: { hazardData, hazards, ignored, avoidance, leftCheckedArea, deviationM, halfWidthUsed }
 export function renderHazardInfo(r){
   var hazards = r.hazards, avoidance = r.avoidance;
   var hazardInfo = document.getElementById('hazardInfo');
@@ -491,12 +504,14 @@ export function renderHazardInfo(r){
     hazardInfo.innerHTML = "Couldn't load restricted-area data from OpenStreetMap, so schools, hospitals, power infrastructure, airports and other restricted sites along this route aren't being checked right now. The map servers may be busy - trying again in a minute usually works. <button class=\"btn btn-ghost btn-inline\" data-action=\"calculate\">Try again</button>";
     hazardInfo.classList.add('warning-hint');
   } else if (hazards.length === 0){
-    hazardInfo.innerHTML = "No schools, hospitals, power infrastructure, airports or other restricted sites found near this route in OpenStreetMap.";
+    hazardInfo.innerHTML = (r.ignored && r.ignored.length)
+      ? "No restricted sites to avoid near this route." + ignoredNote(r.ignored)
+      : "No schools, hospitals, power infrastructure, airports or other restricted sites found near this route in OpenStreetMap.";
   } else {
     var detourText = avoidance.hazardsAvoided > 0
       ? "The route on the map now detours around " + avoidance.hazardsAvoided + " of them."
       : "The straight-line route already clears all of them.";
-    hazardInfo.innerHTML = "Found " + hazards.length + " restricted area" + (hazards.length===1?'':'s') + " (schools, hospitals, power infrastructure, airports and more) near this route, marked in red on the map, with a dashed ring for the keep-out distance the route stays outside. " + detourText;
+    hazardInfo.innerHTML = "Found " + hazards.length + " restricted area" + (hazards.length===1?'':'s') + " (schools, hospitals, power infrastructure, airports and more) near this route, marked in red on the map, with a dashed ring for the keep-out distance the route stays outside. " + detourText + ignoredNote(r.ignored);
 
     var trappedList = avoidance.trapped || [];
     if (trappedList.length > 0){
@@ -769,7 +784,11 @@ export async function calcHeight() {
     const legalCapM = altPermit ? MAX_FLIGHT_ALTITUDE_M : Math.min(MAX_FLIGHT_ALTITUDE_M, rules.profile.maxAglM);
     setMaxAglM(legalCapM);
     chooseUnits(rules);
-    const hazards = hazardData ? hazardData.hazards : [];
+    // Site types the person chose not to avoid are left out of the
+    // routing (a country's no-fly sites never are), but still drawn.
+    const siteSplit = splitHazards(hazardData ? hazardData.hazards : [], skippedSiteTypes());
+    const hazards = siteSplit.avoided;
+    const ignoredHazards = siteSplit.ignored;
     const hazardHalfWidthUsed = hazardData ? hazardData.hazardHalfWidthUsed : HAZARD_CORRIDOR_HALF_WIDTH_M;
 
     const hazardObstacles = hazards.map(function(h){
@@ -833,7 +852,7 @@ export async function calcHeight() {
       avoidance = computeAvoidanceRoute(startlat, startlng, destlat, destlng, combinedObstacles);
     }
     const routeDist = avoidance.distance;
-    renderHazardsAndRoute(hazards, buildingList, avoidance.path);
+    renderHazardsAndRoute(hazards, buildingList, avoidance.path, ignoredHazards);
 
     var terrainSamples = await firstTerrainPromise;
     if (avoidance.path !== hazardOnlyPath){
@@ -924,7 +943,7 @@ export async function calcHeight() {
       leftCheckedArea: routeLeftCheckedBuildingArea, deviationM: buildingRouteDeviationM, halfWidthUsed: buildingHalfWidthUsed
     });
     renderHazardInfo({
-      hazardData: hazardData, hazards: hazards, avoidance: avoidance,
+      hazardData: hazardData, hazards: hazards, ignored: ignoredHazards, avoidance: avoidance,
       leftCheckedArea: routeLeftCheckedArea, deviationM: routeDeviationM, halfWidthUsed: hazardHalfWidthUsed
     });
 

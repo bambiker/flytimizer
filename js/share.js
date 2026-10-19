@@ -8,6 +8,7 @@ import { DRONE_PRESETS, PRESET_FIELDS, applyDronePreset, updateDroneSummary } fr
 import { map } from './map-view.js';
 import { onMissionChange } from './mission.js';
 import { hideNotice, showNotice } from './notice.js';
+import { parseSkipSites, syncSiteCheckboxes } from './sites.js';
 import { UNITS_KEY } from './units.js';
 
 // ---------------------------------------------------------------
@@ -25,7 +26,7 @@ import { UNITS_KEY } from './units.js';
 // ---------------------------------------------------------------
 export var SETTINGS_KEY = 'flytimizerSettings';
 export var LAST_PLACE_KEY = 'flytimizerLastPlace';
-export var SETTING_FIELDS = ['mission', 'speedMode', 'dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
+export var SETTING_FIELDS = ['mission', 'speedMode', 'skipSites', 'dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
 
 export function storageGet(key){
   try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e){ return null; }
@@ -56,6 +57,10 @@ export function applySettings(st){
       if (v === 'ground' || v === 'air') document.getElementById('speedMode').value = v;
       return;
     }
+    if (id === 'skipSites'){
+      if (typeof v === 'string') document.getElementById('skipSites').value = parseSkipSites(v).join(',');
+      return;
+    }
     if (v === undefined || v === null || v === '' || isNaN(parseFloat(v))) return;
     // For a preset only the payload/drag fields are personal; the
     // speeds come from the preset itself.
@@ -63,6 +68,7 @@ export function applySettings(st){
     document.getElementById(id).value = v;
   });
   updateDroneSummary();
+  syncSiteCheckboxes();
 }
 
 export function saveSettings(){
@@ -81,6 +87,7 @@ export function routeUrl(){
   params.set('drone', st.drone);
   SETTING_FIELDS.forEach(function(id){
     var speedField = PRESET_FIELDS.indexOf(id) !== -1;
+    if (id === 'skipSites' && !st[id]) return;   // only in the link when something is switched off
     if (st.drone === 'custom' || !speedField) params.set(id, st[id]);
   });
   return location.origin + location.pathname + '?' + params.toString().replace(/%2C/g, ',');
