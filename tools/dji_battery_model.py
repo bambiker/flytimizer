@@ -137,6 +137,7 @@ MIN_STEPS_PER_BATTERY = 40    # 1% steps needed for a battery's own curve
 # Batteries age: a flight this many flights (of the same battery) away
 # from the one being predicted counts half as much. 0 = all count equally.
 HALF_LIFE_FLIGHTS = 30.0
+USE_CAPACITY = True   # scale the curve by the battery-reported capacity
 MIN_SOC_DROP_FOR_HEALTH = 20.0   # flights used to track a battery's energy
 SOC_GRID = np.arange(-30.0, 100.001, 0.05)   # for energy <-> % conversion
 
@@ -620,7 +621,7 @@ def fit_wh_curve(flights, battery=None, degree=1, target=None):
                                src=f"flat ({src}, too few 1% steps)", cap=np.nan)
 
     weights = flight_weights(pool, target)
-    use_cap = all(np.isfinite(f.full_cap) for f in pool)
+    use_cap = USE_CAPACITY and all(np.isfinite(f.full_cap) for f in pool)
     cap_of = (lambda f: f.full_cap) if use_cap else (lambda f: 1.0)
     parts = []
     for f in pool:
@@ -1496,6 +1497,8 @@ def parse_args():
     p.add_argument("--half-life", type=float, default=HALF_LIFE_FLIGHTS,
                    help="battery ageing: a flight this many of the same battery's "
                         "flights away counts half (default 30; 0 = all equal)")
+    p.add_argument("--no-capacity", action="store_true",
+                   help="ignore the battery-reported capacity (to compare)")
     p.add_argument("--long-min", type=float, default=25.0,
                    help="also score only the flights that used at least this "
                         "much battery (%%, default 25)")
@@ -1508,9 +1511,10 @@ def parse_args():
 
 
 def main():
-    global HALF_LIFE_FLIGHTS
+    global HALF_LIFE_FLIGHTS, USE_CAPACITY
     args = parse_args()
     HALF_LIFE_FLIGHTS = args.half_life
+    USE_CAPACITY = not args.no_capacity
     flights = load_all(args.path, read_battery_map(args.battery_map))
 
     model = fit_model(flights)
