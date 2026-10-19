@@ -31,7 +31,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 * 🏫 Detours around restricted and sensitive sites from OpenStreetMap: schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites; sites that aren't no-fly zones under the local rules (schools, hospitals, playgrounds…) can be switched off in **Restricted areas**
 * ⚖️ **Country rules** (height limit, keep-out distances, no-fly sites) for Israel and the United States, with Israel's as the default elsewhere
 * 👥 **People under the route**: roughly how many people live within 50 m either side, and how crowded the busiest stretch is, from the EU's GHS-POP population grid, and a **route over fewer people** when a modest detour saves enough of them (one click plans it)
-* 🔋 **Battery estimate** per leg, adjusted for payload, wind, climbs, cold and battery health, with a reserve warning
+* 🔋 **Battery estimate** per leg, adjusted for payload, wind, climbs, cold and battery health, with a reserve warning; the DJI Neo 2 preset is calibrated from real flight logs (power curve, climb efficiency, usable energy)
 * 📡 **Conditions here** button: for the start point (or your location), the predicted number of navigation satellites overhead (GPS, Galileo, GLONASS, BeiDou, from CelesTrak orbits), the Kp index (NOAA), the highest height today's wind allows for your drone, and the round-trip range; with your own location it also checks for **GPS spoofing** (a position in another country than your internet connection and time zone, e.g. the common fake fix at Beirut airport)
 * 🧭 **Round-trip range** drawn on the map: how far the drone can fly from the start and still get back with the reserve, in every direction, with today's wind
 * 🔄 Two plans: **fastest** and **least battery**, each choosing the outbound and return heights independently
@@ -39,6 +39,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 * 🌧️ Rain, visibility and temperature, with warnings
 * 🗺️ **DJI flight-plan export** (WPML `.kmz` for DJI Pilot 2)
 * 🔗 **Shareable links** that reproduce the route and drone settings; metric or imperial units
+* 📚 **Guides** on altitude, battery and round-trip range in wind, and on why the straight line isn't always the best route
 
 ---
 
@@ -133,30 +134,27 @@ This allows the two legs of the mission to be evaluated independently.
 
 ## Environmental Constraints
 
-The map incorporates selected features from OpenStreetMap.
+The map incorporates selected features from OpenStreetMap:
 
-Currently, FLYTIMIZER identifies locations such as:
+* **No-fly sites under the local rules** (for example airports, military airfields and other military sites, prisons; in Israel also heliports and embassies) are always avoided, each with its keep-out distance drawn on the map as a dashed ring, and the route warns when it comes close. Public shelters tagged as bunkers aren't counted as military sites.
+* **Sensitive sites** (schools, kindergartens, playgrounds, hospitals, nursing homes, universities, power facilities) aren't no-fly zones in themselves but are usually full of people, so they're avoided by default; each type can be switched off in **Restricted areas**, and switched-off sites are shown in grey.
+* **Buildings** set a minimum clearance above the route, or a detour around ones too tall to climb over. Missing building heights come from the EU's GHS-BUILT-H layer.
+* **People**: the EU's GHS-POP population grid gives a rough count of the people living under the route, and a route over fewer people is offered when a modest detour saves enough of them.
 
-* Schools
-* Kindergartens
-* Hospitals
-* Playgrounds
-
-These areas are displayed on the map and considered when generating the route.
-
-Mapped buildings are also used to maintain a minimum clearance above structures.
+A start or destination inside a keep-out zone doesn't send the route out to the zone's edge and back: the route just doesn't get closer to the site than it has to.
 
 > The current implementation is an optimization and planning tool, not a replacement for official aviation regulations, NOTAMs, airspace restrictions, or operator responsibility.
 
 ---
 
-## Weather Data
+## Data Sources
 
-Current wind and weather information is obtained from **Open-Meteo**.
-
-The application uses weather information at multiple altitudes to evaluate how the atmospheric conditions may affect the flight.
-
-Weather forecasts are inherently uncertain, so calculated results should be treated as estimates rather than guaranteed flight conditions.
+* **Wind and weather**: Open-Meteo hourly forecasts at several heights (10, 80, 120 m), with gusts, rain, visibility and temperature. Forecasts are inherently uncertain, so results are estimates, not guaranteed flight conditions.
+* **Elevation**: Copernicus GLO-90 via Open-Meteo.
+* **Map features**: OpenStreetMap (Overpass), with backup servers.
+* **Building heights and population**: the EU's Global Human Settlement Layer (GHS-BUILT-H 2018, GHS-POP 2025, CC BY 4.0), read straight from its public file in small pieces.
+* **Satellites**: CelesTrak orbit data, propagated in the browser to predict how many GPS, Galileo, GLONASS and BeiDou satellites are overhead. **Kp index**: NOAA SWPC.
+* **Spoofing check**: the country of your internet connection (geojs.io) and your device's time zone.
 
 ---
 
@@ -182,7 +180,7 @@ The current version does **not** attempt to model every factor affecting a real 
 
 Examples include:
 
-* Detailed battery modeling (the battery estimate is a simple physical model, roughly ±20%)
+* Detailed battery modeling (the battery estimate is a simple physical model, roughly ±20%, calibrated from flight logs only for the Neo 2 so far)
 * Detailed motor/propeller efficiency
 * Turbulence
 * Building-induced local wind fields
@@ -192,6 +190,8 @@ Examples include:
 * Real-time airspace restrictions
 * Complete regulatory compliance checking
 * Detailed energy consumption along every segment
+* Where people actually are at flight time (the population grid counts where people live)
+* The satellites your drone actually sees (the count is a prediction from their orbits)
 
 The current optimization should therefore be considered a **decision-support estimate**, rather than an autonomous flight command.
 
@@ -227,6 +227,8 @@ Actual drone performance
 ```
 
 This could allow FLYTIMIZER to learn aircraft-specific performance and local wind biases over time.
+
+A first step is in [`tools/dji_battery_model.py`](tools/README.md): an offline script that fits a battery model to DJI flight-record CSVs, validates it flight by flight, and estimates wind effects. Its results already calibrate the site's Neo 2 preset.
 
 ---
 
@@ -266,7 +268,7 @@ Potential areas for contribution include:
 
 ### Code layout
 
-The site is plain HTML, CSS and JavaScript with no build step. `index.html` loads a single ES module, `js/app.js`, which imports the rest of `js/` (one file per area: wind and routing math, OpenStreetMap lookups, terrain, battery, plans, the map, sharing, the DJI export) and wires up the page.
+The site is plain HTML, CSS and JavaScript with no build step. `index.html` loads a single ES module, `js/app.js`, which imports the rest of `js/` (one file per area: wind and routing math, OpenStreetMap lookups, terrain, battery, range, plans, the map, sharing, the DJI export, the GHSL readers for building heights and population, the route over fewer people, satellites, the spoofing check and the "Conditions here" card) and wires up the page. Offline scripts that aren't part of the site live in `tools/`.
 
 ### Running the tests
 
@@ -280,7 +282,7 @@ npm test
 
 * `npm run lint` — ESLint (also part of `npm test`).
 * `tests/unit/` — the calculation and formatting functions, run directly in Node.
-* `tests/e2e/` — the real page in Chromium, with the weather, elevation and OpenStreetMap services replaced by fixed test data, so the tests run offline and give the same result every time.
+* `tests/e2e/` — the real page in Chromium, with every outside service (weather, elevation, OpenStreetMap, GHSL, CelesTrak, NOAA, IP country) replaced by fixed test data, so the tests run offline and give the same result every time.
 
 ---
 
