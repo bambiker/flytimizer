@@ -296,6 +296,24 @@ test('a shared link carries the Restricted areas settings', async ({ page }) => 
   await expect(page.locator('.leaflet-overlay-pane path[stroke="#8d9ab8"]')).toHaveCount(1);
 });
 
+test('the result says roughly how many people live under the route', async ({ page }) => {
+  // 50 people per 0.005-degree cell (~0.26 km2) is ~190 per km2; the route is ~1.5 km.
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [], population: 50 });
+  await waitForResult(page);
+  const info = page.locator('#peopleInfo');
+  await expect(info).toContainText(/About \d+ people live within 50 m either side of this route; the most crowded stretch is sparsely populated/);
+  const n = Number((await info.textContent()).match(/About (\d+) people/)[1]);
+  expect(n).toBeGreaterThan(22);
+  expect(n).toBeLessThan(36);
+  await expect(info).toContainText('EU GHS-POP 2025');
+});
+
+test('without the population file the people line is left out', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [] });
+  await waitForResult(page);
+  await expect(page.locator('#peopleInfo')).toBeHidden();
+});
+
 test('public shelters tagged as military bunkers are not treated as military sites', async ({ page }) => {
   const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [
