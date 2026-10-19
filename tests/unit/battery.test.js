@@ -60,6 +60,26 @@ test('a preset with a measured power curve (Neo 2) uses it; other drones keep th
   assert.equal(model().curve, site.DEFAULT_POWER_CURVE);   // custom drone
 });
 
+test('gauge %: with a socSlope the last percents hold less energy; without one, gauge % = energy %', () => {
+  const flat = model();
+  assert.equal(flat.socSlope, 0);
+  assert.equal(site.gaugeUsedPct(flat, 37), 37);
+  assert.equal(site.energyPctAbove(flat, 20), 80);
+
+  const neo = model({ droneModel: 'neo2', batt: '10', ftime: '11.4' });
+  assert.equal(neo.socSlope, 0.002);
+  near(site.gaugeUsedPct(neo, 0), 0, 1e-9);
+  near(site.gaugeUsedPct(neo, 100), 100, 1e-9);           // the whole battery is still 100%
+  assert.ok(site.gaugeUsedPct(neo, 40) < 40);             // from full, the first percents hold more
+  assert.ok(site.gaugeUsedPct(neo, 20, 30) > 20);         // near empty, they hold less
+  near(site.energyPctAbove(neo, 20), 81.6, 1e-9);          // more energy above the 20% reserve
+  // Round trip: the gauge reading after the energy used matches.
+  const used = site.gaugeUsedPct(neo, 50);
+  near(site.energyPctAbove(neo, 100 - used), 50, 1e-9);
+  // Monotonic, so comparing plans by energy picks the same plan.
+  for (let e = 1; e <= 100; e++) assert.ok(site.gaugeUsedPct(neo, e) > site.gaugeUsedPct(neo, e - 1));
+});
+
 test('flying the rated test (6 m/s, still air, no payload) for the rated time uses the whole battery', () => {
   const m = model();
   const wh = site.legEnergyWh(m, 1, site.SPEC_TEST_SPEED_MS, 19 * 60, 0, 0, 5, 3);

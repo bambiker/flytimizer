@@ -34,11 +34,12 @@ What it does
        naive     - average %/minute of the training flights
        site old  - the Flytimizer site's battery estimate (js/battery.js)
                    with the Neo 2 spec sheet: 11.5 Wh, 19 min
-       site 24   - the same with the preset from PR #24: 10 Wh, 11.5 min,
-                   default speed curve
-       site new  - the site's current Neo 2 preset: 10 Wh, 11.4 min, plus
-                   the speed curve and climb efficiency measured from
-                   these logs
+       site 27   - the Neo 2 preset from PR #27: 10 Wh, 11.4 min, and the
+                   speed curve and climb efficiency measured from these
+                   logs; every gauge % holds the same energy
+       site new  - the site's current Neo 2 preset: the same, plus the
+                   gauge's last percents holding less energy (socSlope),
+                   from the battery % the flight started at
        no wind   - this model, wind assumed zero
        same day  - this model, wind estimated from the OTHER flights of
                    the same day (what you would know before flying)
@@ -125,13 +126,29 @@ FEATURES = [
 SPEC = SimpleNamespace(wh=11.5, minutes=19.0, mass=0.151, vmax=12.0,
                        test_speed=6.0, climb_eff=0.6, descent_factor=0.9,
                        curve_a=-0.2, curve_b=0.5)
-# The Neo 2 preset from PR #24: energy and flight time from these logs.
-SPEC_24 = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.5})
-# The current Neo 2 preset: also its own speed curve and climb efficiency.
-SPEC_NEW = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.4,
-                              "curve_a": 0.1, "curve_b": 0.47, "climb_eff": 0.19})
+SPEC.soc_slope = 0.0
+# The Neo 2 preset from PR #27: its own speed curve and climb efficiency.
+SPEC_27 = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.4,
+                             "curve_a": 0.1, "curve_b": 0.47, "climb_eff": 0.19})
+# The current Neo 2 preset: also the gauge's last percents holding less.
+SPEC_NEW = SimpleNamespace(**{**vars(SPEC_27), "soc_slope": 0.002})
 
-METHODS = ["naive", "site old", "site 24", "site new", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
+
+def site_gauge_used(spec, energy_pct, start_pct):
+    """js/battery.js gaugeUsedPct: gauge % used from start_pct when a
+    flight uses energy_pct % of the battery's energy."""
+    k = spec.soc_slope
+    if not k:
+        return energy_pct
+    below = lambda p: p + k * (p * p / 2 - 50 * p)  # noqa: E731
+    target = below(start_pct) - energy_pct
+    if target <= 0:
+        return energy_pct + start_pct - below(start_pct)
+    a, b = k / 2, 1 - 50 * k
+    left = (-b + np.sqrt(b * b + 4 * a * target)) / (2 * a)
+    return start_pct - left
+
+METHODS = ["naive", "site old", "site 27", "site new", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
 
 MIN_STEPS_PER_BATTERY = 40    # 1% steps needed for a battery's own curve
 # Batteries age: a flight this many flights (of the same battery) away
@@ -781,7 +798,7 @@ def leave_one_out(flights, group, degree, long_min):
 
         power = {
             "site old": spec_power(f, SPEC),
-            "site 24": spec_power(f, SPEC_24),
+            "site 27": spec_power(f, SPEC_27),
             "site new": spec_power(f, SPEC_NEW),
             "no wind": predict_power(model, f, (0.0, 0.0)),
             "same day": predict_power(model, f, same_day or (0.0, 0.0)),
@@ -790,8 +807,10 @@ def leave_one_out(flights, group, degree, long_min):
         drop = {
             "naive": rate * f.duration_s,
             "site old": np.sum(power["site old"] * dur) / 3600.0 / SPEC.wh * 100.0,
-            "site 24": np.sum(power["site 24"] * dur) / 3600.0 / SPEC_24.wh * 100.0,
-            "site new": np.sum(power["site new"] * dur) / 3600.0 / SPEC_NEW.wh * 100.0,
+            "site 27": np.sum(power["site 27"] * dur) / 3600.0 / SPEC_27.wh * 100.0,
+            "site new": site_gauge_used(
+                SPEC_NEW, np.sum(power["site new"] * dur) / 3600.0 / SPEC_NEW.wh * 100.0,
+                f.soc_start),
             "E/% flat": f.energy_wh / whp,
             "E/% curve": f.soc_start - soc_after(curve, f.soc_start, f.energy_wh),
         }
@@ -1424,7 +1443,7 @@ def save_plots(out_dir, loo_results, route_curve, reserve, flights, curve):
     if loo_results:
         fig, ax = plt.subplots(figsize=(6.5, 6))
         actual = [r.flight.soc_drop for r in loo_results]
-        for m in ("naive", "site old", "site 24", "site new", "no wind"):
+        for m in ("naive", "site old", "site 27", "site new", "no wind"):
             ax.scatter(actual, [r.drop[m] for r in loo_results], label=m, s=22)
         top = max(actual + [r.drop[m] for r in loo_results for m in METHODS]) * 1.05
         ax.plot([0, top], [0, top], color="black", linewidth=0.8)
