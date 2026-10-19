@@ -97,7 +97,7 @@ FLYTIMIZER currently supports configurable parameters such as:
 | Parameter           | Description                                     |
 | ------------------- | ----------------------------------------------- |
 | Mission speed       | Normal-mode / waypoint-mission speed, used by the plans and the flight-plan downloads |
-| Top speed (Sport)   | Sport-mode top speed: used by the battery model, and by "least battery" for a leg into a headwind flown by hand |
+| Top speed (Sport)   | Sport-mode top speed: used by the battery model, by "least battery" for a leg into a headwind flown by hand, and by any plan for a leg the wind is too strong to fly at the mission speed |
 | Ascent speed        | Vertical climb speed                            |
 | Descent speed       | Vertical descent speed                          |
 | Wind resistance     | Maximum wind condition considered for the drone |

@@ -114,6 +114,19 @@ test('least battery may fly into the wind in Sport mode; the download stays at t
   await expect(page.locator('#sportNote')).toHaveCount(0);
 });
 
+test('when the wind is too strong for the mission speed, the fastest plan flies that leg in Sport mode', async ({ page }) => {
+  // At this hour the fake forecast's wind is more than the Neo 2's 8 m/s mission speed can handle, but not its 12 m/s Sport speed.
+  const morning = new Date(); morning.setUTCHours(8, 32, 0, 0);
+  await page.clock.setFixedTime(morning);
+  await openSite(page, HAIFA, null, '');
+  await page.locator('#calcBtn').click();
+  await waitForResult(page);
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
+  await expect(page.locator('#flyWarning')).toBeHidden();
+  await expect(page.locator('#sportNote')).toContainText('too strong for the mission speed');
+});
+
 test('wind stronger than the drone can handle gives a clear no-fly warning', async ({ page }) => {
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { windMul: 6 });
   await waitForResult(page);

@@ -206,3 +206,28 @@ test('into a strong headwind, a leg at the top speed uses less battery than at t
     dwellS: 0, payloadOut: 1, payloadBack: 1, speedupback: 5, speeddownback: 5 }).plans;
   assert.ok(calm.eco.out.speedFactor <= 1);
 });
+
+test('a leg the mission speed cannot fly falls back to the top speed (Sport mode), in both plans', () => {
+  const heightsL = [30, 60];
+  const samples = [{ s: 0, g: 0, lat: 0, lng: 0 }, { s: 1000, g: 0, lat: 0, lng: 0.009 }];
+  const back = site.reverseSamples(samples);
+  // A 3 m/s mission speed into a ~7 m/s headwind makes no headway.
+  const inp = { speedup: 5, speeddown: 5, speedhorizontal: 3, speedupback: 5, speeddownback: 5, speedhorizontalback: 3,
+    topSpeed: 20, topSpeedBack: 20, drag: '1', windResistance: 20, speedMode: 'air', dwellS: 0 };
+  const route = { samples, back, reqOut: [-Infinity, -Infinity], reqBack: [-Infinity, -Infinity], distance: 1000, buildingOk: [true, true],
+    pOut: site.legProfiles(heightsL, samples, [-Infinity, -Infinity], 3, 5, 5), pBack: site.legProfiles(heightsL, back, [-Infinity, -Infinity], 3, 5, 5) };
+  const model = { wh: 77, usableFraction: 1, massKg: 0.9, vmax: 20, hoverW: 100 };
+  const ctx = { heights: heightsL, wx: site.forecastAt(hourly({ wind_direction_10m: [90], wind_direction_80m: [90], wind_direction_120m: [90] }), 0),
+    dronedegrees: 270, inp, legalOk: [true, true], battModel: model, temperatureC: 20, payloadOut: 1, payloadBack: 1, timingOptsOut: {}, timingOptsBack: {} };
+  const legs = site.legsAtSpeed(ctx, route, 1);
+  const f = site.topSpeedFactor(inp);
+  const args = { heights: heightsL, legs, w: legs.w, legalOk: [true, true], buildingOk: [true, true], terrainAvailable: false,
+    battModel: model, temperatureC: 20, mission: 'delivery', dwellS: 0, payloadOut: 1, payloadBack: 1, speedupback: 5, speeddownback: 5 };
+  assert.equal(site.buildPlans(args).plans.fast.out, null);
+  const plans = site.buildPlans(Object.assign({}, args, { sportLegs: site.legsAtSpeed(ctx, route, f, true),
+    speedLegs: site.ecoSpeedFactors(inp).map(x => site.legsAtSpeed(ctx, route, x)) })).plans;
+  assert.equal(plans.fast.out.speed, 20);
+  assert.equal(plans.fast.out.sportNeeded, true);
+  assert.equal(plans.fast.back.speedFactor, 1);
+  assert.ok(plans.eco.out && plans.eco.out.speedFactor > 1);
+});

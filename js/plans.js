@@ -182,6 +182,7 @@ export function renderPlan(){
   // faster (Sport mode) is saved at the mission speed.
   var speedOut = out && out.speed ? Math.min(out.speed, c.speedOut) : c.speedOut, speedBack = back && back.speed ? Math.min(back.speed, c.speedBack) : c.speedBack;
   var byHand = [out, back].some(function(leg){ return leg && leg.speedFactor > 1; });
+  var sportNeeded = [out, back].some(function(leg){ return leg && leg.sportNeeded; });
   if (out && r.terrainAvailable){
     if (c.mission === 'photo'){
       // One mission for the whole round trip, at the outbound leg's speed.
@@ -204,7 +205,10 @@ export function renderPlan(){
   if (wpmlBox){
     wpmlBox.innerHTML = missions.map(function(m, k){
       return '<button class="btn btn-ghost" data-action="download" data-arg="' + k + '">' + m.label + '</button>';
-    }).join('') + (missions.length && byHand
+    }).join('') + (missions.length && sportNeeded
+      ? '<span class="wpml-note" id="sportNote">This wind is too strong for the mission speed (' + fmtSpeed(c.speedOut) +
+        '): fly the Sport-mode leg by hand. A mission can\'t fly that fast, so its download is only a guide to the heights. Sport mode turns obstacle sensing off.</span>'
+      : missions.length && byHand
       ? '<span class="wpml-note" id="sportNote">This plan flies a leg into the wind in Sport mode, faster than a mission can (' + fmtSpeed(c.speedOut) +
         '). The download flies it at the mission speed, which takes a little more battery — fly that leg by hand for the figures above. Sport mode turns obstacle sensing off.</span>'
       : '');

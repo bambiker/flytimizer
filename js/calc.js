@@ -647,9 +647,16 @@ export var ECO_SPORT_MIN_SAVING_PCT = 1;
 // ECO_SPEED_FACTORS plus the steps from the mission speed up to the top
 // speed, when that's faster.
 export function ecoSpeedFactors(inp){
-  var ratio = Math.min(inp.topSpeed / inp.speedhorizontal, inp.topSpeedBack / inp.speedhorizontalback);
-  if (!(ratio > 1.01)) return ECO_SPEED_FACTORS.slice();
+  var ratio = topSpeedFactor(inp);
+  if (!ratio) return ECO_SPEED_FACTORS.slice();
   return ECO_SPEED_FACTORS.concat(ECO_FASTER_STEPS.map(function(k){ return 1 + k * (ratio - 1); }));
+}
+
+// The top speed as a multiple of the mission speed, or null if it
+// isn't faster.
+export function topSpeedFactor(inp){
+  var ratio = Math.min(inp.topSpeed / inp.speedhorizontal, inp.topSpeedBack / inp.speedhorizontalback);
+  return ratio > 1.01 ? ratio : null;
 }
 
 // The legs (as buildPlans takes them) for a route flown at `factor` x
@@ -657,7 +664,9 @@ export function ecoSpeedFactors(inp){
 // battModel, temperatureC, payloadOut, payloadBack, timingOptsOut,
 // timingOptsBack }. route: { samples, back, reqOut, reqBack, pOut,
 // pBack, buildingOk, distance }. Profiles keep their full-speed shape.
-export function legsAtSpeed(ctx, route, factor){
+// anyWind: allow a faster-than-mission leg whatever the wind (the
+// fallback for a leg the mission speed can't fly).
+export function legsAtSpeed(ctx, route, factor, anyWind){
   var inp = ctx.inp, h = ctx.heights;
   var hsOut = inp.speedhorizontal * factor, hsBack = inp.speedhorizontalback * factor;
   var w = windByHeight(h, ctx.wx, ctx.dronedegrees, Object.assign({}, inp, { speedhorizontal: hsOut, speedhorizontalback: hsBack }));
@@ -666,7 +675,7 @@ export function legsAtSpeed(ctx, route, factor){
   // Faster than the mission speed (Sport mode, by hand) only into the
   // wind: where, at the mission speed, the wind costs the leg at least
   // ECO_SPORT_MIN_HEADWIND_MS of ground speed.
-  var base = factor > 1 ? windByHeight(h, ctx.wx, ctx.dronedegrees, inp) : null;
+  var base = factor > 1 && !anyWind ? windByHeight(h, ctx.wx, ctx.dronedegrees, inp) : null;
   function intoWind(air, gs, i){ return !base || air[i] - gs[i] >= ECO_SPORT_MIN_HEADWIND_MS; }
   function flyable(ok, cross, head, air, gs){
     return h.map(function(x, i){ return ctx.legalOk[i] && route.buildingOk[i] && w.windResOk[i] && cross[i] && head[i] && ok[i] && intoWind(air, gs, i); });
@@ -725,6 +734,7 @@ export function buildPlans(c){
     return list.filter(function(cand){ return cand.ok && isFinite(cand.time); }).map(function(cand){
       cand.speed = L.hs;
       cand.speedFactor = L.speedFactor || 1;
+      if (L.sportNeeded) cand.sportNeeded = true;
       return cand;
     });
   }
@@ -738,6 +748,13 @@ export function buildPlans(c){
     return best;
   }
   var candOut = legCandidates(c.legs.out), candBack = legCandidates(c.legs.back);
+  // A leg the mission speed can't fly (the wind is too strong for it)
+  // may still be flown by hand at the top speed (c.sportLegs).
+  function orSport(cands, L){
+    return cands.length || !L ? cands : legCandidates(Object.assign({}, L, { sportNeeded: true }));
+  }
+  candOut = orSport(candOut, c.sportLegs && c.sportLegs.out);
+  candBack = orSport(candBack, c.sportLegs && c.sportLegs.back);
   // What a pair of legs adds at the destination: the time spent
   // there (hovering, at the outbound weight), and for photo missions
   // the climb or descent between the two legs' heights.
@@ -793,7 +810,7 @@ export function buildPlans(c){
     if ((plans.eco.out && plans.eco.out.speedFactor > 1) || (plans.eco.back && plans.eco.back.speedFactor > 1)){
       var notSport = function(cand){ return cand.speedFactor <= 1; };
       var calm = pickPair('batt', 'time', ecoOut.filter(notSport), ecoBack.filter(notSport));
-      if (!(plans.eco.totalBatt <= calm.totalBatt - ECO_SPORT_MIN_SAVING_PCT)) plans.eco = calm;
+      if (isFinite(calm.totalBatt) && !(plans.eco.totalBatt <= calm.totalBatt - ECO_SPORT_MIN_SAVING_PCT)) plans.eco = calm;
     }
   }
   return { plans: plans, evalLeg: evalLeg, pairExtras: pairExtras };
@@ -849,6 +866,7 @@ export async function planAlongPath(planCtx, path){
   var planner = buildPlans({
     heights: c.heights, legs: { out: full.out, back: full.back },
     speedLegs: c.battModel ? ecoSpeedFactors(inp).map(function(f){ return legsAtSpeed(c, route, f); }) : [],
+    sportLegs: topSpeedFactor(inp) ? legsAtSpeed(c, route, topSpeedFactor(inp), true) : null,
     w: full.w, legalOk: c.legalOk, buildingOk: route.buildingOk, terrainAvailable: terrainAvailable,
     battModel: c.battModel, temperatureC: c.temperatureC, mission: c.mission, dwellS: inp.dwellS,
     payloadOut: c.payloadOut, payloadBack: c.payloadBack, speedupback: inp.speedupback, speeddownback: inp.speeddownback
@@ -1130,8 +1148,9 @@ export async function calcHeight() {
     const mainRoute = { samples: terrainSamples, back: terrainBack, reqOut: reqOut, reqBack: reqBack, pOut: pOut, pBack: pBack,
                         buildingOk: buildingOk, distance: routeDist };
     const speedLegs = battModel ? ecoSpeedFactors(inp).map(function(f){ return legsAtSpeed(planCtx, mainRoute, f); }) : [];
+    const sportF = topSpeedFactor(inp);
     const planner = buildPlans({
-      heights: heights, legs: legs, speedLegs: speedLegs, w: w, legalOk: legalOk, buildingOk: buildingOk, terrainAvailable: terrainAvailable,
+      heights: heights, legs: legs, speedLegs: speedLegs, sportLegs: sportF ? legsAtSpeed(planCtx, mainRoute, sportF, true) : null, w: w, legalOk: legalOk, buildingOk: buildingOk, terrainAvailable: terrainAvailable,
       battModel: battModel, temperatureC: temperatureC, mission: mission, dwellS: inp.dwellS,
       payloadOut: payloadOut, payloadBack: payloadBack, speedupback: speedupback, speeddownback: speeddownback
     });
