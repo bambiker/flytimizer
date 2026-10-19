@@ -12,9 +12,8 @@ import { renderHazardsAndRoute } from './map-view.js';
 import { currentMission } from './mission.js';
 import { hideNotice, showNotice } from './notice.js';
 import { BUILDING_AVOID_MAX_COUNT, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_HEIGHT_SAFETY_MARGIN_M, BUILDING_LATERAL_SAFETY_MARGIN_M, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_TYPE_LABEL, MAX_FLIGHT_ALTITUDE_M, getBuildingsNearPath, getHazardsNearRoute } from './osm.js';
-import { pathLengthM, preferredRouteFor } from './lowpop.js';
 import { renderPeopleInfo } from './people.js';
-import { renderPlan, setCurrentCalc } from './plans.js';
+import { currentCalc, renderPlan, renderPlanTabs, setCurrentCalc } from './plans.js';
 import { rangeExtremes, renderRange } from './range.js';
 import { Progress, estimateLookupSeconds } from './progress.js';
 import { buildingsCrossingPath, computeAvoidanceRoute, maxLateralDeviationM, maxPathDeviationM, minDistanceFromPath } from './routing.js';
@@ -626,6 +625,41 @@ export function renderConditions(wx){
 
 // The two plans - fastest and least battery - built from every
 // flyable (height x profile style) candidate for each leg.
+// Speeds "Least battery" also tries, as a share of the set speed: flying
+// slower can use less battery per kilometre (above all with a tailwind,
+// or holding airspeed), at the cost of time. Into a headwind the drone
+// is already at its set (top) speed.
+export var ECO_SPEED_FACTORS = [0.5, 0.6, 0.7, 0.8, 0.9];
+
+// The legs (as buildPlans takes them) for a route flown at `factor` x
+// the set speed. ctx: { heights, wx, dronedegrees, inp, legalOk,
+// battModel, temperatureC, payloadOut, payloadBack, timingOptsOut,
+// timingOptsBack }. route: { samples, back, reqOut, reqBack, pOut,
+// pBack, buildingOk, distance }. Profiles keep their full-speed shape.
+export function legsAtSpeed(ctx, route, factor){
+  var inp = ctx.inp, h = ctx.heights;
+  var hsOut = inp.speedhorizontal * factor, hsBack = inp.speedhorizontalback * factor;
+  var w = windByHeight(h, ctx.wx, ctx.dronedegrees, Object.assign({}, inp, { speedhorizontal: hsOut, speedhorizontalback: hsBack }));
+  var tOut = legTimings(h, route.pOut.prof, route.samples, w.gsOut, inp.speedup, inp.speeddown, ctx.timingOptsOut, route.distance);
+  var tBack = legTimings(h, route.pBack.prof, route.back, w.gsBack, inp.speedupback, inp.speeddownback, ctx.timingOptsBack, route.distance);
+  function flyable(ok, cross, head){
+    return h.map(function(x, i){ return ctx.legalOk[i] && route.buildingOk[i] && w.windResOk[i] && cross[i] && head[i] && ok[i]; });
+  }
+  return {
+    w: w,
+    out: { prof: route.pOut.prof, flyable: flyable(route.pOut.ok, w.crosswindOkOut, w.headwindOkOut), timeV: tOut.timeV, timeH: tOut.timeH,
+           batt: legBattery(h, ctx.battModel, ctx.payloadOut, w.airOut, tOut.timing, inp.speedup, ctx.temperatureC),
+           gs: w.gsOut, air: w.airOut, cross: w.crosswindOkOut, head: w.headwindOkOut, payload: ctx.payloadOut, hs: hsOut, speedFactor: factor,
+           up: inp.speedup, down: inp.speeddown, samples: route.samples, req: route.reqOut,
+           climbRun: inp.speedhorizontal / inp.speedup, descRun: inp.speedhorizontal / inp.speeddown, timingOpts: ctx.timingOptsOut },
+    back: { prof: route.pBack.prof, flyable: flyable(route.pBack.ok, w.crosswindOkBack, w.headwindOkBack), timeV: tBack.timeV, timeH: tBack.timeH,
+            batt: legBattery(h, ctx.battModel, ctx.payloadBack, w.airBack, tBack.timing, inp.speedupback, ctx.temperatureC),
+            gs: w.gsBack, air: w.airBack, cross: w.crosswindOkBack, head: w.headwindOkBack, payload: ctx.payloadBack, hs: hsBack, speedFactor: factor,
+            up: inp.speedupback, down: inp.speeddownback, samples: route.back, req: route.reqBack,
+            climbRun: inp.speedhorizontalback / inp.speedupback, descRun: inp.speedhorizontalback / inp.speeddownback, timingOpts: ctx.timingOptsBack }
+  };
+}
+
 // Returns the plans plus evalLeg/pairExtras, which the savings line
 // reuses for the baseline.
 // c: { heights, legs: {out, back}, w, legalOk, buildingOk, terrainAvailable,
@@ -662,7 +696,11 @@ export function buildPlans(c){
       list.push(evalLeg(L, j, 'follow'));
       if (c.terrainAvailable) list.push(evalLeg(L, j, 'level'));
     }
-    return list.filter(function(cand){ return cand.ok && isFinite(cand.time); });
+    return list.filter(function(cand){ return cand.ok && isFinite(cand.time); }).map(function(cand){
+      cand.speed = L.hs;
+      cand.speedFactor = L.speedFactor || 1;
+      return cand;
+    });
   }
   function pickBest(list, primary, secondary){
     var best = null;
@@ -697,11 +735,13 @@ export function buildPlans(c){
   }
   // Both legs are chosen together, since the turnaround depends on
   // the pair.
-  function pickPair(primary, secondary){
+  function pickPair(primary, secondary, outs, backs){
+    outs = outs || candOut;
+    backs = backs || candBack;
     var best = null;
     var tol = primary === 'batt' ? 0.05 : 0.5;
-    candOut.forEach(function(co){
-      candBack.forEach(function(cb){
+    outs.forEach(function(co){
+      backs.forEach(function(cb){
         var x = pairExtras(co, cb);
         var tot = { time: co.time + cb.time + x.time, batt: co.batt + cb.batt + x.batt };
         if (!isFinite(tot[primary])) return;
@@ -711,11 +751,18 @@ export function buildPlans(c){
       });
     });
     // One leg unflyable: still show the other one.
-    return best || { out: pickBest(candOut, primary, secondary), back: pickBest(candBack, primary, secondary), totalTime: NaN, totalBatt: NaN };
+    return best || { out: pickBest(outs, primary, secondary), back: pickBest(backs, primary, secondary), totalTime: NaN, totalBatt: NaN };
   }
   var plans = { fast: pickPair('time', 'batt'), eco: null };
   if (battModel){
-    plans.eco = pickPair('batt', 'time');
+    // Least battery may also fly a leg slower than the set speed
+    // (c.speedLegs: the same legs at lower speeds), each leg on its own.
+    var ecoOut = candOut, ecoBack = candBack;
+    (c.speedLegs || []).forEach(function(v){
+      ecoOut = ecoOut.concat(legCandidates(v.out));
+      ecoBack = ecoBack.concat(legCandidates(v.back));
+    });
+    plans.eco = pickPair('batt', 'time', ecoOut, ecoBack);
   }
   return { plans: plans, evalLeg: evalLeg, pairExtras: pairExtras };
 }
@@ -735,6 +782,46 @@ export function renderPlanSavings(planner, legs, baseline, battOut, battBack){
   var battSaveFast = (battOut[baseIdx] + battBack[baseIdx] + baseX.batt) - plans.fast.totalBatt;
   document.getElementById('battSaving').textContent = (isFinite(battSaveFast) && battSaveFast >= 0.5) ? ' and about ' + battSaveFast.toFixed(0) + '% of a battery' : '';
   document.getElementById('savingsText').style.display = (travelBase - fastTotal) > 0.5 ? '' : 'none';
+}
+
+// A whole plan along a given path, e.g. the route over fewer people:
+// terrain and buildings looked up along it, then the same heights,
+// battery and speed choices as the main route (planCtx from
+// calcHeight). Buildings on it are climbed over, not detoured. Returns
+// { plans, route: { terrainSamples, terrainBack, terrainAvailable, path,
+// distance } }.
+export async function planAlongPath(planCtx, path){
+  var c = planCtx, inp = c.inp;
+  var distance = 0;
+  for (var k = 1; k < path.length; k++) distance += getDistanceFromLatLon(path[k - 1].lat, path[k - 1].lng, path[k].lat, path[k].lng);
+  var results = await Promise.all([
+    getTerrainProfile(path).catch(function(err){ console.warn('Terrain lookup failed:', err); return null; }),
+    getBuildingsNearPath(path, c.straightDistM).catch(function(err){ console.warn('Building lookup failed:', err); return null; })
+  ]);
+  var samples = results[0];
+  var terrainAvailable = samples !== null;
+  if (!terrainAvailable) samples = flatTerrainProfile(path);
+  var list = results[1] ? results[1].buildings.list : [];
+  var sorted = sortRouteBuildings(list, path, c.effectiveCeilingM);
+  var under = buildingsCrossingPath(list, path, BUILDING_LATERAL_SAFETY_MARGIN_M - 1);
+  var reqOut = buildingAltitudeRequirements(samples, under);
+  var back = reverseSamples(samples), reqBack = reqOut.slice().reverse();
+  var minSafe = sorted.maxClimbedHeight > 0 ? sorted.maxClimbedHeight + BUILDING_HEIGHT_SAFETY_MARGIN_M : 30;
+  var route = {
+    samples: samples, back: back, reqOut: reqOut, reqBack: reqBack, distance: distance,
+    pOut: legProfiles(c.heights, samples, reqOut, inp.speedhorizontal, inp.speedup, inp.speeddown),
+    pBack: legProfiles(c.heights, back, reqBack, inp.speedhorizontalback, inp.speedupback, inp.speeddownback),
+    buildingOk: c.heights.map(function(h){ return h >= minSafe; })
+  };
+  var full = legsAtSpeed(c, route, 1);
+  var planner = buildPlans({
+    heights: c.heights, legs: { out: full.out, back: full.back },
+    speedLegs: c.battModel ? ECO_SPEED_FACTORS.map(function(f){ return legsAtSpeed(c, route, f); }) : [],
+    w: full.w, legalOk: c.legalOk, buildingOk: route.buildingOk, terrainAvailable: terrainAvailable,
+    battModel: c.battModel, temperatureC: c.temperatureC, mission: c.mission, dwellS: inp.dwellS,
+    payloadOut: c.payloadOut, payloadBack: c.payloadBack, speedupback: inp.speedupback, speeddownback: inp.speeddownback
+  });
+  return { plans: planner.plans, route: { terrainSamples: samples, terrainBack: back, terrainAvailable: terrainAvailable, path: path, distance: distance } };
 }
 
 export async function calcHeight() {
@@ -799,13 +886,6 @@ export async function calcHeight() {
     // First pass: route around hazards only. This is also the final
     // route if no buildings end up needing a detour of their own.
     var avoidance = computeAvoidanceRoute(startlat, startlng, destlat, destlng, hazardObstacles);
-    // The person chose the suggested route over fewer people (people.js)
-    // for this start and destination: plan along it instead.
-    const preferredPath = preferredRouteFor({ lat: startlat, lng: startlng }, { lat: destlat, lng: destlng });
-    if (preferredPath){
-      avoidance = { path: preferredPath, distance: pathLengthM(preferredPath), hazardsAvoided: avoidance.hazardsAvoided,
-                    buildingsAvoided: 0, trapped: avoidance.trapped };
-    }
 
     const straightDistM = getDistanceFromLatLon(startlat, startlng, destlat, destlng);
     Progress.stage('buildings');
@@ -854,7 +934,7 @@ export async function calcHeight() {
     // route from above is already final, and re-running it would
     // just recompute the same path.
     const hazardOnlyPath = avoidance.path;
-    if (!preferredPath && sortedBuildings.toAvoid.length > 0){
+    if (sortedBuildings.toAvoid.length > 0){
       const combinedObstacles = hazardObstacles.concat(sortedBuildings.toAvoid.map(function(b){
         return { lat: b.lat, lng: b.lng, clearance: b.radius + BUILDING_LATERAL_SAFETY_MARGIN_M, kind: 'building', type: 'building', name: null, height: b.height };
       }));
@@ -863,9 +943,21 @@ export async function calcHeight() {
     const routeDist = avoidance.distance;
     renderHazardsAndRoute(hazards, buildingList, avoidance.path, ignoredHazards);
     // Not awaited: it fills in its own line when the population tile arrives.
+    // When it finds a route over fewer people, that route gets a whole
+    // plan of its own - the "Fewer people" tab - once this one is done.
+    let resolveCalcDone;
+    const calcDone = new Promise(function(resolve){ resolveCalcDone = resolve; });
     renderPeopleInfo(avoidance.path, {
       from: { lat: startlat, lng: startlng }, to: { lat: destlat, lng: destlng },
-      distance: routeDist, obstacles: hazardObstacles, chosen: !!preferredPath
+      distance: routeDist, obstacles: hazardObstacles,
+      onAlternative: async function(alt){
+        const done = await calcDone;
+        const res = await planAlongPath(done.planCtx, alt.path);
+        if (currentCalc !== done.calc) return;   // a newer calculation replaced this one
+        done.calc.plans.people = Object.assign({}, res.plans.fast, { route: res.route, people: alt.people });
+        done.calc.altPath = alt.path;
+        renderPlanTabs();
+      }
     }).then(function(r){
       if (r) track('people_under_route', { people: Math.round(r.people) });
     });
@@ -945,9 +1037,6 @@ export async function calcHeight() {
 
     renderBatteryNote(battModel, temperatureC);
     renderRouteSummary(routeDist, straightDistM, avoidance, outboundHeading);
-    if (preferredPath){
-      document.getElementById('detourNote').textContent = ' (+' + fmtDist(Math.max(0, routeDist - straightDistM)) + ', chosen to pass over fewer people)';
-    }
     renderHeightTable({
       heights: heights, w: w, legalOk: legalOk, buildingOk: buildingOk,
       terrainOkOut: pOut.ok, terrainOkBack: pBack.ok, flyableOut: flyableOut, flyableBack: flyableBack,
@@ -998,8 +1087,19 @@ export async function calcHeight() {
              payload: payloadBack, hs: speedhorizontalback, up: speedupback, down: speeddownback, samples: terrainBack, req: reqBack,
              climbRun: speedhorizontalback / speedupback, descRun: speedhorizontalback / speeddownback, timingOpts: timingOptsBack }
     };
+    // Everything needed to plan a route, for the slower-speed options
+    // below and for the route over fewer people (planAlongPath).
+    const planCtx = {
+      heights: heights, wx: wx, dronedegrees: dronedegrees, inp: inp, legalOk: legalOk, battModel: battModel,
+      temperatureC: temperatureC, payloadOut: payloadOut, payloadBack: payloadBack, mission: mission,
+      timingOptsOut: timingOptsOut, timingOptsBack: timingOptsBack, effectiveCeilingM: effectiveCeilingM,
+      straightDistM: straightDistM, w: w, terrainAvailable: terrainAvailable
+    };
+    const mainRoute = { samples: terrainSamples, back: terrainBack, reqOut: reqOut, reqBack: reqBack, pOut: pOut, pBack: pBack,
+                        buildingOk: buildingOk, distance: routeDist };
+    const speedLegs = battModel ? ECO_SPEED_FACTORS.map(function(f){ return legsAtSpeed(planCtx, mainRoute, f); }) : [];
     const planner = buildPlans({
-      heights: heights, legs: legs, w: w, legalOk: legalOk, buildingOk: buildingOk, terrainAvailable: terrainAvailable,
+      heights: heights, legs: legs, speedLegs: speedLegs, w: w, legalOk: legalOk, buildingOk: buildingOk, terrainAvailable: terrainAvailable,
       battModel: battModel, temperatureC: temperatureC, mission: mission, dwellS: inp.dwellS,
       payloadOut: payloadOut, payloadBack: payloadBack, speedupback: speedupback, speeddownback: speeddownback
     });
@@ -1027,7 +1127,7 @@ export async function calcHeight() {
     });
     renderPlanSavings(planner, legs, baseline, battOut, battBack);
 
-    setCurrentCalc({
+    const calcObj = {
       plans: plans,
       heights: heights,
       terrainSamples: terrainSamples,
@@ -1038,8 +1138,11 @@ export async function calcHeight() {
       mission: mission,
       speedOut: speedhorizontal,
       speedBack: speedhorizontalback,
+      distance: routeDist,
       droneModel: document.getElementById('droneModel').value
-    });
+    };
+    setCurrentCalc(calcObj);
+    resolveCalcDone({ planCtx: planCtx, calc: calcObj });
     renderPlan();
     renderForecastStrip(json, nowHourIdx);
 

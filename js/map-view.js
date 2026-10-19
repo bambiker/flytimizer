@@ -59,6 +59,12 @@ export function clearRouteLayers(){
 }
 
 // ignored: sites the person chose not to avoid - drawn in grey, no ring.
+// The plan's own route solid, the other one (if any) dashed purple.
+export function showRouteLines(main, other){
+  routeLine.setLatLngs((main || []).map(function(p){ return [p.lat, p.lng]; }));
+  showAltRoute(other);
+}
+
 export function showAltRoute(path){
   altRouteLine.setLatLngs((path || []).map(function(p){ return [p.lat, p.lng]; }));
 }

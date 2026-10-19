@@ -308,29 +308,31 @@ test('the result says roughly how many people live under the route', async ({ pa
   await expect(info).toContainText('EU GHS-POP 2025');
 });
 
-test('a route over fewer people is offered, and can be planned and undone', async ({ page }) => {
+test('a route over fewer people becomes a third plan, with its own heights and flight plans', async ({ page }) => {
   // A crowded block (~6,000 per km2) on the middle of the straight line, nearly empty around it.
   const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
   const population = (lat, lng) => Math.abs(lat - mid[0]) < 0.003 && Math.abs(lng - mid[1]) < 0.003 ? 1500 : 1;
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [], population, flatGround: true });
   await waitForResult(page);
   const info = page.locator('#peopleInfo');
-  await expect(info).toContainText(/A route over fewer people \(dashed purple on the map\): [\d.]+ km \(\+\d+%\), about \d+ people under it \(\d+% fewer\)/);
-  await expect(page.locator('.leaflet-overlay-pane path[stroke="#8b5cf6"]')).toHaveCount(1);
+  await expect(info).toContainText(/A route over fewer people \(dashed purple on the map\): [\d.]+ km \(\+\d+%\), about \d+ people under it \(\d+% fewer\) — see the Fewer people plan/);
   const shortest = await page.locator('#distance').textContent();
+  const tab = page.locator('#planPeopleBtn');
+  await expect(tab).toBeVisible();
+  await expect(tab).toContainText(/Fewer people.*%/);
 
-  await info.getByRole('button', { name: 'Plan this route' }).click();
-  await waitForResult(page);
-  await expect(page.locator('#detourNote')).toContainText('chosen to pass over fewer people');
-  await expect(info).toContainText('This route was chosen to pass over fewer people');
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
   expect(parseFloat(await page.locator('#distance').textContent())).toBeGreaterThan(parseFloat(shortest));
-  // The suggestion line is emptied (Leaflet keeps an empty path element).
-  expect(await page.locator('.leaflet-overlay-pane path[stroke="#8b5cf6"]').getAttribute('d')).toMatch(/^(M0 0)?$/);
+  await expect(page.locator('#detourNote')).toHaveText(' (the route over fewer people)');
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+  const kmz = await downloadMission(page);
+  expect(kmz.name).toBe('flytimizer-fewer-people-outbound.kmz');
 
-  await info.getByRole('button', { name: 'Plan the shortest route' }).click();
-  await waitForResult(page);
+  // Back to the fastest plan: its own route, distance and file names.
+  await page.locator('#planFastBtn').click();
   await expect(page.locator('#distance')).toHaveText(shortest);
-  await expect(page.locator('#detourNote')).not.toContainText('fewer people');
+  expect((await downloadMission(page)).name).toBe('flytimizer-outbound.kmz');
 });
 
 test('without the population file the people line is left out', async ({ page }) => {

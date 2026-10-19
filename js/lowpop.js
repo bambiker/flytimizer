@@ -223,14 +223,3 @@ export async function suggestFewerPeopleRoute(from, to, base, obstacles){
   return pickFewerPeople(base, candidates);
 }
 
-// The suggestion on show, and the one the person chose to plan with.
-var lastSuggestion = null, preferred = null;
-function samePoint(a, b){ return a && b && Math.abs(a.lat - b.lat) < 1e-7 && Math.abs(a.lng - b.lng) < 1e-7; }
-
-export function rememberSuggestion(from, to, path){ lastSuggestion = path ? { from: from, to: to, path: path } : null; }
-export function usePreferredRoute(){ preferred = lastSuggestion; }
-export function clearPreferredRoute(){ preferred = null; }
-// The chosen route over fewer people, if it's for this start and destination.
-export function preferredRouteFor(from, to){
-  return preferred && samePoint(preferred.from, from) && samePoint(preferred.to, to) ? preferred.path : null;
-}

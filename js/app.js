@@ -13,7 +13,6 @@ import { clearMarkers, getLocation, searchLocation } from './core.js';
 import { clearRouteLayers, initMap } from './map-view.js';
 import { onMissionChange } from './mission.js';
 import { hideNotice } from './notice.js';
-import { clearPreferredRoute, usePreferredRoute } from './lowpop.js';
 import { clearPlans, selectPlan } from './plans.js';
 import { syncRangeLayer } from './range.js';
 import { initSharedState, shareRoute } from './share.js';
@@ -27,7 +26,6 @@ function startOver(){
   clearMarkers();
   clearRouteLayers();
   clearPlans();
-  clearPreferredRoute();
   hideConditions();
   resetForecastOffset();
   document.getElementById('result').style.display = 'none';
@@ -41,8 +39,6 @@ var ACTIONS = {
   search: searchLocation,
   locate: getLocation,
   conditions: checkConditions,
-  lowpop: function(){ usePreferredRoute(); getHeight(); },
-  lowpopOff: function(){ clearPreferredRoute(); getHeight(); },
   calculate: getHeight,
   share: shareRoute,
   reset: startOver,
@@ -56,8 +52,7 @@ var ACTIONS = {
 var TRACKED = {
   plan: function(arg){ return ['select_plan', { plan: arg }]; },
   forecast: function(arg){ return ['select_forecast_hour', { hours_ahead: Number(arg) }]; },
-  reset: function(){ return ['start_over', {}]; },
-  lowpop: function(){ return ['plan_fewer_people_route', {}]; }
+  reset: function(){ return ['start_over', {}]; }
 };
 
 document.addEventListener('click', function(e){

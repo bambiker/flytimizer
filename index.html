@@ -654,6 +654,7 @@ details.panel + details.panel{
   white-space: nowrap;
 }
 
+.plan-tabs [hidden]{ display: none; }
 .plan-tabs{
   display: flex;
   gap: 8px;
@@ -1132,6 +1133,7 @@ details.panel + details.panel{
     <div class="plan-tabs" id="planTabs" role="tablist" aria-label="Route plan" style="display:none">
       <button class="plan-tab active" id="planFastBtn" role="tab" aria-selected="true" data-action="plan" data-arg="fast"><span class="plan-title">Fastest</span></button>
       <button class="plan-tab" id="planEcoBtn" role="tab" aria-selected="false" data-action="plan" data-arg="eco"><span class="plan-title">Least battery</span></button>
+      <button class="plan-tab" id="planPeopleBtn" role="tab" aria-selected="false" data-action="plan" data-arg="people" hidden><span class="plan-title">Fewer people</span></button>
     </div>
     <p class="hint" id="planNote" style="display:none; margin-bottom:12px"></p>
 

@@ -120,3 +120,48 @@ test('constant ground speed: a tailwind gives no extra speed, only a lower airsp
   assert.equal(ground.airBack[5], 15);
 });
 
+
+test('least battery may fly a leg slower than the set speed; fastest never does', () => {
+  // Two follow-terrain candidates per leg at one height: full speed, and
+  // a slower option that takes longer but uses less battery.
+  const prof = [{ pts: [{ s: 0, alt: 40 }, { s: 1000, alt: 40 }] }];
+  function leg(hs, factor, time, batt){
+    return { prof: prof, flyable: [true], timeV: [0], timeH: [time], batt: [batt], gs: [hs], air: [hs], cross: [true], head: [true],
+             payload: 1, hs: hs, speedFactor: factor, up: 5, down: 5, samples: [], req: [], climbRun: 3, descRun: 3, timingOpts: {} };
+  }
+  const base = { heights: [40], w: { windResOk: [true] }, legalOk: [true], buildingOk: [true], terrainAvailable: false,
+    battModel: { hoverW: 100, wh: 50, usableFraction: 1, massKg: 1, vmax: 15 }, temperatureC: 20, mission: 'delivery', dwellS: 0,
+    payloadOut: 1, payloadBack: 1, speedupback: 5, speeddownback: 5 };
+  const legs = { out: leg(15, 1, 100, 20), back: leg(15, 1, 100, 20) };
+  const slower = { out: leg(9, 0.6, 160, 15), back: leg(9, 0.6, 160, 25) };   // cheaper out, dearer back
+  const p = site.buildPlans(Object.assign({ legs, speedLegs: [slower] }, base)).plans;
+  assert.equal(p.fast.out.speedFactor, 1);
+  assert.equal(p.fast.back.speedFactor, 1);
+  assert.equal(p.eco.out.speedFactor, 0.6);   // each leg chooses on its own
+  assert.equal(p.eco.out.speed, 9);
+  assert.equal(p.eco.back.speedFactor, 1);
+  assert.equal(p.eco.totalBatt, 35);
+  // Without the slower options it's the full-speed pair.
+  assert.equal(site.buildPlans(Object.assign({ legs }, base)).plans.eco.out.speedFactor, 1);
+});
+
+test('legsAtSpeed: a slower leg takes longer, and holding ground speed with a tailwind it uses less power', () => {
+  const heightsL = [30, 60];
+  const samples = [{ s: 0, g: 0, lat: 0, lng: 0 }, { s: 1000, g: 0, lat: 0, lng: 0.009 }];
+  const back = site.reverseSamples(samples);
+  const inp = { speedup: 5, speeddown: 5, speedhorizontal: 15, speedupback: 5, speeddownback: 5, speedhorizontalback: 15,
+    drag: '1', windResistance: 20, speedMode: 'ground', dwellS: 0 };
+  const route = { samples, back, reqOut: [-Infinity, -Infinity], reqBack: [-Infinity, -Infinity], distance: 1000, buildingOk: [true, true],
+    pOut: site.legProfiles(heightsL, samples, [-Infinity, -Infinity], 15, 5, 5), pBack: site.legProfiles(heightsL, back, [-Infinity, -Infinity], 15, 5, 5) };
+  const model = { wh: 77, usableFraction: 1, massKg: 0.9, vmax: 15, hoverW: 100 };
+  const ctx = { heights: heightsL, wx: site.forecastAt(hourly({ wind_direction_10m: [270], wind_direction_80m: [270], wind_direction_120m: [270] }), 0),
+    dronedegrees: 270, inp, legalOk: [true, true], battModel: model, temperatureC: 20, payloadOut: 1, payloadBack: 1, timingOptsOut: {}, timingOptsBack: {} };
+  const full = site.legsAtSpeed(ctx, route, 1), half = site.legsAtSpeed(ctx, route, 0.5);
+  assert.ok(half.out.timeH[0] > full.out.timeH[0]);
+  assert.equal(half.out.hs, 7.5);
+  // Wind from the west, flying east: holding a lower ground speed, it flies slower through the air.
+  assert.ok(half.out.air[0] < full.out.air[0]);
+  assert.equal(half.out.speedFactor, 0.5);
+  // Profiles keep their full-speed shape.
+  assert.equal(half.out.climbRun, full.out.climbRun);
+});
