@@ -16,7 +16,8 @@
 //   kp            Kp index NOAA reports for now (default 2.33)
 //   ipCountry     country of the internet connection (default 'IL')
 //   population    people per cell in the GHSL population file (cells
-//                 0.005 degrees; default: the file can't be downloaded)
+//                 0.005 degrees), a number or (lat, lng) => number;
+//                 default: the file can't be downloaded
 //   ghsl          building height (m) the GHSL height file gives around
 //                 the route (default: the file can't be downloaded)
 //   country       ISO code Nominatim reports (default 'il')
@@ -153,7 +154,8 @@ export async function openSite(page, from, to, query, sc = {}){
   // isn't given can't be downloaded.
   const ghslBox = { x0: Math.min(flo, tlo) - 0.05, y0: Math.max(fla, tla) + 0.05, dx: 0.005, width: 40, height: 40, tile: 16 };
   const heightTiff = sc.ghsl !== undefined ? makeGhslTiff(Object.assign({ value: () => sc.ghsl }, ghslBox)) : null;
-  const popTiff = sc.population !== undefined ? makeGhslTiff(Object.assign({ value: () => sc.population, bits: 64 }, ghslBox)) : null;
+  const popValue = typeof sc.population === 'function' ? sc.population : () => sc.population;
+  const popTiff = sc.population !== undefined ? makeGhslTiff(Object.assign({ value: popValue, bits: 64 }, ghslBox)) : null;
   await ctx.route(/jrc-ghsl\.s3\./, r => {
     const tiff = /ghs-pop/.test(r.request().url()) ? popTiff : heightTiff;
     if (!tiff) return r.abort();

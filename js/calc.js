@@ -12,6 +12,7 @@ import { renderHazardsAndRoute } from './map-view.js';
 import { currentMission } from './mission.js';
 import { hideNotice, showNotice } from './notice.js';
 import { BUILDING_AVOID_MAX_COUNT, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_HEIGHT_SAFETY_MARGIN_M, BUILDING_LATERAL_SAFETY_MARGIN_M, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_TYPE_LABEL, MAX_FLIGHT_ALTITUDE_M, getBuildingsNearPath, getHazardsNearRoute } from './osm.js';
+import { pathLengthM, preferredRouteFor } from './lowpop.js';
 import { renderPeopleInfo } from './people.js';
 import { renderPlan, setCurrentCalc } from './plans.js';
 import { rangeExtremes, renderRange } from './range.js';
@@ -798,6 +799,13 @@ export async function calcHeight() {
     // First pass: route around hazards only. This is also the final
     // route if no buildings end up needing a detour of their own.
     var avoidance = computeAvoidanceRoute(startlat, startlng, destlat, destlng, hazardObstacles);
+    // The person chose the suggested route over fewer people (people.js)
+    // for this start and destination: plan along it instead.
+    const preferredPath = preferredRouteFor({ lat: startlat, lng: startlng }, { lat: destlat, lng: destlng });
+    if (preferredPath){
+      avoidance = { path: preferredPath, distance: pathLengthM(preferredPath), hazardsAvoided: avoidance.hazardsAvoided,
+                    buildingsAvoided: 0, trapped: avoidance.trapped };
+    }
 
     const straightDistM = getDistanceFromLatLon(startlat, startlng, destlat, destlng);
     Progress.stage('buildings');
@@ -846,7 +854,7 @@ export async function calcHeight() {
     // route from above is already final, and re-running it would
     // just recompute the same path.
     const hazardOnlyPath = avoidance.path;
-    if (sortedBuildings.toAvoid.length > 0){
+    if (!preferredPath && sortedBuildings.toAvoid.length > 0){
       const combinedObstacles = hazardObstacles.concat(sortedBuildings.toAvoid.map(function(b){
         return { lat: b.lat, lng: b.lng, clearance: b.radius + BUILDING_LATERAL_SAFETY_MARGIN_M, kind: 'building', type: 'building', name: null, height: b.height };
       }));
@@ -855,7 +863,10 @@ export async function calcHeight() {
     const routeDist = avoidance.distance;
     renderHazardsAndRoute(hazards, buildingList, avoidance.path, ignoredHazards);
     // Not awaited: it fills in its own line when the population tile arrives.
-    renderPeopleInfo(avoidance.path).then(function(r){
+    renderPeopleInfo(avoidance.path, {
+      from: { lat: startlat, lng: startlng }, to: { lat: destlat, lng: destlng },
+      distance: routeDist, obstacles: hazardObstacles, chosen: !!preferredPath
+    }).then(function(r){
       if (r) track('people_under_route', { people: Math.round(r.people) });
     });
 
@@ -934,6 +945,9 @@ export async function calcHeight() {
 
     renderBatteryNote(battModel, temperatureC);
     renderRouteSummary(routeDist, straightDistM, avoidance, outboundHeading);
+    if (preferredPath){
+      document.getElementById('detourNote').textContent = ' (+' + fmtDist(Math.max(0, routeDist - straightDistM)) + ', chosen to pass over fewer people)';
+    }
     renderHeightTable({
       heights: heights, w: w, legalOk: legalOk, buildingOk: buildingOk,
       terrainOkOut: pOut.ok, terrainOkBack: pBack.ok, flyableOut: flyableOut, flyableBack: flyableBack,
