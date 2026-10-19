@@ -62,12 +62,3 @@ test('pickFewerPeople: enough people saved for a modest detour, the best trade w
   const a = { distance: 3150, people: 400 }, b = { distance: 3900, people: 300 };
   assert.equal(site.pickFewerPeople(base, [a, b]), a);   // 60% fewer for +5% beats 70% fewer for +30%
 });
-
-test('the chosen route only applies to the same start and destination', () => {
-  site.rememberSuggestion(from, to, [from, { lat: 32.01, lng: 34.815 }, to]);
-  site.usePreferredRoute();
-  assert.equal(site.preferredRouteFor(from, to).length, 3);
-  assert.equal(site.preferredRouteFor(from, { lat: 32.0, lng: 34.84 }), null);
-  site.clearPreferredRoute();
-  assert.equal(site.preferredRouteFor(from, to), null);
-});

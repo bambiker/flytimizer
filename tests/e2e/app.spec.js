@@ -90,6 +90,43 @@ test('the DJI flight plan downloads as a valid WPML archive', async ({ page }) =
   expect(waylines).toContain('wpml:executeHeight');
 });
 
+test('least battery may fly into the wind in Sport mode; the download stays at the mission speed', async ({ page }) => {
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=air3');
+  await waitForResult(page);
+  await expect(page.locator('#cruise')).toHaveValue('12');
+  await expect(page.locator('#hor')).toHaveValue('21');
+  await expect(page.locator('#sportNote')).toHaveCount(0);
+
+  await page.locator('#planEcoBtn').click();
+  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
+  await expect(page.locator('#sportNote')).toContainText('faster than a mission can');
+  const missionSpeed = await page.evaluate(() => 12 / parseFloat(document.getElementById('payload').value));
+  const kmz = await downloadMission(page);
+  expect(kmz.name).toBe('flytimizer-least-battery-outbound.kmz');
+  const waylines = await kmz.zip.file('wpmz/waylines.wpml').async('string');
+  const speed = parseFloat(waylines.match(/<wpml:autoFlightSpeed>([\d.]+)</)[1]);
+  expect(speed).toBeCloseTo(missionSpeed, 1);
+
+  await page.locator('#planFastBtn').click();
+  await expect(page.locator('#styleFore')).not.toContainText('Sport');
+  await expect(page.locator('#sportNote')).toHaveCount(0);
+});
+
+test('when the wind is too strong for the mission speed, the fastest plan flies that leg in Sport mode', async ({ page }) => {
+  // At this hour the fake forecast's wind is more than the Neo 2's 8 m/s mission speed can handle, but not its 12 m/s Sport speed.
+  const morning = new Date(); morning.setUTCHours(8, 32, 0, 0);
+  await page.clock.setFixedTime(morning);
+  await openSite(page, HAIFA, null, '');
+  await page.locator('#calcBtn').click();
+  await waitForResult(page);
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
+  await expect(page.locator('#flyWarning')).toBeHidden();
+  await expect(page.locator('#sportNote')).toContainText('too strong for the mission speed');
+});
+
 test('wind stronger than the drone can handle gives a clear no-fly warning', async ({ page }) => {
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { windMul: 6 });
   await waitForResult(page);
@@ -308,29 +345,31 @@ test('the result says roughly how many people live under the route', async ({ pa
   await expect(info).toContainText('EU GHS-POP 2025');
 });
 
-test('a route over fewer people is offered, and can be planned and undone', async ({ page }) => {
+test('a route over fewer people becomes a third plan, with its own heights and flight plans', async ({ page }) => {
   // A crowded block (~6,000 per km2) on the middle of the straight line, nearly empty around it.
   const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
   const population = (lat, lng) => Math.abs(lat - mid[0]) < 0.003 && Math.abs(lng - mid[1]) < 0.003 ? 1500 : 1;
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [], population, flatGround: true });
   await waitForResult(page);
   const info = page.locator('#peopleInfo');
-  await expect(info).toContainText(/A route over fewer people \(dashed purple on the map\): [\d.]+ km \(\+\d+%\), about \d+ people under it \(\d+% fewer\)/);
-  await expect(page.locator('.leaflet-overlay-pane path[stroke="#8b5cf6"]')).toHaveCount(1);
+  await expect(info).toContainText(/A route over fewer people \(dashed purple on the map\): [\d.]+ km \(\+\d+%\), about \d+ people under it \(\d+% fewer\) — see the Fewer people plan/);
   const shortest = await page.locator('#distance').textContent();
+  const tab = page.locator('#planPeopleBtn');
+  await expect(tab).toBeVisible();
+  await expect(tab).toContainText(/Fewer people.*%/);
 
-  await info.getByRole('button', { name: 'Plan this route' }).click();
-  await waitForResult(page);
-  await expect(page.locator('#detourNote')).toContainText('chosen to pass over fewer people');
-  await expect(info).toContainText('This route was chosen to pass over fewer people');
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
   expect(parseFloat(await page.locator('#distance').textContent())).toBeGreaterThan(parseFloat(shortest));
-  // The suggestion line is emptied (Leaflet keeps an empty path element).
-  expect(await page.locator('.leaflet-overlay-pane path[stroke="#8b5cf6"]').getAttribute('d')).toMatch(/^(M0 0)?$/);
+  await expect(page.locator('#detourNote')).toHaveText(' (the route over fewer people)');
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+  const kmz = await downloadMission(page);
+  expect(kmz.name).toBe('flytimizer-fewer-people-outbound.kmz');
 
-  await info.getByRole('button', { name: 'Plan the shortest route' }).click();
-  await waitForResult(page);
+  // Back to the fastest plan: its own route, distance and file names.
+  await page.locator('#planFastBtn').click();
   await expect(page.locator('#distance')).toHaveText(shortest);
-  await expect(page.locator('#detourNote')).not.toContainText('fewer people');
+  expect((await downloadMission(page)).name).toBe('flytimizer-outbound.kmz');
 });
 
 test('without the population file the people line is left out', async ({ page }) => {
@@ -473,7 +512,7 @@ test('when no height is safe, that warning comes before everything else', async 
 
 test('number fields open a numeric keypad on phones', async ({ page }) => {
   await openSite(page, HAIFA, null, 'drone=mini4pro');
-  const fields = ['dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'health', 'drag', 'payload', 'payloadback'];
+  const fields = ['dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'health', 'drag', 'payload', 'payloadback'];
   for (const id of fields) await expect(page.locator('#' + id)).toHaveAttribute('inputmode', 'decimal');
   await expect(page.getByRole('textbox', { name: 'Search a place or address' })).toBeVisible();
 });
@@ -642,6 +681,9 @@ for (const scheme of ['light', 'dark']){
 test('JSZip is only downloaded once there is a flight plan to offer', async ({ page }) => {
   const jszipRequests = [];
   page.on('request', r => { if (r.url().includes('jszip')) jszipRequests.push(r.url()); });
+  // The fake forecast varies by hour; at some hours the hover is too windy at the mission speed.
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);
   await openSite(page, HAIFA, null, '');
   await page.waitForLoadState('load');
   expect(jszipRequests).toEqual([]);

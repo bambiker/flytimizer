@@ -6,14 +6,13 @@
 // ones the scripts create later, so one click listener handles them all.
 
 import { track } from './analytics.js';
-import { applyDronePreset, checkCustom } from './drone.js';
+import { PRESET_FIELDS, applyDronePreset, checkCustom } from './drone.js';
 import { getHeight } from './calc.js';
 import { checkConditions, hideConditions } from './conditions.js';
 import { clearMarkers, getLocation, searchLocation } from './core.js';
 import { clearRouteLayers, initMap } from './map-view.js';
 import { onMissionChange } from './mission.js';
 import { hideNotice } from './notice.js';
-import { clearPreferredRoute, usePreferredRoute } from './lowpop.js';
 import { clearPlans, selectPlan } from './plans.js';
 import { syncRangeLayer } from './range.js';
 import { initSharedState, shareRoute } from './share.js';
@@ -27,7 +26,6 @@ function startOver(){
   clearMarkers();
   clearRouteLayers();
   clearPlans();
-  clearPreferredRoute();
   hideConditions();
   resetForecastOffset();
   document.getElementById('result').style.display = 'none';
@@ -41,8 +39,6 @@ var ACTIONS = {
   search: searchLocation,
   locate: getLocation,
   conditions: checkConditions,
-  lowpop: function(){ usePreferredRoute(); getHeight(); },
-  lowpopOff: function(){ clearPreferredRoute(); getHeight(); },
   calculate: getHeight,
   share: shareRoute,
   reset: startOver,
@@ -56,8 +52,7 @@ var ACTIONS = {
 var TRACKED = {
   plan: function(arg){ return ['select_plan', { plan: arg }]; },
   forecast: function(arg){ return ['select_forecast_hour', { hours_ahead: Number(arg) }]; },
-  reset: function(){ return ['start_over', {}]; },
-  lowpop: function(){ return ['plan_fewer_people_route', {}]; }
+  reset: function(){ return ['start_over', {}]; }
 };
 
 document.addEventListener('click', function(e){
@@ -80,7 +75,7 @@ document.getElementById('locationSearchInput').addEventListener('keydown', funct
 // adds to the same fields, so what gets saved is already up to date.
 document.getElementById('mission').addEventListener('change', onMissionChange);
 document.getElementById('droneModel').addEventListener('change', applyDronePreset);
-['hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass'].forEach(function(id){
+PRESET_FIELDS.forEach(function(id){
   document.getElementById(id).addEventListener('input', checkCustom);
 });
 

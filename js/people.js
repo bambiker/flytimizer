@@ -8,7 +8,7 @@
 // for a first look at ground risk, not a head count.
 
 import { GHSL_POP_URL, ghslCells } from './ghsl.js';
-import { rememberSuggestion, suggestFewerPeopleRoute } from './lowpop.js';
+import { suggestFewerPeopleRoute } from './lowpop.js';
 import { showAltRoute } from './map-view.js';
 import { densifyPath } from './terrain.js';
 import { fmtDist } from './units.js';
@@ -65,8 +65,9 @@ function peopleText(n, peakPerKm2){
 // Fills the "People under the route" line in the result, then looks for
 // a route over fewer people (lowpop.js) and offers it. Runs after the
 // rest of the result is shown, so a slow download doesn't hold it up.
-// opts: { from, to, distance, obstacles, chosen } - chosen: this route
-// already is the one over fewer people.
+// opts: { from, to, distance, obstacles, onAlternative(alt) } -
+// onAlternative is called with a route over fewer people when there is
+// one (calc.js plans it as the "Fewer people" tab).
 var renderSeq = 0;
 export async function renderPeopleInfo(path, opts){
   var el = document.getElementById('peopleInfo');
@@ -75,7 +76,6 @@ export async function renderPeopleInfo(path, opts){
   var seq = ++renderSeq;   // a newer calculation wins over a slow older one
   el.textContent = 'Counting the people who live under the route…';
   el.style.display = 'block';
-  rememberSuggestion(null);
   var r;
   try {
     r = await peopleUnderRoute(path);
@@ -88,24 +88,18 @@ export async function renderPeopleInfo(path, opts){
   var base = peopleText(roundPeople(r.people), r.peakPerKm2) +
     '. That’s where people live (EU GHS-POP 2025): in the daytime schools, offices and streets can be busier.';
   el.textContent = base;
-  if (opts.chosen){
-    el.appendChild(document.createTextNode(' This route was chosen to pass over fewer people. '));
-    el.appendChild(actionButton('Plan the shortest route', 'lowpopOff'));
-    return r;
-  }
   if (!opts.from || !opts.to) return r;
   try {
     var alt = await suggestFewerPeopleRoute(opts.from, opts.to, { distance: opts.distance, people: r.people }, opts.obstacles);
     if (seq !== renderSeq) return r;
     var note = document.createElement('span');
     if (alt){
-      rememberSuggestion(opts.from, opts.to, alt.path);
       showAltRoute(alt.path);
       note.textContent = ' A route over fewer people (dashed purple on the map): ' + fmtDist(alt.distance) + ' (+' +
         Math.round((alt.distance / opts.distance - 1) * 100) + '%), about ' + roundPeople(alt.people).toLocaleString('en') + ' people under it (' +
-        Math.round((1 - alt.people / r.people) * 100) + '% fewer). ';
+        Math.round((1 - alt.people / r.people) * 100) + '% fewer) \u2014 see the Fewer people plan.';
       el.appendChild(note);
-      el.appendChild(actionButton('Plan this route', 'lowpop'));
+      if (opts.onAlternative) opts.onAlternative(alt).catch(function(err){ console.warn('Planning the route over fewer people failed:', err); });
     } else if (r.people >= 20){
       note.textContent = ' No way round passes over clearly fewer people for a modest detour here.';
       el.appendChild(note);
@@ -115,13 +109,4 @@ export async function renderPeopleInfo(path, opts){
     console.warn('Fewer-people route search failed:', err);
   }
   return r;
-}
-
-function actionButton(label, action){
-  var b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'btn btn-ghost btn-inline';
-  b.dataset.action = action;
-  b.textContent = label;
-  return b;
 }
