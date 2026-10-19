@@ -25,6 +25,9 @@ What it does
    step in the logs (energy drawn between two changes of the charge
    level), per battery when that battery has enough steps (serial number
    from the logs, or --battery-map), otherwise from all batteries.
+   Batteries age, so recent flights count more (--half-life), and when
+   the logs carry the battery's own full-charge capacity the curve
+   follows it. A health table shows each battery's energy over time.
 5. Leave-one-out validation: each flight in turn is predicted by a model
    fitted on all the other flights, and compared with what its battery
    actually did. Compared side by side:
@@ -50,7 +53,10 @@ What it does
    the reserve and empty.
 7. Wind effects: for each flight, how much battery the (estimated) wind
    cost compared with calm air and its worst 10 seconds, and how far the
-   drone drifted, by GPS, while it was hovering.
+   drone drifted, by GPS, while it was hovering. Then the same summed
+   over each whole flight (battery, and how far the wind would have
+   carried the drone - sideways, head-on and while hovering), the flight
+   where each is largest, and cumulative plots with --plot-dir.
 
 Usage
 -----
@@ -128,6 +134,11 @@ SPEC_NEW = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.4,
 METHODS = ["naive", "site old", "site 24", "site new", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
 
 MIN_STEPS_PER_BATTERY = 40    # 1% steps needed for a battery's own curve
+# Batteries age: a flight this many flights (of the same battery) away
+# from the one being predicted counts half as much. 0 = all count equally.
+HALF_LIFE_FLIGHTS = 30.0
+USE_CAPACITY = True   # scale the curve by the battery-reported capacity
+MIN_SOC_DROP_FOR_HEALTH = 20.0   # flights used to track a battery's energy
 SOC_GRID = np.arange(-30.0, 100.001, 0.05)   # for energy <-> % conversion
 
 
@@ -173,6 +184,33 @@ def flight_session(raw, name):
         except (ValueError, TypeError):
             pass
     return "unknown-date"
+
+
+def flight_start(raw, name):
+    """When the flight started, from the file name (..._2026-10-14_[17-05-39])
+    or the log's dateTime; used to put each battery's flights in order."""
+    m = re.search(r"(\d{4}-\d{2}-\d{2})_\[(\d{2})-(\d{2})-(\d{2})\]", name)
+    if m:
+        return pd.Timestamp(f"{m.group(1)} {m.group(2)}:{m.group(3)}:{m.group(4)}")
+    if DATETIME_COL in raw.columns:
+        parsed = pd.to_datetime(raw[DATETIME_COL], errors="coerce")
+        parsed = parsed[parsed.dt.year > 2000]
+        if len(parsed):
+            return pd.Timestamp(parsed.iloc[0]).tz_localize(None)
+    return pd.NaT
+
+
+def _battery_column_median(raw, *needles):
+    """Median of the first battery column whose name holds one of the
+    needles (e.g. full-charge capacity, cycle count), or nan."""
+    for c in raw.columns:
+        low = c.lower().replace("_", "")
+        if "batt" in low and any(n in low for n in needles):
+            v = pd.to_numeric(raw[c], errors="coerce")
+            v = v[v > 0]
+            if len(v):
+                return float(v.median()), c
+    return np.nan, None
 
 
 def flight_battery(raw, name, battery_map):
@@ -276,6 +314,11 @@ def load_flight(path, battery_map):
         soc_start=soc_start,
         soc_end=soc_end,
         steps=soc_steps(d),
+        start=flight_start(raw, name),
+        full_cap=_battery_column_median(raw, "fullcap", "fullchargecap")[0],
+        cycles=_battery_column_median(raw, "cycle", "loopnum")[0],
+        cap_cols=[c for c in (_battery_column_median(raw, "fullcap", "fullchargecap")[1],
+                              _battery_column_median(raw, "cycle", "loopnum")[1]) if c],
         temp=float(d["temp"].mean()) if d["temp"].notna().any() else np.nan,
         serial_cols=battery_serial_columns(raw.columns),
     )
@@ -366,6 +409,20 @@ def load_all(path, battery_map):
         f.duration_s = float(b["dur"].sum())
         f.energy_wh = float(b["eJ"].sum() / 3600.0)
         f.soc_drop = f.soc_start - f.soc_end
+
+    # Each battery's flights in time order: 0 = its first logged flight.
+    for bat in {f.battery for f in flights}:
+        own = sorted((f for f in flights if f.battery == bat),
+                     key=lambda f: (pd.isna(f.start), f.start if not pd.isna(f.start) else 0, f.name))
+        for i, f in enumerate(own):
+            f.seq = i
+
+    cap_cols = sorted({c for f in flights for c in f.cap_cols})
+    if cap_cols:
+        print(f"battery capacity/cycle column(s): {', '.join(cap_cols)}")
+    else:
+        print("no battery capacity or cycle-count column in the logs - battery ageing "
+              "is followed from the flights themselves")
 
     serial_cols = sorted({c for f in flights for c in f.serial_cols})
     if serial_cols:
@@ -528,26 +585,54 @@ def wh_per_pct(flights, battery=None):
     return e / drop, drop / secs, ("same battery" if same else "all batteries")
 
 
-def fit_wh_curve(flights, battery=None, degree=1):
-    """Wh per 1% as a polynomial in the battery %, fitted to the 1% steps.
-    Uses the battery's own steps when it has enough of them."""
-    def steps_of(fs):
-        parts = [f.steps for f in fs if len(f.steps)]
-        return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+def flight_weights(pool, target=None):
+    """How much each flight counts, for battery ageing: full weight near the
+    flight being predicted (or the battery's latest flight), half weight
+    HALF_LIFE_FLIGHTS of that battery's flights away."""
+    if HALF_LIFE_FLIGHTS <= 0:
+        return {id(f): 1.0 for f in pool}
+    latest = {}
+    for f in pool:
+        latest[f.battery] = max(latest.get(f.battery, 0), f.seq)
+    out = {}
+    for f in pool:
+        if target is not None and target.battery == f.battery:
+            ref = target.seq
+        else:
+            ref = latest[f.battery]
+        out[id(f)] = 0.5 ** (abs(ref - f.seq) / HALF_LIFE_FLIGHTS)
+    return out
 
+
+def fit_wh_curve(flights, battery=None, degree=1, target=None):
+    """Wh per 1% as a polynomial in the battery %, fitted to the 1% steps.
+    Uses the battery's own steps when it has enough of them. Recent
+    flights count more (ageing). When the logs carry the battery's own
+    full-charge capacity, the curve is fitted per mAh of capacity and
+    scaled to the capacity at `target` (or the battery's latest flight),
+    so it follows the battery's ageing at once."""
     own = [f for f in flights if battery not in (None, "unknown") and f.battery == battery]
-    st, src = steps_of(own), "same battery"
-    if len(st) < MIN_STEPS_PER_BATTERY:
-        st, src = steps_of(flights), "all batteries"
-    if len(st) < 10 * (degree + 1):
+    pool, src = own, "same battery"
+    if sum(len(f.steps) for f in own) < MIN_STEPS_PER_BATTERY:
+        pool, src = flights, "all batteries"
+    if sum(len(f.steps) for f in pool) < 10 * (degree + 1):
         whp, _, src = wh_per_pct(flights, battery)
         return SimpleNamespace(coef=np.array([whp]), lo=0.0, hi=100.0, n=0,
-                               src=f"flat ({src}, too few 1% steps)")
+                               src=f"flat ({src}, too few 1% steps)", cap=np.nan)
+
+    weights = flight_weights(pool, target)
+    use_cap = USE_CAPACITY and all(np.isfinite(f.full_cap) for f in pool)
+    cap_of = (lambda f: f.full_cap) if use_cap else (lambda f: 1.0)
+    parts = []
+    for f in pool:
+        if len(f.steps):
+            parts.append(f.steps.assign(fw=weights[id(f)], cap=cap_of(f)))
+    st = pd.concat(parts, ignore_index=True)
 
     # Mid-point of each step: level L covers the charge from L down to L-1.
     x = st["level"].to_numpy() - 0.5 * st["drop"].to_numpy()
-    y = (st["wh"] / st["drop"]).to_numpy()
-    w = st["drop"].to_numpy()
+    y = (st["wh"] / st["drop"] / st["cap"]).to_numpy()
+    w = (st["drop"] * st["fw"]).to_numpy()
     keep = np.ones(len(x), bool)
     for _ in range(2):   # drop stalled-gauge outliers, then refit
         coef = np.polyfit(x[keep], y[keep], degree, w=np.sqrt(w[keep]))
@@ -556,17 +641,30 @@ def fit_wh_curve(flights, battery=None, degree=1):
         keep = np.abs(res) <= 3.5 * max(mad, 1e-4)
     coef = np.polyfit(x[keep], y[keep], degree, w=np.sqrt(w[keep]))
     curve = SimpleNamespace(coef=coef, lo=float(x.min()), hi=float(x.max()),
-                            n=int(keep.sum()), src=src)
+                            n=int(keep.sum()), src=src, cap=np.nan)
 
     # The steps give the curve's shape, but not its level: dropping the
     # outliers removes the long steps where the gauge stalled and keeps
     # the quick ones where it catches up, which biases the steps low.
     # Scale the curve so it matches the energy of whole flights.
-    pool = own if src == "same battery" else flights
-    pool = [f for f in pool if f.soc_drop >= MIN_SOC_DROP_FOR_WH]
-    if pool:
-        predicted = sum(energy_between(curve, f.soc_start, f.soc_end) for f in pool)
-        curve.coef = coef * sum(f.energy_wh for f in pool) / predicted
+    whole = [f for f in pool if f.soc_drop >= MIN_SOC_DROP_FOR_WH]
+    if whole:
+        predicted = sum(weights[id(f)] * energy_between(curve, f.soc_start, f.soc_end)
+                        for f in whole)
+        actual = sum(weights[id(f)] * f.energy_wh / cap_of(f) for f in whole)
+        curve.coef = coef * actual / predicted
+
+    if use_cap:
+        if target is not None and np.isfinite(target.full_cap):
+            cap = target.full_cap
+        else:
+            ref = own if own else pool
+            cap = max(ref, key=lambda f: (f.seq, f.name)).full_cap
+        curve.coef = curve.coef * cap
+        curve.cap = cap
+        curve.src += f", scaled to {cap:.0f} mAh capacity"
+    if HALF_LIFE_FLIGHTS > 0:
+        curve.src += f", recent flights weighted (half-life {HALF_LIFE_FLIGHTS:g})"
     return curve
 
 
@@ -593,6 +691,59 @@ def soc_after(curve, soc0, energy_wh):
     """Battery % left after drawing energy_wh (scalar or array) from soc0."""
     e = _curve_energy(curve)
     return np.interp(np.interp(soc0, SOC_GRID, e) - np.asarray(energy_wh, float), e, SOC_GRID)
+
+
+# ---------------------------------------------------------------------
+# Battery health over time
+# ---------------------------------------------------------------------
+
+def battery_health(flights, degree, spec_wh):
+    """Each battery's usable energy over its logged flights, so ageing
+    shows up, and a 'Battery health' figure for the site."""
+    print()
+    print("=" * 78)
+    print("BATTERY HEALTH OVER TIME")
+    print("=" * 78)
+    print("Wh for 100% = energy used / battery % used x 100, from flights that")
+    print(f"used at least {MIN_SOC_DROP_FOR_HEALTH:.0f}% (shorter ones are too coarse: the gauge "
+          "moves in 1% steps).")
+    out = {}
+    for bat in sorted({f.battery for f in flights}):
+        own = sorted((f for f in flights if f.battery == bat), key=lambda f: f.seq)
+        print()
+        print(f"battery {bat}: {len(own)} logged flight(s)")
+        print(f"  {'#':>3s} {'started':16s} {'used %':>6s} {'Wh/100%':>8s} {'capacity':>9s} "
+              f"{'cycles':>6s}")
+        pts = []
+        for f in own:
+            wh100 = (100.0 * f.energy_wh / f.soc_drop
+                     if f.soc_drop >= MIN_SOC_DROP_FOR_HEALTH else np.nan)
+            when = f.start.strftime("%Y-%m-%d %H:%M") if not pd.isna(f.start) else "?"
+            cap = f"{f.full_cap:7.0f}mAh" if np.isfinite(f.full_cap) else f"{'-':>9s}"
+            cyc = f"{f.cycles:6.0f}" if np.isfinite(f.cycles) else f"{'-':>6s}"
+            wtxt = f"{wh100:8.2f}" if np.isfinite(wh100) else f"{'-':>8s}"
+            print(f"  {f.seq + 1:3d} {when:16s} {f.soc_drop:6.0f} {wtxt} {cap} {cyc}")
+            if np.isfinite(wh100):
+                pts.append((f.seq, wh100, f.soc_drop))
+
+        curve = fit_wh_curve(flights, bat, degree)
+        now = energy_between(curve, 100, 0)
+        health = 100.0 * now / spec_wh
+        if len(pts) >= 3 and pts[-1][0] - pts[0][0] >= 3:
+            seq, wh, wt = (np.array(v, float) for v in zip(*pts))
+            slope = np.polyfit(seq, wh, 1, w=np.sqrt(wt))[0]
+            trend = f"{10 * slope:+.2f} Wh per 10 flights ({100 * 10 * slope / now:+.1f}%)"
+        else:
+            trend = "not enough flights yet to see a trend"
+        caps = [f.full_cap for f in own if np.isfinite(f.full_cap)]
+        if len(caps) >= 2:
+            trend += f"; battery-reported capacity {caps[0]:.0f} -> {caps[-1]:.0f} mAh"
+        print(f"  now: {now:.2f} Wh for 100% ({curve.src})")
+        print(f"  trend: {trend}")
+        print(f"  site 'Battery health' for this pack: about {min(health, 100):.0f}% "
+              f"(of the preset's {spec_wh:g} Wh)")
+        out[bat] = SimpleNamespace(now=now, health=health)
+    return out
 
 
 # ---------------------------------------------------------------------
@@ -623,7 +774,7 @@ def leave_one_out(flights, group, degree, long_min):
         whp, rate, whp_src = wh_per_pct(train, f.battery)
         if not np.isfinite(whp):
             continue
-        curve = fit_wh_curve(train, f.battery, degree)
+        curve = fit_wh_curve(train, f.battery, degree, target=f)
         dur = f.bins["dur"].to_numpy()
         same_day = model["winds"].get(f.session)
         own = estimate_wind(model["beta"], [f])
@@ -882,7 +1033,7 @@ def wind_report(flights, model, degree):
         w_own = estimate_wind(model["beta"], [f])
         calm = predict_power(model, f, (0.0, 0.0))
         e_calm = np.sum(calm * dur) / 3600.0
-        curve = fit_wh_curve(flights, f.battery, degree)
+        curve = fit_wh_curve(flights, f.battery, degree, target=f)
         soc0 = f.soc_start if np.isfinite(f.soc_start) else 100.0
 
         def extra_pct(w):
@@ -956,6 +1107,124 @@ def wind_report(flights, model, degree):
     print("  The wind here is estimated from the power data, not measured. On")
     print("  days with little wind both effects are small and mostly noise.")
     return rows, drift_rows
+
+
+MOVING_MIN_SPEED = 1.0    # m/s ground speed: below this, the wind is all push
+
+
+def wind_integrals(flights, model, degree):
+    """The wind's effect summed over each whole flight, as curves over
+    time and as totals, and the flight where each total is largest.
+
+    battery: extra % used versus the same ground track in calm air.
+    drift:   how far the wind would have carried the drone had it not
+             held its track - the integral of the wind over time (m),
+             split into the part across the track (sideways push), the
+             part along it (head- or tailwind), and the part while
+             hovering. The drone cancels all of it; that cancelling is
+             what costs the battery.
+    """
+    print()
+    print("=" * 78)
+    print("WIND EFFECTS OVER WHOLE FLIGHTS (integrals)")
+    print("=" * 78)
+    print("battery: extra % the wind cost, summed over the flight.")
+    print("drift: how far the wind would have carried the drone over the flight")
+    print("had it not fought back (m): 'total' = all of it, 'side' = across the")
+    print("direction of travel, 'head' = against it (minus = tailwind), 'hover'")
+    print("= while holding position. Uses the wind estimated for each day.")
+    print()
+    print(f"  {'flight':38s} {'min':>5s} {'wind m/s':>8s} {'+bat %':>7s} "
+          f"{'total m':>8s} {'side m':>7s} {'head m':>7s} {'hover m':>7s}")
+    out = []
+    for f in flights:
+        b = f.bins
+        dur = b["dur"].to_numpy()
+        if dur.sum() < 30:
+            continue
+        w = np.array(model["winds"].get(f.session, (0.0, 0.0)))
+        vn, ve = b["vn"].to_numpy(), b["ve"].to_numpy()
+        gs = np.hypot(vn, ve)
+        moving = gs >= MOVING_MIN_SPEED
+        tn = np.where(moving, vn / np.maximum(gs, 1e-9), 0.0)
+        te = np.where(moving, ve / np.maximum(gs, 1e-9), 0.0)
+        along = w[0] * tn + w[1] * te              # + = wind from behind
+        side = np.abs(w[0] * te - w[1] * tn)
+        ws = float(np.hypot(*w))
+
+        total_m = np.cumsum(ws * dur)
+        side_m = np.cumsum(np.where(moving, side, 0.0) * dur)
+        head_m = np.cumsum(np.where(moving, -along, 0.0) * dur)
+        hover_m = np.cumsum(np.where(moving, 0.0, ws) * dur)
+
+        curve = fit_wh_curve(flights, f.battery, degree, target=f)
+        soc0 = f.soc_start if np.isfinite(f.soc_start) else 100.0
+        e_wind = np.cumsum(predict_power(model, f, tuple(w)) * dur) / 3600.0
+        e_calm = np.cumsum(predict_power(model, f, (0.0, 0.0)) * dur) / 3600.0
+        extra_pct = soc_after(curve, soc0, e_calm) - soc_after(curve, soc0, e_wind)
+
+        r = SimpleNamespace(f=f, t_min=np.cumsum(dur) / 60.0, wind=ws,
+                            bat=extra_pct, total=total_m, side=side_m,
+                            head=head_m, hover=hover_m)
+        out.append(r)
+        print(f"  {f.name[:38]:38s} {r.t_min[-1]:5.1f} {ws:8.1f} {extra_pct[-1]:+7.1f} "
+              f"{total_m[-1]:8.0f} {side_m[-1]:7.0f} {head_m[-1]:+7.0f} {hover_m[-1]:7.0f}")
+
+    if not out:
+        return out
+    print()
+    print("largest over a whole flight:")
+    for label, key, unit in (("battery lost to wind", "bat", "%"),
+                             ("total wind drift", "total", " m"),
+                             ("sideways push", "side", " m"),
+                             ("headwind", "head", " m")):
+        r = max(out, key=lambda x: getattr(x, key)[-1])
+        v = getattr(r, key)[-1]
+        fmt = f"{v:+.1f}" if unit == "%" else f"{v:.0f}"
+        print(f"  {label:22s} {r.f.name}  {fmt}{unit}  "
+              f"({r.t_min[-1]:.1f} min, wind {r.wind:.1f} m/s)")
+    longest = max(out, key=lambda x: x.t_min[-1])
+    print(f"  {'longest flight':22s} {longest.f.name}  {longest.t_min[-1]:.1f} min, "
+          f"wind cost {longest.bat[-1]:+.1f}%, drift {longest.total[-1]:.0f} m")
+    print()
+    print("  These drift distances are what the drone had to cancel, not how far")
+    print("  it actually moved: it held its track. The measured drift is in the")
+    print("  hover table above.")
+    return out
+
+
+def save_wind_plots(out_dir, integrals):
+    if not integrals:
+        return
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    os.makedirs(out_dir, exist_ok=True)
+    top_bat = max(integrals, key=lambda r: r.bat[-1])
+    top_drift = max(integrals, key=lambda r: r.total[-1])
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
+    for r in integrals:
+        ax1.plot(r.t_min, r.bat, color="grey", alpha=0.35, linewidth=1)
+        ax2.plot(r.t_min, r.total, color="grey", alpha=0.35, linewidth=1)
+    ax1.plot(top_bat.t_min, top_bat.bat, linewidth=2.2,
+             label=f"most: {top_bat.f.name[-26:]}")
+    ax2.plot(top_drift.t_min, top_drift.total, linewidth=2.2,
+             label=f"most: {top_drift.f.name[-26:]} (total)")
+    ax2.plot(top_drift.t_min, top_drift.side, linewidth=1.5, linestyle="--",
+             label="same flight, sideways")
+    ax1.axhline(0, color="black", linewidth=0.8)
+    ax1.set_xlabel("minutes into the flight")
+    ax1.set_ylabel("extra battery % from wind (cumulative)")
+    ax1.set_title("Battery the wind cost, over each flight")
+    ax2.set_xlabel("minutes into the flight")
+    ax2.set_ylabel("wind drift cancelled (m, cumulative)")
+    ax2.set_title("How far the wind would have carried the drone")
+    ax1.legend(fontsize=8)
+    ax2.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "wind_integrals.png"), dpi=120)
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------
@@ -1225,6 +1494,11 @@ def parse_args():
     p.add_argument("--wind-day", help="use the wind estimated for this logged day (YYYY-MM-DD)")
     p.add_argument("--no-wind-report", action="store_true",
                    help="skip the wind effects section (battery and drift)")
+    p.add_argument("--half-life", type=float, default=HALF_LIFE_FLIGHTS,
+                   help="battery ageing: a flight this many of the same battery's "
+                        "flights away counts half (default 30; 0 = all equal)")
+    p.add_argument("--no-capacity", action="store_true",
+                   help="ignore the battery-reported capacity (to compare)")
     p.add_argument("--long-min", type=float, default=25.0,
                    help="also score only the flights that used at least this "
                         "much battery (%%, default 25)")
@@ -1237,13 +1511,20 @@ def parse_args():
 
 
 def main():
+    global HALF_LIFE_FLIGHTS, USE_CAPACITY
     args = parse_args()
+    HALF_LIFE_FLIGHTS = args.half_life
+    USE_CAPACITY = not args.no_capacity
     flights = load_all(args.path, read_battery_map(args.battery_map))
 
     model = fit_model(flights)
     report_full_model(flights, model, args.curve_degree)
+    battery_health(flights, args.curve_degree, SPEC_NEW.wh)
     if not args.no_wind_report:
         wind_report(flights, model, args.curve_degree)
+        integrals = wind_integrals(flights, model, args.curve_degree)
+        if args.plot_dir:
+            save_wind_plots(args.plot_dir, integrals)
 
     loo = [] if args.loo == "off" else leave_one_out(flights, args.loo, args.curve_degree, args.long_min)
 
