@@ -6,7 +6,7 @@ import { escapeHtml, fmtDist, fmtLen } from './units.js';
 
 // Set by initMap(), which app.js calls once at start-up.
 export let map;
-export var buildingLayer, hazardLayer, routeLine, rangeLayer;
+export var buildingLayer, hazardLayer, routeLine, rangeLayer, altRouteLine;
 
 export var OSM_DATA_CREDIT = 'Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
 
@@ -42,6 +42,8 @@ export function initMap(){
   rangeLayer = L.layerGroup().addTo(map);
   buildingLayer = L.layerGroup().addTo(map);
   hazardLayer = L.layerGroup().addTo(map);
+  // A suggested route over fewer people (people.js), under the main one.
+  altRouteLine = L.polyline([], { color: '#8b5cf6', weight: 4, opacity: 0.9, dashArray: '10 8', interactive: false }).addTo(map);
   routeLine = L.polyline([], { color: '#2f6fed', weight: 4, opacity: 0.85 }).addTo(map);
 
   map.on('click', addMarker);
@@ -53,10 +55,16 @@ export function clearRouteLayers(){
   hazardLayer.clearLayers();
   buildingLayer.clearLayers();
   routeLine.setLatLngs([]);
+  altRouteLine.setLatLngs([]);
 }
 
 // ignored: sites the person chose not to avoid - drawn in grey, no ring.
+export function showAltRoute(path){
+  altRouteLine.setLatLngs((path || []).map(function(p){ return [p.lat, p.lng]; }));
+}
+
 export function renderHazardsAndRoute(hazards, buildings, path, ignored){
+  altRouteLine.setLatLngs([]);
   hazardLayer.clearLayers();
   buildingLayer.clearLayers();
   (ignored || []).forEach(function(hz){
