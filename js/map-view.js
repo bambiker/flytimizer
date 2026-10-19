@@ -55,9 +55,18 @@ export function clearRouteLayers(){
   routeLine.setLatLngs([]);
 }
 
-export function renderHazardsAndRoute(hazards, buildings, path){
+// ignored: sites the person chose not to avoid - drawn in grey, no ring.
+export function renderHazardsAndRoute(hazards, buildings, path, ignored){
   hazardLayer.clearLayers();
   buildingLayer.clearLayers();
+  (ignored || []).forEach(function(hz){
+    var label = (HAZARD_TYPE_LABEL[hz.type] || 'Restricted area') + (hz.name ? ' \u2014 ' + escapeHtml(hz.name) : '') + ' (not avoided: your settings)';
+    var style = { color: '#8d9ab8', weight: 1.5, dashArray: '2 4', fillColor: '#8d9ab8', fillOpacity: 0.12 };
+    var shape = hz.polygon
+      ? L.polygon(hz.polygon.map(function(p){ return [p.lat, p.lng]; }), style)
+      : L.circle([hz.lat, hz.lng], Object.assign({ radius: hz.radius }, style));
+    shape.bindTooltip(label).addTo(hazardLayer);
+  });
   for (var i = 0; i < hazards.length; i++){
     var hz = hazards[i];
     var label = HAZARD_TYPE_LABEL[hz.type] || 'Restricted area';

@@ -257,6 +257,45 @@ test('Conditions here without location access explains what to do instead', asyn
   await expect(page.locator('#conditionsCard')).toBeHidden();
 });
 
+test('Restricted areas: schools and hospitals can be switched off; no-fly sites can\'t', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+  await waitForResult(page);
+  await expect(page.locator('#sitesSummary')).toHaveText('all avoided');
+  const red = page.locator('.leaflet-overlay-pane path[stroke="#e6484f"]');
+  const grey = page.locator('.leaflet-overlay-pane path[stroke="#8d9ab8"]');
+  await expect(grey).toHaveCount(0);
+
+  await page.locator('#sitesPanel summary').click();
+  await page.getByLabel('Schools').uncheck();
+  await page.getByLabel('Hospitals').uncheck();
+  // Heliports are no-fly in Israel: switching them off changes nothing.
+  await page.getByLabel('Heliports').uncheck();
+  await expect(page.locator('#sitesSummary')).toHaveText('3 types not avoided');
+  await page.locator('#calcBtn').click();
+  await waitForResult(page);
+
+  await expect(grey).toHaveCount(2);
+  await expect(red).toHaveCount(0);   // the school's and hospital's red shapes and rings are gone
+  await expect(page.locator('#hazardInfo')).toContainText('Found 1 restricted area');
+  await expect(page.locator('#hazardInfo')).toContainText('2 more (school, hospital), shown in grey, aren’t avoided because of your Restricted areas settings');
+  await expect(page.locator('#noFlyWarning')).toContainText('Heliport (Pad)');
+  expect(page.url()).toContain('skipSites=school,hospital,heliport');
+
+  // Remembered on the next visit.
+  await page.evaluate(() => history.replaceState(null, '', location.pathname));
+  await page.reload();
+  await page.locator('#sitesPanel summary').click();
+  await expect(page.getByLabel('Schools')).not.toBeChecked();
+  await expect(page.getByLabel('Kindergartens')).toBeChecked();
+});
+
+test('a shared link carries the Restricted areas settings', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro&skipSites=school');
+  await waitForResult(page);
+  await expect(page.locator('#sitesSummary')).toHaveText('1 type not avoided');
+  await expect(page.locator('.leaflet-overlay-pane path[stroke="#8d9ab8"]')).toHaveCount(1);
+});
+
 test('public shelters tagged as military bunkers are not treated as military sites', async ({ page }) => {
   const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [
@@ -298,6 +337,11 @@ test('photo mission in imperial units: one round-trip mission, tall building det
 });
 
 test('many buildings on the line are climbed over instead of zigzagging round them', async ({ page }) => {
+  // The fake forecast's wind changes hour by hour; at some UTC hours (5,
+  // for one) it caps the ceiling low enough that the tallest buildings
+  // get detoured. Fly at 12:30 UTC, like the GHSL test.
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=matrice300&payload=1.3&payloadback=1', { hazards: [], buildings: 'many' });
   await waitForResult(page);
 

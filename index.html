@@ -402,6 +402,13 @@ details.panel + details.panel{
   accent-color: var(--accent);
 }
 
+.site-toggles{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px 16px;
+  margin-top: 10px;
+}
+
 .rules-notes{
   margin: 6px 0 6px;
   padding-left: 18px;
@@ -1000,6 +1007,22 @@ details.panel + details.panel{
     </label>
     <p class="field-note">Into a headwind both slow down the same way. The difference is with the wind behind: holding ground speed, the drone doesn't go faster but uses less battery; holding airspeed, it goes faster. The DJI flight plan you can download here always holds a set ground speed.</p>
   </section>
+
+  <details class="panel" id="sitesPanel">
+    <summary>Restricted areas: <span id="sitesSummary">all avoided</span></summary>
+    <div class="disclosure-body">
+      <p class="field-note">Airports, military sites, prisons and the other
+      sites the local rules make no-fly zones (in Israel also heliports and
+      embassies) are always avoided. The sites below aren't no-fly zones in
+      themselves: they're avoided by default because they're usually full of
+      people, and flying over people is restricted in many countries,
+      including Israel. Untick any you don't need to avoid &mdash; they'll
+      still show on the map, in grey. You're responsible for keeping to the
+      rules where you fly.</p>
+      <input type="hidden" id="skipSites" value="">
+      <div class="site-toggles" id="siteToggles"></div>
+    </div>
+  </details>
 
   <details class="panel" id="droneConfigPanel">
       <summary>Drone: <span id="droneSummaryName">DJI Neo 2</span></summary>

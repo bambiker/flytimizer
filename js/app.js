@@ -16,6 +16,7 @@ import { hideNotice } from './notice.js';
 import { clearPlans, selectPlan } from './plans.js';
 import { syncRangeLayer } from './range.js';
 import { initSharedState, shareRoute } from './share.js';
+import { initSiteSettings } from './sites.js';
 import { resetForecastOffset, setForecastOffset } from './weather.js';
 import { downloadWPML } from './wpml.js';
 
@@ -84,4 +85,5 @@ document.getElementById('rangeToggle').addEventListener('change', function(e){
 });
 
 initMap();
+initSiteSettings();
 initSharedState();
