@@ -20,6 +20,10 @@ import { DRONE_PRESETS } from './drone.js';
 //  - A preset can replace the speed curve and the climb efficiency
 //    with figures measured from that drone's flight logs (its
 //    `power` entry in drone.js); other drones use the defaults.
+//  - Battery % is the drone's gauge, which counts charge: when the
+//    pack is low its voltage is lower, so its last percents hold less
+//    energy than its first. A preset's `socSlope` says by how much
+//    (gaugeUsedPct); without one every percent holds the same energy.
 //  - Payload: the app's payload coefficient multiplies weight, and
 //    lift power grows with weight^1.5 (rotor momentum theory).
 //  - Cold: below 15 C usable capacity drops (about 18% at 0 C).
@@ -75,6 +79,7 @@ export function readBatteryModel(){
     vmax: vmax,
     curve: curve,
     climbEff: power.climbEff || CLIMB_EFFICIENCY,
+    socSlope: power.socSlope || 0,
     hoverW: specPowerW / airspeedPowerFactor(SPEC_TEST_SPEED_MS, vmax, curve)
   };
 }
@@ -128,6 +133,34 @@ export function legEnergyFromTiming(model, payloadCoef, airspeed, timing, upSpee
 export function batteryPct(model, energyWh, tempC){
   var usableWh = model.wh * model.usableFraction * coldCapacityFactor(tempC);
   return energyWh / usableWh * 100;
+}
+
+// Energy in each gauge % at gauge level p is 1 + k*(p - 50) times the
+// average (k = model.socSlope), so the whole 100% still holds the
+// battery's energy. Share of that energy below gauge level p:
+function energyShareBelow(k, p){
+  return (p + k * (p * p / 2 - 50 * p)) / 100;
+}
+
+// Gauge % used when a flight starting at startPct (default a full
+// battery) uses energyPct % of the battery's energy (the sum of the
+// legs' batteryPct). Without a socSlope the two are the same.
+export function gaugeUsedPct(model, energyPct, startPct){
+  var k = (model && model.socSlope) || 0;
+  var start = isFinite(startPct) ? startPct : 100;
+  if (!k || !isFinite(energyPct)) return energyPct;
+  var target = 100 * energyShareBelow(k, start) - energyPct;   // 100 x share left
+  if (target <= 0) return energyPct + start - 100 * energyShareBelow(k, start);   // past empty
+  var a = k / 2, b = 1 - 50 * k;
+  var left = (-b + Math.sqrt(b * b + 4 * a * target)) / (2 * a);
+  return start - left;
+}
+
+// % of the battery's energy that lies above a gauge level - what a
+// flight from a full battery can use before reaching it.
+export function energyPctAbove(model, gaugePct){
+  var k = (model && model.socSlope) || 0;
+  return 100 * (1 - energyShareBelow(k, gaugePct));
 }
 
 export function fmtPct(p){

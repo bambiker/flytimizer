@@ -5,7 +5,7 @@
 // plans.
 
 import { track } from './analytics.js';
-import { BATTERY_RESERVE_PCT, DESCENT_POWER_FACTOR, batteryPct, climbEfficiency, coldCapacityFactor, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
+import { BATTERY_RESERVE_PCT, DESCENT_POWER_FACTOR, batteryPct, climbEfficiency, coldCapacityFactor, energyPctAbove, gaugeUsedPct, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
 import { MIN_GROUND_SPEED_MS, airspeedFor, formatDuration, getDistanceFromLatLon, groundSpeed, hourIndexNow, interpDir, lat1, lat2, lng1, lng2, marker, trueBearing } from './core.js';
 import { markUnsafe } from './drone.js';
 import { renderHazardsAndRoute } from './map-view.js';
@@ -167,7 +167,8 @@ export function roundTripRange(c){
   var m = c.battModel, inp = c.inp;
   if (!m) return null;
   var step = c.stepDeg || RANGE_STEP_DEG;
-  var budgetWh = m.wh * m.usableFraction * coldCapacityFactor(c.temperatureC) * (1 - BATTERY_RESERVE_PCT / 100);
+  // The energy above the reserve on the gauge (its last percents hold less).
+  var budgetWh = m.wh * m.usableFraction * coldCapacityFactor(c.temperatureC) * energyPctAbove(m, BATTERY_RESERVE_PCT) / 100;
   var dwellWh = m.hoverW * Math.pow(c.payloadOut, 1.5) * inp.dwellS / 3600;
   // Delivery lands at the destination; photo turns around in the air.
   var lands = c.mission !== 'photo';
@@ -361,7 +362,8 @@ export function renderRouteSummary(routeDist, straightDistM, avoidance, outbound
 // the reason each one is unsafe.
 // r: { heights, w, legalOk, buildingOk, terrainOkOut, terrainOkBack,
 //      flyableOut, flyableBack, tOut, tBack, battOut, battBack,
-//      minSafeAltitude, windResistance, rules }
+//      battModel, minSafeAltitude, windResistance, rules }
+// battOut/battBack are % of the battery's energy; shown as gauge %.
 export function renderHeightTable(r){
   var w = r.w;
   var cols = [[0, '30'], [5, '80'], [9, '120']];
@@ -369,7 +371,7 @@ export function renderHeightTable(r){
     var i = c[0], s = c[1];
     document.getElementById('ws' + s).innerHTML = fmtSpeed(w.ws[i]);
     document.getElementById('alt' + s).innerHTML = fmtLen(r.heights[i]);
-    document.getElementById('batt' + s).innerHTML = fmtPct(r.battOut[i] + r.battBack[i]);
+    document.getElementById('batt' + s).innerHTML = fmtPct(gaugeUsedPct(r.battModel, r.battOut[i] + r.battBack[i]));
     document.getElementById('gust' + s).innerHTML = fmtSpeed(w.estgust[i]);
     document.getElementById('wd' + s).innerHTML = (w.wd[i]).toFixed(0);
     document.getElementById('timefore' + s).innerHTML = formatDuration(r.tOut.timeV[i] + r.tOut.timeH[i]);
@@ -549,7 +551,7 @@ export function renderHazardInfo(r){
 // the "just go high" choice most pilots would make). Returns that
 // baseline's index and round-trip time for the plans' savings line.
 // r: { heights, flyableOut, flyableBack, tOut, tBack, battOut, battBack,
-//      minhor, minhorb, routeDist, speedhorizontal, speedhorizontalback }
+//      battModel, minhor, minhorb, routeDist, speedhorizontal, speedhorizontalback }
 export function renderBaselineSavings(r){
   var tOut = r.tOut, tBack = r.tBack, minhor = r.minhor, minhorb = r.minhorb;
   var baseIdx = -1;
@@ -559,7 +561,7 @@ export function renderBaselineSavings(r){
   document.getElementById('savingsText').style.display = isFinite(travel120) ? '' : 'none';
   if (baseIdx !== -1){
     document.getElementById('baselineHeight').textContent = fmtLen(r.heights[baseIdx]);
-    var battSave = (r.battOut[baseIdx] + r.battBack[baseIdx]) - (r.battOut[minhor] + r.battBack[minhorb]);
+    var battSave = gaugeUsedPct(r.battModel, r.battOut[baseIdx] + r.battBack[baseIdx]) - gaugeUsedPct(r.battModel, r.battOut[minhor] + r.battBack[minhorb]);
     document.getElementById('battSaving').textContent = (isFinite(battSave) && battSave >= 0.5) ? ' and about ' + battSave.toFixed(0) + '% of a battery' : '';
     document.getElementById('timenowind').innerHTML = formatDuration(tOut.timeV[baseIdx] + tBack.timeV[baseIdx] + (r.routeDist / r.speedhorizontal) + (r.routeDist / r.speedhorizontalback));
   }
@@ -789,7 +791,10 @@ export function buildPlans(c){
         var tot = { time: co.time + cb.time + x.time, batt: co.batt + cb.batt + x.batt };
         if (!isFinite(tot[primary])) return;
         if (!best || tot[primary] < best[primary] - tol || (Math.abs(tot[primary] - best[primary]) <= tol && tot[secondary] < best[secondary])){
-          best = { out: co, back: cb, time: tot.time, batt: tot.batt, totalTime: tot.time, totalBatt: tot.batt };
+          // batt: % of the battery's energy (adds up across legs);
+          // totalBatt: the gauge % a full battery drops by.
+          best = { out: co, back: cb, time: tot.time, batt: tot.batt, totalTime: tot.time,
+                   totalBatt: battModel ? gaugeUsedPct(battModel, tot.batt) : tot.batt };
         }
       });
     });
@@ -813,7 +818,7 @@ export function buildPlans(c){
       if (isFinite(calm.totalBatt) && !(plans.eco.totalBatt <= calm.totalBatt - ECO_SPORT_MIN_SAVING_PCT)) plans.eco = calm;
     }
   }
-  return { plans: plans, evalLeg: evalLeg, pairExtras: pairExtras };
+  return { plans: plans, evalLeg: evalLeg, pairExtras: pairExtras, battModel: battModel };
 }
 
 // Savings line: fastest plan vs simply flying at the highest allowed,
@@ -828,7 +833,7 @@ export function renderPlanSavings(planner, legs, baseline, battOut, battBack){
   document.getElementById('savesec').innerHTML = formatDuration(travelBase - fastTotal, 1);
   document.getElementById('totaltime120').innerHTML = formatDuration(travelBase);
   document.getElementById('savepercent').innerHTML = "(" + ((travelBase - fastTotal) / travelBase * 100).toFixed(1) + "%)";
-  var battSaveFast = (battOut[baseIdx] + battBack[baseIdx] + baseX.batt) - plans.fast.totalBatt;
+  var battSaveFast = gaugeUsedPct(planner.battModel, battOut[baseIdx] + battBack[baseIdx] + baseX.batt) - plans.fast.totalBatt;
   document.getElementById('battSaving').textContent = (isFinite(battSaveFast) && battSaveFast >= 0.5) ? ' and about ' + battSaveFast.toFixed(0) + '% of a battery' : '';
   document.getElementById('savingsText').style.display = (travelBase - fastTotal) > 0.5 ? '' : 'none';
 }
@@ -1090,7 +1095,7 @@ export async function calcHeight() {
     renderHeightTable({
       heights: heights, w: w, legalOk: legalOk, buildingOk: buildingOk,
       terrainOkOut: pOut.ok, terrainOkBack: pBack.ok, flyableOut: flyableOut, flyableBack: flyableBack,
-      tOut: tOut, tBack: tBack, battOut: battOut, battBack: battBack,
+      tOut: tOut, tBack: tBack, battOut: battOut, battBack: battBack, battModel: battModel,
       minSafeAltitude: minSafeAltitude, windResistance: inp.windResistance, rules: rules
     });
     renderRulesInfo(rules, legalCapM, altPermit);
@@ -1110,7 +1115,7 @@ export async function calcHeight() {
         document.getElementById('flyWarning').style.display = 'none';
         baseline = renderBaselineSavings({
           heights: heights, flyableOut: flyableOut, flyableBack: flyableBack, tOut: tOut, tBack: tBack,
-          battOut: battOut, battBack: battBack, minhor: minhor, minhorb: minhorb,
+          battOut: battOut, battBack: battBack, battModel: battModel, minhor: minhor, minhorb: minhorb,
           routeDist: routeDist, speedhorizontal: speedhorizontal, speedhorizontalback: speedhorizontalback
         });
     } else {
