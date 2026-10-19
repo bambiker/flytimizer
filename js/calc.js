@@ -12,6 +12,7 @@ import { renderHazardsAndRoute } from './map-view.js';
 import { currentMission } from './mission.js';
 import { hideNotice, showNotice } from './notice.js';
 import { BUILDING_AVOID_MAX_COUNT, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_HEIGHT_SAFETY_MARGIN_M, BUILDING_LATERAL_SAFETY_MARGIN_M, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_TYPE_LABEL, MAX_FLIGHT_ALTITUDE_M, getBuildingsNearPath, getHazardsNearRoute } from './osm.js';
+import { renderPeopleInfo } from './people.js';
 import { renderPlan, setCurrentCalc } from './plans.js';
 import { rangeExtremes, renderRange } from './range.js';
 import { Progress, estimateLookupSeconds } from './progress.js';
@@ -853,6 +854,10 @@ export async function calcHeight() {
     }
     const routeDist = avoidance.distance;
     renderHazardsAndRoute(hazards, buildingList, avoidance.path, ignoredHazards);
+    // Not awaited: it fills in its own line when the population tile arrives.
+    renderPeopleInfo(avoidance.path).then(function(r){
+      if (r) track('people_under_route', { people: Math.round(r.people) });
+    });
 
     var terrainSamples = await firstTerrainPromise;
     if (avoidance.path !== hazardOnlyPath){

@@ -12,18 +12,24 @@
 // out much lower than it is. So it only ever raises a building whose
 // height OSM doesn't give (never lowers one), and the result says the
 // height is an estimate.
+//
+// The same reader serves GHS-POP R2023A (people living in each cell,
+// 2025 estimate, same grid and licence) for counting how many people
+// live under a route (people.js).
 
 export var GHSL_URL = 'https://jrc-ghsl.s3.eu-central-1.amazonaws.com/ghs-built-h-anbh/r2023a/4326/3asec/2018/GHS_BUILT_H_ANBH_E2018_GLOBE_R2023A_4326_3ss_V1_0.tif';
+export var GHSL_POP_URL = 'https://jrc-ghsl.s3.eu-central-1.amazonaws.com/ghs-pop/r2023a/4326/3asec/2025/GHS_POP_E2025_GLOBE_R2023A_4326_3ss_V1_0.tif';
 export var GHSL_FETCH_TIMEOUT_MS = 10000;
 export var GHSL_HEADER_BYTES = 16384;
 var GHSL_TILE_CACHE_MAX = 4;
 
-// Reads `length` bytes from `start`. Tests swap ghslIO.fetchRange.
-async function fetchRange(start, length){
+// Reads `length` bytes from `start` of the file at `url`. Tests swap
+// ghslIO.fetchRange.
+async function fetchRange(start, length, url){
   var controller = new AbortController();
   var timer = setTimeout(function(){ controller.abort(); }, GHSL_FETCH_TIMEOUT_MS);
   try {
-    var response = await fetch(GHSL_URL, { headers: { Range: 'bytes=' + start + '-' + (start + length - 1) }, signal: controller.signal });
+    var response = await fetch(url || GHSL_URL, { headers: { Range: 'bytes=' + start + '-' + (start + length - 1) }, signal: controller.signal });
     if (response.status !== 206) throw new Error('GHSL HTTP ' + response.status);
     return await response.arrayBuffer();
   } finally {
@@ -34,8 +40,8 @@ async function fetchRange(start, length){
 export var ghslIO = { fetchRange: fetchRange };
 
 // The parts of a little-endian BigTIFF header we need. Throws if the
-// file isn't laid out the way this reader expects (tiled, one 32-bit
-// float band, deflate or no compression, no predictor).
+// file isn't laid out the way this reader expects (tiled, one 32- or
+// 64-bit float band, deflate or no compression, no predictor).
 export function parseGhslHeader(buf){
   var dv = new DataView(buf);
   if (dv.getUint16(0, true) !== 0x4949 || dv.getUint16(2, true) !== 43) throw new Error('GHSL: not a little-endian BigTIFF');
@@ -65,7 +71,8 @@ export function parseGhslHeader(buf){
     return out;
   }
   var compression = values(259)[0];
-  if (values(258)[0] !== 32 || values(339)[0] !== 3) throw new Error('GHSL: expected 32-bit float samples');
+  var bits = values(258)[0];
+  if ((bits !== 32 && bits !== 64) || values(339)[0] !== 3) throw new Error('GHSL: expected 32- or 64-bit float samples');
   if (compression !== 1 && compression !== 8 && compression !== 32946) throw new Error('GHSL: unsupported compression ' + compression);
   if (tags[317] && values(317)[0] !== 1) throw new Error('GHSL: predictors not supported');
   var scale = values(33550), tie = values(33922);
@@ -73,7 +80,7 @@ export function parseGhslHeader(buf){
   return {
     width: values(256)[0], height: values(257)[0],
     tileW: values(322)[0], tileH: values(323)[0],
-    deflate: compression !== 1,
+    deflate: compression !== 1, bits: bits,
     offsetsAt: tags[324].at,
     countsAt: counts.at, countsSize: counts.type === 16 ? 8 : 4,
     // Top-left corner of the top-left pixel, and pixel size, in degrees.
@@ -86,65 +93,68 @@ async function inflate(buf){
   return new Response(stream).arrayBuffer();
 }
 
-var headerPromise = null;
+var headerPromises = new Map();
 var tileCache = new Map();
 
-// Forget the cached header and tiles (tests, or after a failure).
+// Forget the cached headers and tiles (tests, or after a failure).
 export function resetGhsl(){
-  headerPromise = null;
+  headerPromises.clear();
   tileCache.clear();
 }
 
-function getHeader(){
-  if (!headerPromise){
-    headerPromise = ghslIO.fetchRange(0, GHSL_HEADER_BYTES).then(parseGhslHeader);
-    headerPromise.catch(function(){ headerPromise = null; });
+function getHeader(url){
+  if (!headerPromises.has(url)){
+    var p = ghslIO.fetchRange(0, GHSL_HEADER_BYTES, url).then(parseGhslHeader);
+    p.catch(function(){ headerPromises.delete(url); });
+    headerPromises.set(url, p);
   }
-  return headerPromise;
+  return headerPromises.get(url);
 }
 
-async function getTile(h, tileRow, tileCol){
-  var key = tileRow + ',' + tileCol;
+async function getTile(url, h, tileRow, tileCol){
+  var key = url + '|' + tileRow + ',' + tileCol;
   if (tileCache.has(key)) return tileCache.get(key);
   var idx = tileRow * Math.ceil(h.width / h.tileW) + tileCol;
-  var where = await Promise.all([ghslIO.fetchRange(h.offsetsAt + idx * 8, 8), ghslIO.fetchRange(h.countsAt + idx * h.countsSize, h.countsSize)]);
+  var where = await Promise.all([ghslIO.fetchRange(h.offsetsAt + idx * 8, 8, url), ghslIO.fetchRange(h.countsAt + idx * h.countsSize, h.countsSize, url)]);
   var offset = Number(new DataView(where[0]).getBigUint64(0, true));
   var length = h.countsSize === 8 ? Number(new DataView(where[1]).getBigUint64(0, true)) : new DataView(where[1]).getUint32(0, true);
   var data = null;   // an empty tile (open sea) is stored with length 0
   if (length > 0){
-    var raw = await ghslIO.fetchRange(offset, length);
-    data = new Float32Array(h.deflate ? await inflate(raw) : raw);
+    var raw = await ghslIO.fetchRange(offset, length, url);
+    var bytes = h.deflate ? await inflate(raw) : raw;
+    data = h.bits === 64 ? new Float64Array(bytes) : new Float32Array(bytes);
   }
   tileCache.set(key, data);
   if (tileCache.size > GHSL_TILE_CACHE_MAX) tileCache.delete(tileCache.keys().next().value);
   return data;
 }
 
-// Average building height (m) around each point: the highest of the
-// cell it's in and the cells next to it (within the same tile), since
-// a building's centre can sit at a cell edge. 0 where there are no
-// buildings, null outside the data. Rejects if the data can't be read.
-export async function ghslHeights(points){
-  var h = await getHeader();
+// The value of the cell under each point - or, with `neighbours`, the
+// highest of that cell and the ones around it (within the same tile).
+// 0 where the data is empty, null outside it. Rejects if the file
+// can't be read. Also returns the file's cell size in degrees.
+export async function ghslCells(url, points, neighbours){
+  var h = await getHeader(url);
   var tiles = new Map();
   var cells = points.map(function(p){
     var col = Math.floor((p.lng - h.x0) / h.dx), row = Math.floor((h.y0 - p.lat) / h.dy);
     if (col < 0 || row < 0 || col >= h.width || row >= h.height) return null;
     var key = Math.floor(row / h.tileH) + ',' + Math.floor(col / h.tileW);
-    if (!tiles.has(key)) tiles.set(key, getTile(h, Math.floor(row / h.tileH), Math.floor(col / h.tileW)));
+    if (!tiles.has(key)) tiles.set(key, getTile(url, h, Math.floor(row / h.tileH), Math.floor(col / h.tileW)));
     return { key: key, r: row % h.tileH, c: col % h.tileW };
   });
   var loaded = {};
   var keys = Array.from(tiles.keys());
   var data = await Promise.all(keys.map(function(k){ return tiles.get(k); }));
   keys.forEach(function(k, i){ loaded[k] = data[i]; });
-  return cells.map(function(cell){
+  var span = neighbours ? 1 : 0;
+  var values = cells.map(function(cell){
     if (!cell) return null;
     var t = loaded[cell.key];
     if (!t) return 0;
     var best = 0;
-    for (var dr = -1; dr <= 1; dr++){
-      for (var dc = -1; dc <= 1; dc++){
+    for (var dr = -span; dr <= span; dr++){
+      for (var dc = -span; dc <= span; dc++){
         var r = cell.r + dr, c = cell.c + dc;
         if (r < 0 || c < 0 || r >= h.tileH || c >= h.tileW) continue;
         var v = t[r * h.tileW + c];
@@ -153,4 +163,13 @@ export async function ghslHeights(points){
     }
     return best;
   });
+  return { values: values, dx: h.dx, dy: h.dy };
+}
+
+// Average building height (m) around each point: the highest of the
+// cell it's in and the cells next to it, since a building's centre can
+// sit at a cell edge. 0 where there are no buildings, null outside the
+// data. Rejects if the data can't be read.
+export async function ghslHeights(points){
+  return (await ghslCells(GHSL_URL, points, true)).values;
 }

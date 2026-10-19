@@ -15,6 +15,8 @@
 //   gnssFail      CelesTrak answers HTTP 403 (no satellite orbits)
 //   kp            Kp index NOAA reports for now (default 2.33)
 //   ipCountry     country of the internet connection (default 'IL')
+//   population    people per cell in the GHSL population file (cells
+//                 0.005 degrees; default: the file can't be downloaded)
 //   ghsl          building height (m) the GHSL height file gives around
 //                 the route (default: the file can't be downloaded)
 //   country       ISO code Nominatim reports (default 'il')
@@ -146,14 +148,19 @@ export async function openSite(page, from, to, query, sc = {}){
     json(r, [['time_tag', 'kp', 'observed', 'noaa_scale'], [t, String(sc.kp !== undefined ? sc.kp : 2.33), 'estimated', null]]);
   });
 
-  if (sc.ghsl !== undefined){
-    const tiff = makeGhslTiff({ x0: Math.min(flo, tlo) - 0.05, y0: Math.max(fla, tla) + 0.05, dx: 0.005, width: 40, height: 40, tile: 16, value: () => sc.ghsl });
-    await ctx.route(/jrc-ghsl\.s3\./, r => {
-      const part = rangeOf(tiff, r.request().headers()['range']);
-      if (!part) return r.fulfill({ status: 200, body: tiff });
-      r.fulfill({ status: 206, body: part, headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'image/tiff' } });
-    });
-  }
+  // GHSL files: building heights (sc.ghsl) and population (sc.population,
+  // people per cell, in the real file's 64-bit format). Either one that
+  // isn't given can't be downloaded.
+  const ghslBox = { x0: Math.min(flo, tlo) - 0.05, y0: Math.max(fla, tla) + 0.05, dx: 0.005, width: 40, height: 40, tile: 16 };
+  const heightTiff = sc.ghsl !== undefined ? makeGhslTiff(Object.assign({ value: () => sc.ghsl }, ghslBox)) : null;
+  const popTiff = sc.population !== undefined ? makeGhslTiff(Object.assign({ value: () => sc.population, bits: 64 }, ghslBox)) : null;
+  await ctx.route(/jrc-ghsl\.s3\./, r => {
+    const tiff = /ghs-pop/.test(r.request().url()) ? popTiff : heightTiff;
+    if (!tiff) return r.abort();
+    const part = rangeOf(tiff, r.request().headers()['range']);
+    if (!part) return r.fulfill({ status: 200, body: tiff });
+    r.fulfill({ status: 206, body: part, headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'image/tiff' } });
+  });
 
   const q = 'from=' + from.join(',') + (to ? '&to=' + to.join(',') : '') + (query ? '&' + query : '');
   await page.goto(SITE + '/index.html?' + q);
