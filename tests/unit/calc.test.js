@@ -191,10 +191,13 @@ test('into a strong headwind, a leg at the top speed uses less battery than at t
   const plans = site.buildPlans({ heights: heightsL, legs, speedLegs: factors.map(f => site.legsAtSpeed(ctx, route, f)), w: legs.w,
     legalOk: [true, true], buildingOk: [true, true], terrainAvailable: false, battModel: model, temperatureC: 20, mission: 'delivery',
     dwellS: 0, payloadOut: 1, payloadBack: 1, speedupback: 5, speeddownback: 5 }).plans;
-  assert.equal(plans.fast.out.speedFactor, 1);
   assert.equal(plans.eco.out.speedFactor, 2);
   assert.equal(plans.eco.out.speed, 20);
-  assert.ok(plans.eco.out.batt < plans.fast.out.batt);
+  const missionOut = site.legsAtSpeed(ctx, route, 1).out.batt[plans.eco.out.i];
+  assert.ok(plans.eco.out.batt < missionOut);
+  // The fastest plan is never slower than least battery: it speeds up into the wind too.
+  assert.equal(plans.fast.out.speedFactor, 2);
+  assert.ok(plans.fast.totalTime <= plans.eco.totalTime + 0.5);
   // With the wind behind it, it doesn't speed up.
   assert.ok(plans.eco.back.speedFactor <= 1);
   // In a light breeze it isn't worth flying by hand.

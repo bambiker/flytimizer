@@ -796,16 +796,18 @@ export function buildPlans(c){
     // One leg unflyable: still show the other one.
     return best || { out: pickBest(outs, primary, secondary), back: pickBest(backs, primary, secondary), totalTime: NaN, totalBatt: NaN };
   }
-  var plans = { fast: pickPair('time', 'batt'), eco: null };
+  // The same legs at other speeds (c.speedLegs), each leg on its own:
+  // slower ones only ever save battery; faster ones (Sport mode, by
+  // hand, into the wind) can also be quicker, so the fastest plan
+  // takes them too - otherwise least battery could beat it on time.
+  var ecoOut = candOut, ecoBack = candBack;
+  (c.speedLegs || []).forEach(function(v){
+    ecoOut = ecoOut.concat(legCandidates(v.out));
+    ecoBack = ecoBack.concat(legCandidates(v.back));
+  });
+  function notSlower(cand){ return cand.speedFactor >= 1; }
+  var plans = { fast: pickPair('time', 'batt', ecoOut.filter(notSlower), ecoBack.filter(notSlower)), eco: null };
   if (battModel){
-    // Least battery may also fly a leg slower or faster than the
-    // mission speed (c.speedLegs: the same legs at other speeds), each
-    // leg on its own.
-    var ecoOut = candOut, ecoBack = candBack;
-    (c.speedLegs || []).forEach(function(v){
-      ecoOut = ecoOut.concat(legCandidates(v.out));
-      ecoBack = ecoBack.concat(legCandidates(v.back));
-    });
     plans.eco = pickPair('batt', 'time', ecoOut, ecoBack);
     if ((plans.eco.out && plans.eco.out.speedFactor > 1) || (plans.eco.back && plans.eco.back.speedFactor > 1)){
       var notSport = function(cand){ return cand.speedFactor <= 1; };
@@ -865,7 +867,7 @@ export async function planAlongPath(planCtx, path){
   var full = legsAtSpeed(c, route, 1);
   var planner = buildPlans({
     heights: c.heights, legs: { out: full.out, back: full.back },
-    speedLegs: c.battModel ? ecoSpeedFactors(inp).map(function(f){ return legsAtSpeed(c, route, f); }) : [],
+    speedLegs: ecoSpeedFactors(inp).map(function(f){ return legsAtSpeed(c, route, f); }),
     sportLegs: topSpeedFactor(inp) ? legsAtSpeed(c, route, topSpeedFactor(inp), true) : null,
     w: full.w, legalOk: c.legalOk, buildingOk: route.buildingOk, terrainAvailable: terrainAvailable,
     battModel: c.battModel, temperatureC: c.temperatureC, mission: c.mission, dwellS: inp.dwellS,
@@ -1147,7 +1149,7 @@ export async function calcHeight() {
     };
     const mainRoute = { samples: terrainSamples, back: terrainBack, reqOut: reqOut, reqBack: reqBack, pOut: pOut, pBack: pBack,
                         buildingOk: buildingOk, distance: routeDist };
-    const speedLegs = battModel ? ecoSpeedFactors(inp).map(function(f){ return legsAtSpeed(planCtx, mainRoute, f); }) : [];
+    const speedLegs = ecoSpeedFactors(inp).map(function(f){ return legsAtSpeed(planCtx, mainRoute, f); });
     const sportF = topSpeedFactor(inp);
     const planner = buildPlans({
       heights: heights, legs: legs, speedLegs: speedLegs, sportLegs: sportF ? legsAtSpeed(planCtx, mainRoute, sportF, true) : null, w: w, legalOk: legalOk, buildingOk: buildingOk, terrainAvailable: terrainAvailable,

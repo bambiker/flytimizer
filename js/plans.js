@@ -12,7 +12,8 @@ import { loadJSZip } from './wpml.js';
 // Two plans: fastest and least battery
 //
 // "Fastest" follows the terrain at the height that gets there
-// soonest. "Least battery" also considers a second profile style for
+// soonest; into a headwind it may fly a leg faster than a mission can
+// (Sport mode, by hand). "Least battery" also considers a second profile style for
 // every height - "hold altitude": climb only when the ground (or a
 // building) forces it, descend only when the legal height limit
 // forces it, otherwise stay level. Over rolling terrain that avoids
@@ -81,8 +82,8 @@ export function renderPlanTabs(){
   var note = document.getElementById('planNote');
   if (note){
     var same = eco && c.plans.fast.out && eco.out && c.plans.fast.back && eco.back &&
-      c.plans.fast.out.i === eco.out.i && c.plans.fast.out.mode === eco.out.mode && eco.out.speedFactor === 1 &&
-      c.plans.fast.back.i === eco.back.i && c.plans.fast.back.mode === eco.back.mode && eco.back.speedFactor === 1;
+      c.plans.fast.out.i === eco.out.i && c.plans.fast.out.mode === eco.out.mode && c.plans.fast.out.speed === eco.out.speed &&
+      c.plans.fast.back.i === eco.back.i && c.plans.fast.back.mode === eco.back.mode && c.plans.fast.back.speed === eco.back.speed;
     note.textContent = same ? 'On this route the fastest plan is also the most battery-efficient.' : '';
     note.style.display = same ? 'block' : 'none';
   }
@@ -210,7 +211,7 @@ export function renderPlan(){
         '): fly the Sport-mode leg by hand. A mission can\'t fly that fast, so its download is only a guide to the heights. Sport mode turns obstacle sensing off.</span>'
       : missions.length && byHand
       ? '<span class="wpml-note" id="sportNote">This plan flies a leg into the wind in Sport mode, faster than a mission can (' + fmtSpeed(c.speedOut) +
-        '). The download flies it at the mission speed, which takes a little more battery — fly that leg by hand for the figures above. Sport mode turns obstacle sensing off.</span>'
+        '). The download flies it at the mission speed, which takes longer and a little more battery — fly that leg by hand for the figures above. Sport mode turns obstacle sensing off.</span>'
       : '');
   }
 

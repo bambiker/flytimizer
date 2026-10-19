@@ -90,14 +90,16 @@ test('the DJI flight plan downloads as a valid WPML archive', async ({ page }) =
   expect(waylines).toContain('wpml:executeHeight');
 });
 
-test('least battery may fly into the wind in Sport mode; the download stays at the mission speed', async ({ page }) => {
+test('into the wind a plan may fly in Sport mode; the download stays at the mission speed, and fastest is never slower than least battery', async ({ page }) => {
   const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
   await page.clock.setFixedTime(noon);
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=air3');
   await waitForResult(page);
   await expect(page.locator('#cruise')).toHaveValue('12');
   await expect(page.locator('#hor')).toHaveValue('21');
-  await expect(page.locator('#sportNote')).toHaveCount(0);
+  // Into the wind, the fastest plan flies the leg in Sport mode too.
+  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
+  await expect(page.locator('#sportNote')).toContainText('faster than a mission can');
 
   await page.locator('#planEcoBtn').click();
   await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
@@ -109,9 +111,14 @@ test('least battery may fly into the wind in Sport mode; the download stays at t
   const speed = parseFloat(waylines.match(/<wpml:autoFlightSpeed>([\d.]+)</)[1]);
   expect(speed).toBeCloseTo(missionSpeed, 1);
 
-  await page.locator('#planFastBtn').click();
-  await expect(page.locator('#styleFore')).not.toContainText('Sport');
-  await expect(page.locator('#sportNote')).toHaveCount(0);
+  // The fastest plan is never slower than least battery.
+  const seconds = async id => {
+    const m = (await page.locator('#' + id + ' .plan-detail').textContent()).match(/(?:(\d+) min)?\s*(?:(\d+) s)?/);
+    return (+m[1] || 0) * 60 + (+m[2] || 0);
+  };
+  const fast = await seconds('planFastBtn');
+  expect(fast).toBeGreaterThan(0);
+  expect(fast).toBeLessThanOrEqual(await seconds('planEcoBtn'));
 });
 
 test('when the wind is too strong for the mission speed, the fastest plan flies that leg in Sport mode', async ({ page }) => {
