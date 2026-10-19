@@ -26,7 +26,7 @@ import { UNITS_KEY } from './units.js';
 // ---------------------------------------------------------------
 export var SETTINGS_KEY = 'flytimizerSettings';
 export var LAST_PLACE_KEY = 'flytimizerLastPlace';
-export var SETTING_FIELDS = ['mission', 'speedMode', 'skipSites', 'dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
+export var SETTING_FIELDS = ['mission', 'speedMode', 'skipSites', 'dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
 
 export function storageGet(key){
   try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e){ return null; }

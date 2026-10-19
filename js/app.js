@@ -6,7 +6,7 @@
 // ones the scripts create later, so one click listener handles them all.
 
 import { track } from './analytics.js';
-import { applyDronePreset, checkCustom } from './drone.js';
+import { PRESET_FIELDS, applyDronePreset, checkCustom } from './drone.js';
 import { getHeight } from './calc.js';
 import { checkConditions, hideConditions } from './conditions.js';
 import { clearMarkers, getLocation, searchLocation } from './core.js';
@@ -75,7 +75,7 @@ document.getElementById('locationSearchInput').addEventListener('keydown', funct
 // adds to the same fields, so what gets saved is already up to date.
 document.getElementById('mission').addEventListener('change', onMissionChange);
 document.getElementById('droneModel').addEventListener('change', applyDronePreset);
-['hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass'].forEach(function(id){
+PRESET_FIELDS.forEach(function(id){
   document.getElementById(id).addEventListener('input', checkCustom);
 });
 

@@ -21,7 +21,8 @@ import { loadJSZip } from './wpml.js';
 // the drone higher, where the wind is usually stronger - so each
 // candidate (height x style) is scored with the battery model and the
 // cheapest flyable one wins, separately for each leg. It may also fly a
-// leg slower than the set speed when that saves battery.
+// leg slower than the mission speed, or faster (up to the Sport-mode
+// top speed, flown by hand) into a headwind, when that saves battery.
 //
 // "Fewer people" (when people.js finds a route over fewer people) is the
 // fastest plan along that other route; it carries its own route
@@ -115,9 +116,12 @@ export function renderPlan(){
   document.getElementById('heightback').innerHTML = back ? lenNum(c.heights[back.i]) : '&mdash;';
   document.getElementById('unitFore').textContent = lenUnit();
   document.getElementById('unitBack').textContent = lenUnit();
-  // A leg flown below the set speed (least battery) says how fast.
+  // A leg flown at another speed than the mission speed (least
+  // battery) says how fast; faster means Sport mode, by hand.
   function legStyle(leg){
-    return 'min. above ground, ' + planLegLabel(leg) + (leg.speedFactor && leg.speedFactor < 1 ? ', at ' + fmtSpeed(leg.speed) : '');
+    var f = leg.speedFactor || 1;
+    return 'min. above ground, ' + planLegLabel(leg) +
+      (f < 1 ? ', at ' + fmtSpeed(leg.speed) : f > 1 ? ', at ' + fmtSpeed(leg.speed) + ' (Sport mode, by hand)' : '');
   }
   document.getElementById('styleFore').textContent = out ? legStyle(out) : '';
   document.getElementById('styleBack').textContent = back ? legStyle(back) : '';
@@ -174,7 +178,10 @@ export function renderPlan(){
   // way, landing at the end of each; photo = one round trip.
   var missions = [];
   var prefix = PLAN_FILE_PREFIX[selectedPlan] || 'flytimizer-';
-  var speedOut = out && out.speed ? out.speed : c.speedOut, speedBack = back && back.speed ? back.speed : c.speedBack;
+  // A mission can't fly faster than the mission speed: a leg planned
+  // faster (Sport mode) is saved at the mission speed.
+  var speedOut = out && out.speed ? Math.min(out.speed, c.speedOut) : c.speedOut, speedBack = back && back.speed ? Math.min(back.speed, c.speedBack) : c.speedBack;
+  var byHand = [out, back].some(function(leg){ return leg && leg.speedFactor > 1; });
   if (out && r.terrainAvailable){
     if (c.mission === 'photo'){
       // One mission for the whole round trip, at the outbound leg's speed.
@@ -197,7 +204,10 @@ export function renderPlan(){
   if (wpmlBox){
     wpmlBox.innerHTML = missions.map(function(m, k){
       return '<button class="btn btn-ghost" data-action="download" data-arg="' + k + '">' + m.label + '</button>';
-    }).join('');
+    }).join('') + (missions.length && byHand
+      ? '<span class="wpml-note" id="sportNote">This plan flies a leg into the wind in Sport mode, faster than a mission can (' + fmtSpeed(c.speedOut) +
+        '). The download flies it at the mission speed, which takes a little more battery — fly that leg by hand for the figures above. Sport mode turns obstacle sensing off.</span>'
+      : '');
   }
 
   renderPlanTabs();

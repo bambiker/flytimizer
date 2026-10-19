@@ -165,3 +165,44 @@ test('legsAtSpeed: a slower leg takes longer, and holding ground speed with a ta
   // Profiles keep their full-speed shape.
   assert.equal(half.out.climbRun, full.out.climbRun);
 });
+
+test('ecoSpeedFactors: slower shares, plus steps up to the top speed when it is faster than the mission speed', () => {
+  assert.deepEqual(site.ecoSpeedFactors({ speedhorizontal: 10, speedhorizontalback: 10 }), site.ECO_SPEED_FACTORS);
+  assert.deepEqual(site.ecoSpeedFactors({ speedhorizontal: 10, speedhorizontalback: 10, topSpeed: 10, topSpeedBack: 10 }), site.ECO_SPEED_FACTORS);
+  const f = site.ecoSpeedFactors({ speedhorizontal: 12, speedhorizontalback: 12, topSpeed: 21, topSpeedBack: 21 });
+  assert.equal(f.length, site.ECO_SPEED_FACTORS.length + 3);
+  assert.ok(Math.abs(f[f.length - 1] * 12 - 21) < 1e-9);
+});
+
+test('into a strong headwind, a leg at the top speed uses less battery than at the mission speed', () => {
+  const heightsL = [30, 60];
+  const samples = [{ s: 0, g: 0, lat: 0, lng: 0 }, { s: 1000, g: 0, lat: 0, lng: 0.009 }];
+  const back = site.reverseSamples(samples);
+  const inp = { speedup: 5, speeddown: 5, speedhorizontal: 10, speedupback: 5, speeddownback: 5, speedhorizontalback: 10,
+    topSpeed: 20, topSpeedBack: 20, drag: '1', windResistance: 20, speedMode: 'air', dwellS: 0 };
+  const route = { samples, back, reqOut: [-Infinity, -Infinity], reqBack: [-Infinity, -Infinity], distance: 1000, buildingOk: [true, true],
+    pOut: site.legProfiles(heightsL, samples, [-Infinity, -Infinity], 10, 5, 5), pBack: site.legProfiles(heightsL, back, [-Infinity, -Infinity], 10, 5, 5) };
+  const model = { wh: 77, usableFraction: 1, massKg: 0.9, vmax: 20, hoverW: 100 };
+  // Wind from the east, flying east: a headwind out, a tailwind back.
+  const ctx = { heights: heightsL, wx: site.forecastAt(hourly({ wind_direction_10m: [90], wind_direction_80m: [90], wind_direction_120m: [90] }), 0),
+    dronedegrees: 270, inp, legalOk: [true, true], battModel: model, temperatureC: 20, payloadOut: 1, payloadBack: 1, timingOptsOut: {}, timingOptsBack: {} };
+  const legs = site.legsAtSpeed(ctx, route, 1);
+  const factors = site.ecoSpeedFactors(inp);
+  const plans = site.buildPlans({ heights: heightsL, legs, speedLegs: factors.map(f => site.legsAtSpeed(ctx, route, f)), w: legs.w,
+    legalOk: [true, true], buildingOk: [true, true], terrainAvailable: false, battModel: model, temperatureC: 20, mission: 'delivery',
+    dwellS: 0, payloadOut: 1, payloadBack: 1, speedupback: 5, speeddownback: 5 }).plans;
+  assert.equal(plans.fast.out.speedFactor, 1);
+  assert.equal(plans.eco.out.speedFactor, 2);
+  assert.equal(plans.eco.out.speed, 20);
+  assert.ok(plans.eco.out.batt < plans.fast.out.batt);
+  // With the wind behind it, it doesn't speed up.
+  assert.ok(plans.eco.back.speedFactor <= 1);
+  // In a light breeze it isn't worth flying by hand.
+  const calmCtx = Object.assign({}, ctx, { wx: site.forecastAt(hourly({ wind_speed_10m: [2], wind_speed_80m: [3], wind_speed_120m: [3],
+    wind_direction_10m: [90], wind_direction_80m: [90], wind_direction_120m: [90] }), 0) });
+  const calmLegs = site.legsAtSpeed(calmCtx, route, 1);
+  const calm = site.buildPlans({ heights: heightsL, legs: calmLegs, speedLegs: factors.map(f => site.legsAtSpeed(calmCtx, route, f)), w: calmLegs.w,
+    legalOk: [true, true], buildingOk: [true, true], terrainAvailable: false, battModel: model, temperatureC: 20, mission: 'delivery',
+    dwellS: 0, payloadOut: 1, payloadBack: 1, speedupback: 5, speeddownback: 5 }).plans;
+  assert.ok(calm.eco.out.speedFactor <= 1);
+});

@@ -3,6 +3,15 @@
 // ---------------------------------------------------------------
 // Drone presets: horizontal/ascent/descent speed (m/s), from each
 // manufacturer's published spec sheet (sport/S-mode figures).
+// cruise = the mission speed: the most a waypoint mission flies (and
+// the Normal-mode top speed, with obstacle sensing on), which every
+// plan and downloaded flight plan uses. hor = the Sport-mode top
+// speed: obstacle sensing is off and missions can't fly it, so only
+// "Least battery" uses it, for a leg flown by hand into a headwind.
+//   Mavic 3 Classic: Normal 15, waypoint missions up to 15.
+//   Mini 4 Pro, Air 3: Normal 12, DJI Fly waypoints up to 12.
+//   Matrice 300 RTK: P-mode 17, DJI Pilot 2 missions up to 15.
+//   Neo 2: Normal 8.  EVO Lite+: Standard 10 (Ludicrous 18).
 // ---------------------------------------------------------------
 
 // batt = battery energy (Wh), ftime = rated max flight time (min),
@@ -18,17 +27,17 @@
 // draws more power the faster it flies (no dip at moderate speed), and
 // climbing costs it about 7.7 W per m/s.
 export var DRONE_PRESETS = {
-  mavic3classic: { name: 'DJI Mavic 3 Classic', hor: 21, asc: 8, des: 6, windres: 12, batt: 77, ftime: 46, mass: 0.895 },
-  mini4pro:      { name: 'DJI Mini 4 Pro',       hor: 16, asc: 5, des: 5, windres: 10.7, batt: 18.96, ftime: 34, mass: 0.249 },
-  air3:          { name: 'DJI Air 3',            hor: 21, asc: 10, des: 10, windres: 12, batt: 62.6, ftime: 46, mass: 0.72 },
-  matrice300:    { name: 'DJI Matrice 300 RTK',  hor: 23, asc: 6, des: 5, windres: 12, batt: 548, ftime: 55, mass: 6.3 },
-  neo2:          { name: 'DJI Neo 2',            hor: 12, asc: 5, des: 3, windres: 10.7, batt: 10, ftime: 11.4, mass: 0.151,
+  mavic3classic: { name: 'DJI Mavic 3 Classic', cruise: 15, hor: 21, asc: 8, des: 6, windres: 12, batt: 77, ftime: 46, mass: 0.895 },
+  mini4pro:      { name: 'DJI Mini 4 Pro',       cruise: 12, hor: 16, asc: 5, des: 5, windres: 10.7, batt: 18.96, ftime: 34, mass: 0.249 },
+  air3:          { name: 'DJI Air 3',            cruise: 12, hor: 21, asc: 10, des: 10, windres: 12, batt: 62.6, ftime: 46, mass: 0.72 },
+  matrice300:    { name: 'DJI Matrice 300 RTK',  cruise: 15, hor: 23, asc: 6, des: 5, windres: 12, batt: 548, ftime: 55, mass: 6.3 },
+  neo2:          { name: 'DJI Neo 2',            cruise: 8, hor: 12, asc: 5, des: 3, windres: 10.7, batt: 10, ftime: 11.4, mass: 0.151,
                    power: { curve: { a: 0.1, b: 0.47 }, climbEff: 0.19 } },
-  evolite:       { name: 'Autel EVO Lite+',      hor: 18, asc: 5, des: 4, windres: 10.6, batt: 68.7, ftime: 40, mass: 0.835 }
+  evolite:       { name: 'Autel EVO Lite+',      cruise: 10, hor: 18, asc: 5, des: 4, windres: 10.6, batt: 68.7, ftime: 40, mass: 0.835 }
 };
 // Fields a preset fills in (the rest - payload, drag, battery health -
 // are the person's own).
-export var PRESET_FIELDS = ['hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass'];
+export var PRESET_FIELDS = ['cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass'];
 
 export function updateDroneSummary(){
   var sel = document.getElementById('droneModel');

@@ -90,6 +90,28 @@ test('the DJI flight plan downloads as a valid WPML archive', async ({ page }) =
   expect(waylines).toContain('wpml:executeHeight');
 });
 
+test('least battery may fly into the wind in Sport mode; the download stays at the mission speed', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=air3');
+  await waitForResult(page);
+  await expect(page.locator('#cruise')).toHaveValue('12');
+  await expect(page.locator('#hor')).toHaveValue('21');
+  await expect(page.locator('#sportNote')).toHaveCount(0);
+
+  await page.locator('#planEcoBtn').click();
+  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
+  await expect(page.locator('#sportNote')).toContainText('faster than a mission can');
+  const missionSpeed = await page.evaluate(() => 12 / parseFloat(document.getElementById('payload').value));
+  const kmz = await downloadMission(page);
+  expect(kmz.name).toBe('flytimizer-least-battery-outbound.kmz');
+  const waylines = await kmz.zip.file('wpmz/waylines.wpml').async('string');
+  const speed = parseFloat(waylines.match(/<wpml:autoFlightSpeed>([\d.]+)</)[1]);
+  expect(speed).toBeCloseTo(missionSpeed, 1);
+
+  await page.locator('#planFastBtn').click();
+  await expect(page.locator('#styleFore')).not.toContainText('Sport');
+  await expect(page.locator('#sportNote')).toHaveCount(0);
+});
+
 test('wind stronger than the drone can handle gives a clear no-fly warning', async ({ page }) => {
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { windMul: 6 });
   await waitForResult(page);
@@ -475,7 +497,7 @@ test('when no height is safe, that warning comes before everything else', async 
 
 test('number fields open a numeric keypad on phones', async ({ page }) => {
   await openSite(page, HAIFA, null, 'drone=mini4pro');
-  const fields = ['dwell', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'health', 'drag', 'payload', 'payloadback'];
+  const fields = ['dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'health', 'drag', 'payload', 'payloadback'];
   for (const id of fields) await expect(page.locator('#' + id)).toHaveAttribute('inputmode', 'decimal');
   await expect(page.getByRole('textbox', { name: 'Search a place or address' })).toBeVisible();
 });

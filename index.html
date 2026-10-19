@@ -558,6 +558,7 @@ details.panel + details.panel{
 }
 
 .wpml-buttons{ display: contents; }
+.wpml-note{ flex-basis: 100%; font-size: 0.85rem; color: var(--muted); }
 
 /* ---------- 48-hour outlook ---------- */
 
@@ -1044,7 +1045,11 @@ details.panel + details.panel{
           </div>
         </label>
         <label class="field">
-          Horizontal speed
+          Mission speed
+          <div class="field-input"><input type="text" inputmode="decimal" id="cruise" value="8"><span class="unit">m/s</span></div>
+        </label>
+        <label class="field">
+          Top speed (Sport)
           <div class="field-input"><input type="text" inputmode="decimal" id="hor" value="12"><span class="unit">m/s</span></div>
         </label>
         <label class="field">
@@ -1246,10 +1251,15 @@ details.panel + details.panel{
         <li><b>People under the route</b>: roughly how many people live
         within 50 m either side of it, and how crowded its busiest stretch
         is, from the EU's population grid.</li>
-        <li><b>A route over fewer people</b>: when a modest detour passes
-        over far fewer people, it's shown as a dashed purple line with the
-        trade (extra distance, people saved) &mdash; one click plans it,
-        heights, battery and flight plan included.</li>
+        <li><b>Three plans</b>: <b>Fastest</b>, <b>Least battery</b> and,
+        when a modest detour passes over far fewer people, <b>Fewer
+        people</b> (dashed purple line) &mdash; each with its own heights,
+        battery and flight-plan downloads.</li>
+        <li><b>Two speeds per drone</b>: the mission speed (Normal mode,
+        the most a waypoint mission flies), used by the plans and the
+        downloads, and the Sport-mode top speed. Least battery may fly a
+        leg slower, or into a strong headwind at Sport speed by hand, when
+        that saves battery.</li>
         <li><b>Restricted areas</b> settings: schools, hospitals,
         playgrounds and other sites that aren't no-fly zones in themselves
         can be switched off. No-fly sites under the local rules are always

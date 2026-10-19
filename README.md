@@ -34,7 +34,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 * 🔋 **Battery estimate** per leg, adjusted for payload, wind, climbs, cold and battery health, with a reserve warning; the DJI Neo 2 preset is calibrated from real flight logs (power curve, climb efficiency, usable energy)
 * 📡 **Conditions here** button: for the start point (or your location), the predicted number of navigation satellites overhead (GPS, Galileo, GLONASS, BeiDou, from CelesTrak orbits), the Kp index (NOAA), the highest height today's wind allows for your drone, and the round-trip range; with your own location it also checks for **GPS spoofing** (a position in another country than your internet connection and time zone, e.g. the common fake fix at Beirut airport)
 * 🧭 **Round-trip range** drawn on the map: how far the drone can fly from the start and still get back with the reserve, in every direction, with today's wind
-* 🔄 Up to three plans, each with its own heights, battery and flight-plan downloads: **fastest**, **least battery** (heights, flight style and, where it saves battery, a lower speed per leg) and **fewer people** (the fastest plan along the route over fewer people, when there is one)
+* 🔄 Up to three plans, each with its own heights, battery and flight-plan downloads: **fastest**, **least battery** (heights, flight style and, where it saves battery, another speed per leg: slower, or into a headwind the Sport-mode top speed, flown by hand) and **fewer people** (the fastest plan along the route over fewer people, when there is one)
 * 💨 Drones that hold a set **ground speed** (DJI waypoint missions, most multirotors) or a set **airspeed** (fixed-wing, or flying flat out), which behave differently with a tailwind
 * 🌧️ Rain, visibility and temperature, with warnings
 * 🗺️ **DJI flight-plan export** (WPML `.kmz` for DJI Pilot 2)
@@ -56,7 +56,7 @@ For each altitude, the system considers factors including:
 * Wind speed
 * Wind direction
 * Flight heading
-* Drone horizontal speed
+* Drone mission speed (Normal mode, the most a waypoint mission flies) and top speed (Sport mode)
 * Ascent speed
 * Descent speed
 * Wind resistance
@@ -96,7 +96,8 @@ FLYTIMIZER currently supports configurable parameters such as:
 
 | Parameter           | Description                                     |
 | ------------------- | ----------------------------------------------- |
-| Horizontal speed    | Nominal horizontal flight speed                 |
+| Mission speed       | Normal-mode / waypoint-mission speed, used by the plans and the flight-plan downloads |
+| Top speed (Sport)   | Sport-mode top speed: used by the battery model, and by "least battery" for a leg into a headwind flown by hand |
 | Ascent speed        | Vertical climb speed                            |
 | Descent speed       | Vertical descent speed                          |
 | Wind resistance     | Maximum wind condition considered for the drone |
