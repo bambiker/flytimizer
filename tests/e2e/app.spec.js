@@ -91,6 +91,8 @@ test('the DJI flight plan downloads as a valid WPML archive', async ({ page }) =
 });
 
 test('least battery may fly into the wind in Sport mode; the download stays at the mission speed', async ({ page }) => {
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=air3');
   await waitForResult(page);
   await expect(page.locator('#cruise')).toHaveValue('12');
@@ -666,6 +668,9 @@ for (const scheme of ['light', 'dark']){
 test('JSZip is only downloaded once there is a flight plan to offer', async ({ page }) => {
   const jszipRequests = [];
   page.on('request', r => { if (r.url().includes('jszip')) jszipRequests.push(r.url()); });
+  // The fake forecast varies by hour; at some hours the hover is too windy at the mission speed.
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);
   await openSite(page, HAIFA, null, '');
   await page.waitForLoadState('load');
   expect(jszipRequests).toEqual([]);
