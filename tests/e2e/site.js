@@ -11,7 +11,8 @@
 //   hazards       restricted sites near the route (default: a set
 //                 including one with an HTML-injection name)
 //   buildings     'nearby' (default), 'mixed', 'many' or 'untagged' (no
-//                 height tags) on the line
+//                 height tags) on the line; 'towerOnDetour': 'nearby' at first,
+//                 then a 300 m tower on any later route looked up
 //   gnssFail      CelesTrak answers HTTP 403 (no satellite orbits)
 //   kp            Kp index NOAA reports for now (default 2.33)
 //   ipCountry     country of the internet connection (default 'IL')
@@ -102,13 +103,22 @@ export async function openSite(page, from, to, query, sc = {}){
     json(r, hit ? [{ lat: String(hit[0]), lon: String(hit[1]), display_name: q }] : []);
   });
   await ctx.route(/nominatim\.openstreetmap\.org\/reverse/, r => json(r, { address: { country_code: sc.country || 'il', country: sc.country === 'us' ? 'United States' : 'Israel' } }));
+  let buildingQueries = 0;
   await ctx.route(/overpass|maps\.mail\.ru/, r => {
     if (sc.overpassFail) return r.fulfill({ status: 500, body: 'error' });
     const body = decodeURIComponent((r.request().postData() || r.request().url()).replace(/\+/g, ' '));
     if (/building/.test(body) && !/amenity/.test(body)){
       const kind = sc.buildings || 'nearby';
+      buildingQueries++;
       let els;
-      if (kind === 'mixed'){
+      if (kind === 'towerOnDetour' && buildingQueries > 1){
+        // A 300 m tower in the middle of the later route (the corridor is
+        // the left side out, then the right side back).
+        const v = body.match(/poly:"([^"]+)"/)[1].trim().split(/\s+/).map(Number);
+        const n = v.length / 4, k = Math.floor(n / 2), j = 2 * n - 1 - k;
+        const c = { lat: (v[2 * k] + v[2 * j]) / 2, lon: (v[2 * k + 1] + v[2 * j + 1]) / 2 };
+        els = [{ type: 'way', id: 400, center: c, geometry: square(c, 0.0001), tags: { building: 'yes', height: '300' } }];
+      } else if (kind === 'mixed'){
         els = [0.3, 0.5, 0.7].map((t, k) => ({ type: 'way', id: 100 + k, center: along(t), geometry: square(along(t), 0.00008), tags: { building: 'yes', height: ['12', '200', '25'][k] } }));
       } else if (kind === 'untagged'){
         els = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map((t, k) => ({ type: 'way', id: 300 + k, center: along(t), geometry: square(along(t), 0.00008), tags: { building: 'yes' } }));

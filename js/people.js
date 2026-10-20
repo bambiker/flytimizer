@@ -67,7 +67,8 @@ function peopleText(n, peakPerKm2){
 // rest of the result is shown, so a slow download doesn't hold it up.
 // opts: { from, to, distance, obstacles, onAlternative(alt) } -
 // onAlternative is called with a route over fewer people when there is
-// one (calc.js plans it as the "Fewer people" tab).
+// one (calc.js plans it as the "Fewer people" tab) and resolves to
+// { ok } or { ok: false, reason } when it can't be flown.
 var renderSeq = 0;
 export async function renderPeopleInfo(path, opts){
   var el = document.getElementById('peopleInfo');
@@ -99,7 +100,17 @@ export async function renderPeopleInfo(path, opts){
         Math.round((alt.distance / opts.distance - 1) * 100) + '%), about ' + roundPeople(alt.people).toLocaleString('en') + ' people under it (' +
         Math.round((1 - alt.people / r.people) * 100) + '% fewer) \u2014 see the Fewer people plan.';
       el.appendChild(note);
-      if (opts.onAlternative) opts.onAlternative(alt).catch(function(err){ console.warn('Planning the route over fewer people failed:', err); });
+      // A route that turns out not to be flyable isn't offered: say why.
+      if (opts.onAlternative) opts.onAlternative(alt).then(function(res){
+        if (seq !== renderSeq || !res || res.ok) return;
+        showAltRoute(null);
+        note.textContent = ' A route over fewer people was found, but ' + res.reason + ', so it isn\u2019t offered.';
+      }, function(err){
+        console.warn('Planning the route over fewer people failed:', err);
+        if (seq !== renderSeq) return;
+        showAltRoute(null);
+        note.textContent = ' A route over fewer people was found, but it couldn\u2019t be planned.';
+      });
     } else if (r.people >= 20){
       note.textContent = ' No way round passes over clearly fewer people for a modest detour here.';
       el.appendChild(note);

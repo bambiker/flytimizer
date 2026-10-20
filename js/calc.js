@@ -844,8 +844,8 @@ export function renderPlanSavings(planner, legs, baseline, battOut, battBack){
 // terrain and buildings looked up along it, then the same heights,
 // battery and speed choices as the main route (planCtx from
 // calcHeight). Buildings on it are climbed over, not detoured. Returns
-// { plans, route: { terrainSamples, terrainBack, terrainAvailable, path,
-// distance } }.
+// { plans, tooTall (buildings on it too tall to climb over), route: {
+// terrainSamples, terrainBack, terrainAvailable, path, distance } }.
 export async function planAlongPath(planCtx, path){
   var c = planCtx, inp = c.inp;
   var distance = 0;
@@ -878,7 +878,8 @@ export async function planAlongPath(planCtx, path){
     battModel: c.battModel, temperatureC: c.temperatureC, mission: c.mission, dwellS: inp.dwellS,
     payloadOut: c.payloadOut, payloadBack: c.payloadBack, speedupback: inp.speedupback, speeddownback: inp.speeddownback
   });
-  return { plans: planner.plans, route: { terrainSamples: samples, terrainBack: back, terrainAvailable: terrainAvailable, path: path, distance: distance } };
+  return { plans: planner.plans, tooTall: sorted.tooTall.length,
+           route: { terrainSamples: samples, terrainBack: back, terrainAvailable: terrainAvailable, path: path, distance: distance } };
 }
 
 export async function calcHeight() {
@@ -1006,14 +1007,28 @@ export async function calcHeight() {
     const calcDone = new Promise(function(resolve){ resolveCalcDone = resolve; });
     renderPeopleInfo(avoidance.path, {
       from: { lat: startlat, lng: startlng }, to: { lat: destlat, lng: destlng },
-      distance: routeDist, obstacles: hazardObstacles,
+      // Buildings too tall to climb over today are kept out of the way too.
+      distance: routeDist, obstacles: hazardObstacles.concat(buildingList.filter(function(b){
+        return b.height + BUILDING_HEIGHT_SAFETY_MARGIN_M > effectiveCeilingM;
+      }).map(function(b){
+        return { lat: b.lat, lng: b.lng, clearance: b.radius + BUILDING_LATERAL_SAFETY_MARGIN_M, radius: b.radius };
+      })),
+      // Plans the route; { ok } or, when it can't be flown, { ok: false, reason }.
       onAlternative: async function(alt){
         const done = await calcDone;
         const res = await planAlongPath(done.planCtx, alt.path);
-        if (currentCalc !== done.calc) return;   // a newer calculation replaced this one
-        done.calc.plans.people = Object.assign({}, res.plans.fast, { route: res.route, people: alt.people });
+        if (currentCalc !== done.calc) return { ok: true };   // a newer calculation replaced this one
+        const plan = res.plans.fast;
+        // That route isn't detoured round buildings, so one too tall to climb over rules it out.
+        if (res.tooTall > 0 || !(plan.out && plan.back)){
+          return { ok: false, reason: res.tooTall > 0
+            ? 'it passes ' + (res.tooTall === 1 ? 'a building' : res.tooTall + ' buildings') + ' too tall to fly over at the heights allowed today'
+            : 'no height is safe along it today' };
+        }
+        done.calc.plans.people = Object.assign({}, plan, { route: res.route, people: alt.people });
         done.calc.altPath = alt.path;
         renderPlanTabs();
+        return { ok: true };
       }
     }).then(function(r){
       if (r) track('people_under_route', { people: Math.round(r.people) });
