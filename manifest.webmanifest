@@ -1,5 +1,5 @@
 {
-  "name": "Flytimizer — drone altitude & route planner",
+  "name": "Flytimizer by Windrone — drone altitude & route planner",
   "short_name": "Flytimizer",
   "description": "Best drone altitude for each leg in today's wind, with battery, range, terrain, buildings and restricted areas.",
   "start_url": "./",
