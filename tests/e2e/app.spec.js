@@ -42,6 +42,21 @@ test('a shared route calculates and shows a recommended height', async ({ page }
   expect(page.url()).toContain('to=32.80300,35.00100');
 });
 
+test('the result shows the essentials; the details are folded away until opened', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
+  await waitForResult(page);
+  await expect(page.locator('#heightfore')).toBeVisible();
+  await expect(page.locator('#wpmlButtons button').first()).toBeVisible();
+  await expect(page.locator('#forecastStrip')).toBeVisible();
+  await expect(page.locator('#noFlyWarning')).toBeVisible();
+  await expect(page.locator('.wind-table')).toBeHidden();
+  await expect(page.locator('#hazardInfo')).toBeHidden();
+  await page.locator('#resultDetails > summary').click();
+  await expect(page.locator('.wind-table')).toBeVisible();
+  await expect(page.locator('#hazardInfo')).toBeVisible();
+  await expect(page.locator('#terrainProfile')).toBeVisible();
+});
+
 test('names from OpenStreetMap are shown as text, never run as HTML', async ({ page }) => {
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro');
   await waitForResult(page);
@@ -99,11 +114,11 @@ test('into the wind a plan may fly in Sport mode; the download stays at the miss
   await expect(page.locator('#hor')).toHaveValue('21');
   // Into the wind, the fastest plan flies the leg in Sport mode too.
   await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
-  await expect(page.locator('#sportNote')).toContainText('faster than a mission can');
+  await expect(page.locator('#sportNote')).toContainText('faster than a mission');
 
   await page.locator('#planEcoBtn').click();
   await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
-  await expect(page.locator('#sportNote')).toContainText('faster than a mission can');
+  await expect(page.locator('#sportNote')).toContainText('faster than a mission');
   const missionSpeed = await page.evaluate(() => 12 / parseFloat(document.getElementById('payload').value));
   const kmz = await downloadMission(page);
   expect(kmz.name).toBe('flytimizer-least-battery-outbound.kmz');
@@ -131,7 +146,7 @@ test('when the wind is too strong for the mission speed, the fastest plan flies 
   await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
   await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
   await expect(page.locator('#flyWarning')).toBeHidden();
-  await expect(page.locator('#sportNote')).toContainText('too strong for the mission speed');
+  await expect(page.locator('#sportNote')).toContainText('too strong for a mission');
 });
 
 test('wind stronger than the drone can handle gives a clear no-fly warning', async ({ page }) => {
@@ -309,7 +324,7 @@ test('Restricted areas: schools and hospitals can be switched off; no-fly sites 
   const grey = page.locator('.leaflet-overlay-pane path[stroke="#8d9ab8"]');
   await expect(grey).toHaveCount(0);
 
-  await page.locator('#sitesPanel summary').click();
+  await page.locator('#sitesPanel > summary').click();
   await page.getByLabel('Schools').uncheck();
   await page.getByLabel('Hospitals').uncheck();
   // Heliports are no-fly in Israel: switching them off changes nothing.
@@ -328,7 +343,7 @@ test('Restricted areas: schools and hospitals can be switched off; no-fly sites 
   // Remembered on the next visit.
   await page.evaluate(() => history.replaceState(null, '', location.pathname));
   await page.reload();
-  await page.locator('#sitesPanel summary').click();
+  await page.locator('#sitesPanel > summary').click();
   await expect(page.getByLabel('Schools')).not.toBeChecked();
   await expect(page.getByLabel('Kindergartens')).toBeChecked();
 });

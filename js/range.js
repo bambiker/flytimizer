@@ -53,12 +53,12 @@ export function renderRange(lat, lng, ranges, fit){
     return;
   }
   var spread = ext.far.distM - ext.near.distM;
-  text.textContent = 'Round trip from the start, keeping a ' + BATTERY_RESERVE_PCT + '% reserve: up to ' +
+  // The caveats (straight line, no terrain or rules) are in the guide linked next to it.
+  text.textContent = 'Round-trip range (' + BATTERY_RESERVE_PCT + '% reserve): up to ' +
     fmtDist(ext.far.distM) + ' toward the ' + compassWord(ext.far.bearing) +
     (spread > 0.05 * ext.far.distM
-      ? ', but only ' + fmtDist(ext.near.distM) + ' toward the ' + compassWord(ext.near.bearing) + ' because of the wind'
-      : ' in every direction') +
-    '. Straight out and back at your set speed; terrain, buildings and restricted areas aren’t counted, and most rules also require keeping the drone in sight.';
+      ? ', ' + fmtDist(ext.near.distM) + ' toward the ' + compassWord(ext.near.bearing)
+      : ' in every direction') + '.';
   drawRangeOutline(lat, lng, ranges, fit);
 }
 
