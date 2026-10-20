@@ -5,7 +5,7 @@
 // plans.
 
 import { track } from './analytics.js';
-import { BATTERY_RESERVE_PCT, DESCENT_POWER_FACTOR, batteryPct, climbEfficiency, coldCapacityFactor, energyPctAbove, gaugeUsedPct, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
+import { BATTERY_RESERVE_PCT, DESCENT_POWER_FACTOR, SPEC_FLIGHT_TIME_FACTOR, batteryPct, climbEfficiency, coldCapacityFactor, energyPctAbove, gaugeUsedPct, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
 import { MIN_GROUND_SPEED_MS, airspeedFor, formatDuration, getDistanceFromLatLon, groundSpeed, hourIndexNow, interpDir, lat1, lat2, lng1, lng2, marker, trueBearing } from './core.js';
 import { markUnsafe } from './drone.js';
 import { renderHazardsAndRoute } from './map-view.js';
@@ -335,7 +335,10 @@ export function renderNoFlyWarning(hazards, rules, path){
 export function renderBatteryNote(battModel, temperatureC){
   var battNote = document.getElementById('batteryNote');
   if (!battNote) return;
-  battNote.innerHTML = 'Battery figures are estimates from the drone’s rated flight time, payload, climbs and wind (roughly ±20%)' +
+  battNote.innerHTML = (battModel && battModel.measured
+      ? 'Battery figures are estimates from this drone’s measured flight logs, payload, climbs and wind (roughly ±20%)'
+      : 'Battery figures are estimates from the drone’s rated flight time, cut by ' + Math.round((1 - SPEC_FLIGHT_TIME_FACTOR) * 100) +
+        '% since makers measure it in a lab, and from payload, climbs and wind (roughly ±20%)') +
     (typeof temperatureC === 'number' && coldCapacityFactor(temperatureC) < 1 ? ', reduced for the cold (' + (unitsImperial ? (temperatureC * 9 / 5 + 32).toFixed(0) + '°F' : temperatureC.toFixed(0) + '°C') + ')' : '') +
     '. Older packs hold less — set battery health in the drone settings.';
   battNote.style.display = battModel ? 'block' : 'none';

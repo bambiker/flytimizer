@@ -8,9 +8,15 @@ import { DRONE_PRESETS } from './drone.js';
 // A deliberately simple physical model, calibrated per drone from its
 // spec sheet - so treat the result as an estimate (roughly +-20%),
 // not a fuel gauge:
-//  - DJI measures "max flight time" flying at about 21.6 km/h (6 m/s)
-//    in still air. Battery energy / that time = average power at that
-//    speed, which pins down the power curve for this drone.
+//  - Makers measure "max flight time" flying at a steady speed in
+//    still air (a preset's testSpeed; 6 m/s when unknown). Battery
+//    energy / that time = average power at that speed, which pins down
+//    the power curve for this drone.
+//  - Those times are lab figures, flown down to 0%: the Neo 2's spec
+//    said 19 min where its logs measured 11.4. So a flight time that
+//    isn't measured (every drone but the Neo 2, and custom drones) is
+//    taken as SPEC_FLIGHT_TIME_FACTOR of the rated one - on the safe
+//    side.
 //  - Power vs airspeed follows the usual multirotor shape: a little
 //    lower than hover at moderate speed, rising steeply near top
 //    speed (airspeedPowerFactor).
@@ -33,7 +39,8 @@ import { DRONE_PRESETS } from './drone.js';
 // airspeed, so a headwind leg simply takes longer at the same power.
 // ---------------------------------------------------------------
 export var BATTERY_RESERVE_PCT = 20;
-export var SPEC_TEST_SPEED_MS = 6;     // ~21.6 km/h, DJI's flight-time test speed
+export var SPEC_TEST_SPEED_MS = 6;     // ~21.6 km/h, flight-time test speed when the spec doesn't say
+export var SPEC_FLIGHT_TIME_FACTOR = 0.85; // rated flight time -> what we plan with, unless measured
 export var CLIMB_EFFICIENCY = 0.6;     // share of electrical power turned into climb work
 export var DESCENT_POWER_FACTOR = 0.9; // descending vs hovering
 
@@ -71,6 +78,8 @@ export function readBatteryModel(){
   var preset = picker && DRONE_PRESETS[picker.value];
   var power = (preset && preset.power) || {};
   var curve = power.curve || DEFAULT_POWER_CURVE;
+  var testSpeed = (preset && preset.testSpeed) || SPEC_TEST_SPEED_MS;
+  if (!power.measured) minutes *= SPEC_FLIGHT_TIME_FACTOR;
   var specPowerW = wh * 60 / minutes;
   return {
     wh: wh,
@@ -80,7 +89,8 @@ export function readBatteryModel(){
     curve: curve,
     climbEff: power.climbEff || CLIMB_EFFICIENCY,
     socSlope: power.socSlope || 0,
-    hoverW: specPowerW / airspeedPowerFactor(SPEC_TEST_SPEED_MS, vmax, curve)
+    measured: !!power.measured,
+    hoverW: specPowerW / airspeedPowerFactor(testSpeed, vmax, curve)
   };
 }
 
