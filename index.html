@@ -7,6 +7,9 @@
 <meta name="description" content="Free drone flight planner: finds the altitude that saves the most flight time and battery on your route, using live wind forecasts, terrain, buildings and no-fly areas. Export DJI waypoint missions.">
 <link rel="canonical" href="https://bambiker.github.io/flytimizer/">
 <meta name="theme-color" content="#0a0f1a">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flytimizer">
 
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Flytimizer">
@@ -175,6 +178,9 @@ h1 .logo{
   font-size: 14px;
   margin: 0;
 }
+
+.btn.btn-install{ padding: 6px 12px; font-size: 13px; }
+.btn-install[hidden]{ display: none; }
 
 .brand-row{
   display:flex;
@@ -808,6 +814,7 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
   margin: 12px 0;
 }
 .notice[hidden]{ display: none; }
+.notice.notice-info{ background: var(--panel-2); border-color: var(--line); color: var(--ink); }
 .notice > span{ flex: 1 1 200px; }
 .notice-copy{
   flex: 1 1 100%;
@@ -989,7 +996,9 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
       <h1><svg class="logo" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7 7l10 10M17 7L7 17"/><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg> Flytimizer</h1>
       <p class="subtitle">Fly (Time & Battery) Optimizer</p>
     </div>
+    <button class="btn btn-ghost btn-install" id="installBtn" data-action="install" hidden>Add to home screen</button>
   </header>
+  <div class="notice notice-info" id="installNotice" role="status" hidden></div>
 
   <main>
 

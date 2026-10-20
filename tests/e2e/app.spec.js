@@ -575,6 +575,31 @@ test('payload is a weight: older links with a weight factor are converted, and t
   await expect(page.locator('#payloadNote')).toBeHidden();
 });
 
+test('Add to home screen: offered when the browser can install the site, and replays its prompt', async ({ page }) => {
+  await openSite(page, HAIFA, null, '');
+  const btn = page.locator('#installBtn');
+  await expect(btn).toBeHidden();   // this browser hasn't offered to install
+  await page.evaluate(() => {
+    const e = new Event('beforeinstallprompt');
+    e.prompt = () => { window.__prompted = true; };
+    e.userChoice = Promise.resolve({ outcome: 'accepted' });
+    window.dispatchEvent(e);
+  });
+  await expect(btn).toBeVisible();
+  await btn.click();
+  expect(await page.evaluate(() => window.__prompted)).toBe(true);
+  await expect(btn).toBeHidden();
+});
+
+test('Add to home screen on an iPhone explains the Share button', async ({ browser }) => {
+  const ctx = await browser.newContext({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1', viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  await openSite(page, HAIFA, null, '');
+  await page.locator('#installBtn').click();
+  await expect(page.locator('#installNotice')).toContainText('Add to Home Screen');
+  await ctx.close();
+});
+
 test('number fields open a numeric keypad on phones', async ({ page }) => {
   await openSite(page, HAIFA, null, 'drone=mini4pro');
   const fields = ['dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'mtow', 'health', 'drag', 'payloadKg', 'payloadBackKg'];

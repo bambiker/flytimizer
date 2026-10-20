@@ -12,6 +12,7 @@ import { checkConditions, hideConditions } from './conditions.js';
 import { clearMarkers, getLocation, searchLocation } from './core.js';
 import { clearRouteLayers, initMap } from './map-view.js';
 import { onMissionChange } from './mission.js';
+import { addToHomeScreen, initInstall } from './install.js';
 import { hideNotice } from './notice.js';
 import { clearPlans, selectPlan } from './plans.js';
 import { syncRangeLayer } from './range.js';
@@ -44,7 +45,8 @@ var ACTIONS = {
   reset: startOver,
   plan: selectPlan,
   forecast: function(hour){ setForecastOffset(Number(hour)); },
-  download: function(index){ downloadWPML(Number(index)); }
+  download: function(index){ downloadWPML(Number(index)); },
+  install: addToHomeScreen
 };
 
 // Choices worth counting (outcomes like calculate or share are counted
@@ -90,3 +92,4 @@ document.getElementById('rangeToggle').addEventListener('change', function(e){
 initMap();
 initSiteSettings();
 initSharedState();
+initInstall();
