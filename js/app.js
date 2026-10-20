@@ -6,7 +6,7 @@
 // ones the scripts create later, so one click listener handles them all.
 
 import { track } from './analytics.js';
-import { PRESET_FIELDS, applyDronePreset, checkCustom } from './drone.js';
+import { PRESET_FIELDS, applyDronePreset, checkCustom, updatePayloadNote } from './drone.js';
 import { getHeight } from './calc.js';
 import { checkConditions, hideConditions } from './conditions.js';
 import { clearMarkers, getLocation, searchLocation } from './core.js';
@@ -77,6 +77,9 @@ document.getElementById('mission').addEventListener('change', onMissionChange);
 document.getElementById('droneModel').addEventListener('change', applyDronePreset);
 PRESET_FIELDS.forEach(function(id){
   document.getElementById(id).addEventListener('input', checkCustom);
+});
+['payloadKg', 'payloadBackKg'].forEach(function(id){
+  document.getElementById(id).addEventListener('input', updatePayloadNote);
 });
 
 document.getElementById('rangeToggle').addEventListener('change', function(e){

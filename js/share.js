@@ -4,7 +4,7 @@
 import { track } from './analytics.js';
 import { getHeight } from './calc.js';
 import { lat1, lat2, lng1, lng2, marker, setDestination, setstartloc } from './core.js';
-import { DRONE_PRESETS, PRESET_FIELDS, applyDronePreset, updateDroneSummary } from './drone.js';
+import { DRONE_PRESETS, PRESET_FIELDS, applyDronePreset, updateDroneSummary, updatePayloadNote } from './drone.js';
 import { map } from './map-view.js';
 import { onMissionChange } from './mission.js';
 import { hideNotice, showNotice } from './notice.js';
@@ -26,7 +26,7 @@ import { UNITS_KEY } from './units.js';
 // ---------------------------------------------------------------
 export var SETTINGS_KEY = 'flytimizerSettings';
 export var LAST_PLACE_KEY = 'flytimizerLastPlace';
-export var SETTING_FIELDS = ['mission', 'speedMode', 'skipSites', 'dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'drag', 'payload', 'payloadback', 'health'];
+export var SETTING_FIELDS = ['mission', 'speedMode', 'skipSites', 'dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'mtow', 'drag', 'payloadKg', 'payloadBackKg', 'health'];
 
 export function storageGet(key){
   try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e){ return null; }
@@ -67,7 +67,15 @@ export function applySettings(st){
     if (isPreset && PRESET_FIELDS.indexOf(id) !== -1) return;
     document.getElementById(id).value = v;
   });
+  // Older links and saved settings gave the payload as a weight factor
+  // ((drone + payload) / drone): turn it into kilograms.
+  var mass = parseFloat(document.getElementById('mass').value);
+  [['payload', 'payloadKg'], ['payloadback', 'payloadBackKg']].forEach(function(f){
+    var coef = parseFloat(st[f[0]]);
+    if (st[f[1]] === undefined && coef >= 1 && mass > 0) document.getElementById(f[1]).value = String(Math.round((coef - 1) * mass * 1000) / 1000);
+  });
   updateDroneSummary();
+  updatePayloadNote();
   syncSiteCheckboxes();
 }
 
@@ -140,6 +148,9 @@ export function restoreFromUrl(){
   if (!from) return null;
   var st = { drone: params.get('drone') };
   SETTING_FIELDS.forEach(function(id){ if (params.has(id)) st[id] = params.get(id); });
+  // Links from before payloads were weights carry a weight factor.
+  if (params.has('payload')) st.payload = params.get('payload');
+  if (params.has('payloadback')) st.payloadback = params.get('payloadback');
   applySettings(st);
   setstartloc(from.lat, from.lng);
   var to = parseLatLngParam(params.get('to'));

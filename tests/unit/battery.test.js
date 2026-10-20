@@ -29,9 +29,11 @@ test('coldCapacityFactor: full capacity from 15 C, about 18% less at 0 C, never 
   assert.equal(site.coldCapacityFactor(NaN), 1);
 });
 
-test('readBatteryModel calibrates hover power from the rated flight time', () => {
+test('readBatteryModel calibrates hover power from the rated flight time, cut since it is a lab figure', () => {
   const m = model();
-  const specPowerW = 11.5 * 60 / 19;
+  const specPowerW = 11.5 * 60 / (19 * site.SPEC_FLIGHT_TIME_FACTOR);
+  assert.ok(site.SPEC_FLIGHT_TIME_FACTOR < 1);
+  assert.equal(m.measured, false);
   near(m.hoverW * site.airspeedPowerFactor(site.SPEC_TEST_SPEED_MS, 12), specPowerW);
   assert.equal(m.usableFraction, 1);
   assert.equal(model({ health: '80' }).usableFraction, 0.8);
@@ -80,10 +82,17 @@ test('gauge %: with a socSlope the last percents hold less energy; without one, 
   for (let e = 1; e <= 100; e++) assert.ok(site.gaugeUsedPct(neo, e) > site.gaugeUsedPct(neo, e - 1));
 });
 
-test('flying the rated test (6 m/s, still air, no payload) for the rated time uses the whole battery', () => {
+test('flying the rated test (6 m/s, still air, no payload) uses the whole battery in the cut flight time', () => {
   const m = model();
-  const wh = site.legEnergyWh(m, 1, site.SPEC_TEST_SPEED_MS, 19 * 60, 0, 0, 5, 3);
+  const wh = site.legEnergyWh(m, 1, site.SPEC_TEST_SPEED_MS, 19 * 60 * site.SPEC_FLIGHT_TIME_FACTOR, 0, 0, 5, 3);
   near(site.batteryPct(m, wh, 20), 100, 1e-9);
+});
+
+test('a preset calibrates at the speed its maker measured the flight time at', () => {
+  const m = model({ droneModel: 'mavic3classic', batt: '77', ftime: '46', mass: '0.895', hor: '21' });
+  assert.equal(m.measured, false);
+  // Mavic 3 Classic: 46 min (cut) at 32.4 km/h = 9 m/s.
+  near(m.hoverW * site.airspeedPowerFactor(9, 21), 77 * 60 / (46 * site.SPEC_FLIGHT_TIME_FACTOR));
 });
 
 test('payload costs power with weight^1.5; climbs cost more, descents less than hovering', () => {
@@ -140,4 +149,23 @@ test('profileTiming: a climb steeper than the drone can manage sets the pace', (
   const gentle = site.profileTiming({ pts: [{ s: 0, alt: 0 }, { s: 1000, alt: 50 }] }, [{ s: 0, g: 0 }, { s: 1000, g: 0 }], 10, 5, 3, { skipLanding: true });
   near(gentle.total, 100);
   near(gentle.climb, 10);
+});
+
+test('payload: a weight in kg becomes a weight factor, and the takeoff weight is checked', () => {
+  const fields = { mass: '0.72', payloadKg: '0.36', payloadBackKg: '', mtow: '' };
+  globalThis.document = { getElementById: id => ({ value: fields[id] }) };
+  try {
+    const d = site.payloadFactors('delivery');
+    assert.equal(d.out, 1.5);
+    assert.equal(d.back, 1);   // blank = nothing on the way back
+    assert.equal(site.payloadFactors('photo').back, 1.5);   // photo: same load both ways
+  } finally { delete globalThis.document; }
+  // The Matrice 300 RTK: 6.3 kg, 9 kg max takeoff weight.
+  assert.equal(site.payloadCheck({ mass: 6.3, outKg: 2.7, backKg: 0, mtow: 9 }), null);
+  assert.equal(site.payloadCheck({ mass: 6.3, outKg: 3, backKg: 0, mtow: 9 }).level, 'over');
+  // A sub-250 g drone with a payload leaves the lightest class.
+  assert.equal(site.payloadCheck({ mass: 0.249, outKg: 0.05, backKg: 0, mtow: null }).level, 'class');
+  // No published max: a word of caution; no payload: nothing to say.
+  assert.equal(site.payloadCheck({ mass: 0.895, outKg: 0.2, backKg: 0, mtow: null }).level, 'unknown');
+  assert.equal(site.payloadCheck({ mass: 0.895, outKg: 0, backKg: 0, mtow: null }), null);
 });
