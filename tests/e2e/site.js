@@ -12,7 +12,8 @@
 //                 including one with an HTML-injection name)
 //   buildings     'nearby' (default), 'mixed', 'many' or 'untagged' (no
 //                 height tags) on the line; 'towerOnDetour': 'nearby' at first,
-//                 then a 300 m tower on any later route looked up
+//                 then a 300 m tower on any later route looked up;
+//                 'towerOnFirstDetour': the tower on the second route only
 //   gnssFail      CelesTrak answers HTTP 403 (no satellite orbits)
 //   kp            Kp index NOAA reports for now (default 2.33)
 //   ipCountry     country of the internet connection (default 'IL')
@@ -111,7 +112,7 @@ export async function openSite(page, from, to, query, sc = {}){
       const kind = sc.buildings || 'nearby';
       buildingQueries++;
       let els;
-      if (kind === 'towerOnDetour' && buildingQueries > 1){
+      if ((kind === 'towerOnDetour' && buildingQueries > 1) || (kind === 'towerOnFirstDetour' && buildingQueries === 2)){
         // A 300 m tower in the middle of the later route (the corridor is
         // the left side out, then the right side back).
         const v = body.match(/poly:"([^"]+)"/)[1].trim().split(/\s+/).map(Number);

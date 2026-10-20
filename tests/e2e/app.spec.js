@@ -394,15 +394,28 @@ test('a route over fewer people becomes a third plan, with its own heights and f
   expect((await downloadMission(page)).name).toBe('flytimizer-outbound.kmz');
 });
 
-test('a route over fewer people that can\'t be flown isn\'t offered, and the result says why', async ({ page }) => {
+test('a route over fewer people that can\'t be flown, even round the tall buildings, isn\'t offered, and the result says why', async ({ page }) => {
   const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
   const population = (lat, lng) => Math.abs(lat - mid[0]) < 0.003 && Math.abs(lng - mid[1]) < 0.003 ? 1500 : 1;
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [], population, flatGround: true, buildings: 'towerOnDetour' });
   await waitForResult(page);
   const info = page.locator('#peopleInfo');
-  await expect(info).toContainText('A route over fewer people was found, but it passes a building too tall to fly over at the heights allowed today, so it isn’t offered.');
+  await expect(info).toContainText(/A route over fewer people was found, but it passes buildings too tall to fly over at the heights allowed today, and no way round them saves enough people, so it isn’t offered\./);
   await expect(page.locator('#planPeopleBtn')).toBeHidden();
   await expect(page.locator('.leaflet-overlay-pane path[stroke="#8b5cf6"]')).toHaveAttribute('d', /^(M0 0)?$/);
+});
+
+test('a route over fewer people that meets a building too tall to fly over is looked for again round it', async ({ page }) => {
+  const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
+  const population = (lat, lng) => Math.abs(lat - mid[0]) < 0.003 && Math.abs(lng - mid[1]) < 0.003 ? 1500 : 1;
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [], population, flatGround: true, buildings: 'towerOnFirstDetour' });
+  await waitForResult(page);
+  const tab = page.locator('#planPeopleBtn');
+  await expect(tab).toBeVisible();
+  await expect(tab).toContainText(/Fewer people.*%/);
+  await expect(page.locator('#peopleInfo')).toContainText('see the Fewer people plan');
+  await tab.click();
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
 });
 
 test('without the population file the people line is left out', async ({ page }) => {

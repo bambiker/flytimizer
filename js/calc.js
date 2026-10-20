@@ -844,8 +844,12 @@ export function renderPlanSavings(planner, legs, baseline, battOut, battBack){
 // terrain and buildings looked up along it, then the same heights,
 // battery and speed choices as the main route (planCtx from
 // calcHeight). Buildings on it are climbed over, not detoured. Returns
-// { plans, tooTall (buildings on it too tall to climb over), route: {
+// { plans, tooTall (the buildings on it too tall to climb over), route: {
 // terrainSamples, terrainBack, terrainAvailable, path, distance } }.
+// Times the route over fewer people is looked for again, round the
+// buildings too tall to fly over that the last one met.
+var LOWPOP_TALL_BUILDING_ROUNDS = 3;
+
 export async function planAlongPath(planCtx, path){
   var c = planCtx, inp = c.inp;
   var distance = 0;
@@ -878,7 +882,7 @@ export async function planAlongPath(planCtx, path){
     battModel: c.battModel, temperatureC: c.temperatureC, mission: c.mission, dwellS: inp.dwellS,
     payloadOut: c.payloadOut, payloadBack: c.payloadBack, speedupback: inp.speedupback, speeddownback: inp.speeddownback
   });
-  return { plans: planner.plans, tooTall: sorted.tooTall.length,
+  return { plans: planner.plans, tooTall: sorted.tooTall,
            route: { terrainSamples: samples, terrainBack: back, terrainAvailable: terrainAvailable, path: path, distance: distance } };
 }
 
@@ -1013,22 +1017,31 @@ export async function calcHeight() {
       }).map(function(b){
         return { lat: b.lat, lng: b.lng, clearance: b.radius + BUILDING_LATERAL_SAFETY_MARGIN_M, radius: b.radius };
       })),
-      // Plans the route; { ok } or, when it can't be flown, { ok: false, reason }.
-      onAlternative: async function(alt){
+      // Plans the route. It isn't detoured round buildings, so when it
+      // passes ones too tall to climb over, research(avoid) looks for
+      // another one that keeps clear of them (a few rounds, as the new
+      // route can meet others). Resolves to { ok, alt } (the route
+      // planned) or { ok: false, reason }.
+      onAlternative: async function(alt, research){
         const done = await calcDone;
-        const res = await planAlongPath(done.planCtx, alt.path);
-        if (currentCalc !== done.calc) return { ok: true };   // a newer calculation replaced this one
-        const plan = res.plans.fast;
-        // That route isn't detoured round buildings, so one too tall to climb over rules it out.
-        if (res.tooTall > 0 || !(plan.out && plan.back)){
-          return { ok: false, reason: res.tooTall > 0
-            ? 'it passes ' + (res.tooTall === 1 ? 'a building' : res.tooTall + ' buildings') + ' too tall to fly over at the heights allowed today'
-            : 'no height is safe along it today' };
+        let avoid = [];
+        for (let round = 0; ; round++){
+          const res = await planAlongPath(done.planCtx, alt.path);
+          if (currentCalc !== done.calc) return null;   // a newer calculation replaced this one
+          const plan = res.plans.fast;
+          if (res.tooTall.length === 0 && plan.out && plan.back){
+            done.calc.plans.people = Object.assign({}, plan, { route: res.route, people: alt.people });
+            done.calc.altPath = alt.path;
+            renderPlanTabs();
+            return { ok: true, alt: alt };
+          }
+          if (res.tooTall.length === 0) return { ok: false, reason: 'no height is safe along it today' };
+          avoid = avoid.concat(res.tooTall.map(function(b){
+            return { lat: b.lat, lng: b.lng, clearance: b.radius + BUILDING_LATERAL_SAFETY_MARGIN_M, radius: b.radius };
+          }));
+          alt = round < LOWPOP_TALL_BUILDING_ROUNDS - 1 ? await research(avoid) : null;
+          if (!alt) return { ok: false, reason: 'it passes buildings too tall to fly over at the heights allowed today, and no way round them saves enough people' };
         }
-        done.calc.plans.people = Object.assign({}, plan, { route: res.route, people: alt.people });
-        done.calc.altPath = alt.path;
-        renderPlanTabs();
-        return { ok: true };
       }
     }).then(function(r){
       if (r) track('people_under_route', { people: Math.round(r.people) });

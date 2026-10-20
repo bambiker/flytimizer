@@ -62,13 +62,20 @@ function peopleText(n, peakPerKm2){
       densityLabel(peakPerKm2) + ' (~' + roundPeople(peakPerKm2).toLocaleString('en') + ' per km²)';
 }
 
+function altText(alt, people, distance){
+  return ' A route over fewer people (dashed purple on the map): ' + fmtDist(alt.distance) + ' (+' +
+    Math.round((alt.distance / distance - 1) * 100) + '%), about ' + roundPeople(alt.people).toLocaleString('en') + ' people under it (' +
+    Math.round((1 - alt.people / people) * 100) + '% fewer) \u2014 see the Fewer people plan.';
+}
+
 // Fills the "People under the route" line in the result, then looks for
 // a route over fewer people (lowpop.js) and offers it. Runs after the
 // rest of the result is shown, so a slow download doesn't hold it up.
-// opts: { from, to, distance, obstacles, onAlternative(alt) } -
+// opts: { from, to, distance, obstacles, onAlternative(alt, research) } -
 // onAlternative is called with a route over fewer people when there is
-// one (calc.js plans it as the "Fewer people" tab) and resolves to
-// { ok } or { ok: false, reason } when it can't be flown.
+// one, and a research(avoid) function to look for it again keeping
+// clear of more obstacles (calc.js plans it as the "Fewer people" tab);
+// it resolves to { ok, alt } or { ok: false, reason }.
 var renderSeq = 0;
 export async function renderPeopleInfo(path, opts){
   var el = document.getElementById('peopleInfo');
@@ -96,13 +103,20 @@ export async function renderPeopleInfo(path, opts){
     var note = document.createElement('span');
     if (alt){
       showAltRoute(alt.path);
-      note.textContent = ' A route over fewer people (dashed purple on the map): ' + fmtDist(alt.distance) + ' (+' +
-        Math.round((alt.distance / opts.distance - 1) * 100) + '%), about ' + roundPeople(alt.people).toLocaleString('en') + ' people under it (' +
-        Math.round((1 - alt.people / r.people) * 100) + '% fewer) \u2014 see the Fewer people plan.';
+      note.textContent = altText(alt, r.people, opts.distance);
       el.appendChild(note);
-      // A route that turns out not to be flyable isn't offered: say why.
-      if (opts.onAlternative) opts.onAlternative(alt).then(function(res){
-        if (seq !== renderSeq || !res || res.ok) return;
+      // The plan may look for the route again (round buildings too tall
+      // to fly over), or find it can't be flown: then it isn't offered.
+      var research = function(avoid){
+        return suggestFewerPeopleRoute(opts.from, opts.to, { distance: opts.distance, people: r.people }, (opts.obstacles || []).concat(avoid));
+      };
+      if (opts.onAlternative) opts.onAlternative(alt, research).then(function(res){
+        if (seq !== renderSeq || !res) return;
+        if (res.ok){
+          showAltRoute(res.alt.path);
+          note.textContent = altText(res.alt, r.people, opts.distance);
+          return;
+        }
         showAltRoute(null);
         note.textContent = ' A route over fewer people was found, but ' + res.reason + ', so it isn\u2019t offered.';
       }, function(err){
