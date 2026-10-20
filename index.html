@@ -455,6 +455,7 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
   font-size: 12px;
   margin: 10px 0 0;
 }
+.field-note.field-warn{ color: var(--danger); font-weight: 600; }
 
 /* ---------- buttons ---------- */
 
@@ -1129,13 +1130,18 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
           <div class="field-input"><input type="text" inputmode="decimal" id="drag" value="1.0"><span class="unit">&nbsp;</span></div>
         </label>
         <label class="field">
-          <span id="payloadLabel">Payload coefficient (outbound)</span>
-          <div class="field-input"><input type="text" inputmode="decimal" id="payload" value="2"><span class="unit">&times;</span></div>
+          Max takeoff weight
+          <div class="field-input"><input type="text" inputmode="decimal" id="mtow" value="" placeholder="not published"><span class="unit">kg</span></div>
+        </label>
+        <label class="field">
+          <span id="payloadLabel">Payload (outbound)</span>
+          <div class="field-input"><input type="text" inputmode="decimal" id="payloadKg" value="0"><span class="unit">kg</span></div>
         </label>
         <label class="field" id="payloadBackField">
-          Payload coefficient (return)
-          <div class="field-input"><input type="text" inputmode="decimal" id="payloadback" value="1"><span class="unit">&times;</span></div>
+          Payload (return)
+          <div class="field-input"><input type="text" inputmode="decimal" id="payloadBackKg" value="0"><span class="unit">kg</span></div>
         </label>
+        <p class="field-note" id="payloadNote" hidden></p>
         <label class="field-check">
           <input type="checkbox" id="altPermit">
           <span>I have authorization to fly above the local height limit
@@ -1213,6 +1219,7 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
     <div class="no-fly-warning" id="noFlyWarning" style="display:none"></div>
     <div class="fly-warning" id="rainWarning" style="display:none"></div>
     <div class="fly-warning" id="batteryWarning" style="display:none"></div>
+    <div class="fly-warning" id="weightWarning" hidden></div>
 
     <div class="forecast">
       <div class="forecast-head">
@@ -1297,6 +1304,14 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
     <div class="disclosure-body">
       <p class="changelog-date">20 Oct 2026</p>
       <ul>
+        <li><b>Payload in kg</b>: enter what the drone carries and the
+        app works out how much heavier it is. It warns over a published
+        max takeoff weight (Matrice 300 RTK: 9 kg) and when a sub-250 g
+        drone goes over 250 g.</li>
+        <li><b>More realistic battery</b>: each drone is calibrated at the
+        speed its maker measured the flight time at, and flight times not
+        measured from real logs are cut by 15% (makers measure them in a
+        lab, down to 0%).</li>
         <li><b>Cleaner result</b>: the heights, battery, downloads,
         warnings and forecast up front; the wind table, side view, rules,
         buildings and people under <b>Details</b>. Longer explanations

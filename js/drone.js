@@ -22,6 +22,9 @@
 // battery gauge, 47 W hovering and about 52.5 W in level flight at
 // 6 m/s, which is 11.4 min on that energy. The spec sheet's 11.5 Wh /
 // 19 min made the estimate about a third too low.
+// mtow = max takeoff weight (kg), where the maker publishes one (the
+// Matrice 300 RTK: 9 kg). The consumer drones have none: they aren't
+// made to carry a payload.
 // testSpeed (m/s) = the speed the maker measured ftime at, from the
 // spec sheet's footnote: Mavic 3 Classic 32.4 km/h, Air 3 28.8 km/h,
 // Mini 4 Pro 21.6 km/h. The others don't say; battery.js assumes 6 m/s.
@@ -35,14 +38,62 @@ export var DRONE_PRESETS = {
   mavic3classic: { name: 'DJI Mavic 3 Classic', testSpeed: 9, cruise: 15, hor: 21, asc: 8, des: 6, windres: 12, batt: 77, ftime: 46, mass: 0.895 },
   mini4pro:      { name: 'DJI Mini 4 Pro',       testSpeed: 6, cruise: 12, hor: 16, asc: 5, des: 5, windres: 10.7, batt: 18.96, ftime: 34, mass: 0.249 },
   air3:          { name: 'DJI Air 3',            testSpeed: 8, cruise: 12, hor: 21, asc: 10, des: 10, windres: 12, batt: 62.6, ftime: 46, mass: 0.72 },
-  matrice300:    { name: 'DJI Matrice 300 RTK',  cruise: 15, hor: 23, asc: 6, des: 5, windres: 12, batt: 548, ftime: 55, mass: 6.3 },
+  matrice300:    { name: 'DJI Matrice 300 RTK',  mtow: 9, cruise: 15, hor: 23, asc: 6, des: 5, windres: 12, batt: 548, ftime: 55, mass: 6.3 },
   neo2:          { name: 'DJI Neo 2',            cruise: 8, hor: 12, asc: 5, des: 3, windres: 10.7, batt: 10, ftime: 11.4, mass: 0.151,
                    power: { measured: true, curve: { a: 0.1, b: 0.47 }, climbEff: 0.19, socSlope: 0.002 } },
   evolite:       { name: 'Autel EVO Lite+',      cruise: 10, hor: 18, asc: 5, des: 4, windres: 10.6, batt: 68.7, ftime: 40, mass: 0.835 }
 };
 // Fields a preset fills in (the rest - payload, drag, battery health -
 // are the person's own).
-export var PRESET_FIELDS = ['cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass'];
+export var PRESET_FIELDS = ['cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'mtow'];
+
+// Below this takeoff weight (kg) a drone is in the lightest class in
+// most countries (EU C0, no FAA registration for recreational flying).
+export var LIGHT_CLASS_MAX_KG = 0.25;
+
+function fieldKg(id){
+  var el = document.getElementById(id);
+  var v = el ? parseFloat(el.value) : NaN;
+  return v > 0 ? v : 0;
+}
+
+// The payload as a weight factor: 1 = the drone alone, 2 = carrying
+// its own weight again. { out, back, mass, outKg, backKg, mtow }.
+// Photo missions carry the same load both ways.
+export function payloadFactors(mission){
+  var mass = fieldKg('mass');
+  var outKg = fieldKg('payloadKg');
+  var backKg = mission === 'photo' ? outKg : fieldKg('payloadBackKg');
+  function factor(kg){ return mass > 0 ? 1 + kg / mass : 1; }
+  return { out: factor(outKg), back: factor(backKg), mass: mass, outKg: outKg, backKg: backKg, mtow: fieldKg('mtow') || null };
+}
+
+// What's wrong with the takeoff weight, if anything: { level: 'over' |
+// 'class' | 'unknown', text } or null.
+export function payloadCheck(p){
+  var heaviest = p.mass + Math.max(p.outKg, p.backKg);
+  if (!(p.mass > 0) || heaviest <= p.mass) return null;
+  if (p.mtow && heaviest > p.mtow + 1e-9){
+    return { level: 'over', text: 'With the payload the drone weighs ' + heaviest.toFixed(2) + ' kg, over its ' + p.mtow + ' kg max takeoff weight. Don’t fly it like this.' };
+  }
+  if (p.mass <= LIGHT_CLASS_MAX_KG && heaviest > LIGHT_CLASS_MAX_KG){
+    return { level: 'class', text: 'With the payload the drone weighs ' + Math.round(heaviest * 1000) + ' g: over 250 g it leaves the lightest class, so registration and other rules may apply.' };
+  }
+  if (!p.mtow){
+    return { level: 'unknown', text: 'The maker doesn’t publish a max takeoff weight for this drone (it isn’t made to carry a payload): handling, climb and battery suffer, and a heavy load can make it unsafe.' };
+  }
+  return null;
+}
+
+export function updatePayloadNote(){
+  var note = document.getElementById('payloadNote');
+  if (!note) return;
+  var mission = document.getElementById('mission');
+  var c = payloadCheck(payloadFactors(mission && mission.value === 'photo' ? 'photo' : 'delivery'));
+  note.hidden = !c;
+  note.textContent = c ? c.text : '';
+  note.classList.toggle('field-warn', !!c && c.level === 'over');
+}
 
 export function updateDroneSummary(){
   var sel = document.getElementById('droneModel');
@@ -56,9 +107,10 @@ export function applyDronePreset(){
   var sel = document.getElementById('droneModel');
   var preset = DRONE_PRESETS[sel.value];
   if (preset){
-    PRESET_FIELDS.forEach(function(id){ document.getElementById(id).value = preset[id]; });
+    PRESET_FIELDS.forEach(function(id){ document.getElementById(id).value = preset[id] === undefined ? '' : preset[id]; });
   }
-  updateDroneSummary(); // "Custom" - leave whatever the user has typed, just relabel
+  updateDroneSummary();
+  updatePayloadNote(); // "Custom" - leave whatever the user has typed, just relabel
 }
 
 // If the person hand-edits a speed field away from the selected
@@ -69,11 +121,13 @@ export function checkCustom(){
   var preset = DRONE_PRESETS[sel.value];
   if (preset){
     var differs = PRESET_FIELDS.some(function(id){
-      return parseFloat(document.getElementById(id).value) !== preset[id];
+      var v = parseFloat(document.getElementById(id).value);
+      return preset[id] === undefined ? !isNaN(v) : v !== preset[id];
     });
     if (differs) sel.value = 'custom';
   }
   updateDroneSummary();
+  updatePayloadNote();
 }
 
 // Turns an element id like "timefore80" or "gust120" into a readable

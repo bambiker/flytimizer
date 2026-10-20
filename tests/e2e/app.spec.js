@@ -119,7 +119,7 @@ test('into the wind a plan may fly in Sport mode; the download stays at the miss
   await page.locator('#planEcoBtn').click();
   await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
   await expect(page.locator('#sportNote')).toContainText('faster than a mission');
-  const missionSpeed = await page.evaluate(() => 12 / parseFloat(document.getElementById('payload').value));
+  const missionSpeed = await page.evaluate(() => 12 * 0.72 / (0.72 + (parseFloat(document.getElementById('payloadKg').value) || 0)));
   const kmz = await downloadMission(page);
   expect(kmz.name).toBe('flytimizer-least-battery-outbound.kmz');
   const waylines = await kmz.zip.file('wpmz/waylines.wpml').async('string');
@@ -137,10 +137,11 @@ test('into the wind a plan may fly in Sport mode; the download stays at the miss
 });
 
 test('when the wind is too strong for the mission speed, the fastest plan flies that leg in Sport mode', async ({ page }) => {
-  // At this hour the fake forecast's wind is more than the Neo 2's 8 m/s mission speed can handle, but not its 12 m/s Sport speed.
+  // At this hour the fake forecast's wind is more than the Neo 2 carrying its own weight can handle at its
+  // mission speed (8 m/s, halved), but not at its Sport speed.
   const morning = new Date(); morning.setUTCHours(8, 32, 0, 0);
   await page.clock.setFixedTime(morning);
-  await openSite(page, HAIFA, null, '');
+  await openSite(page, HAIFA, null, 'payloadKg=0.151');
   await page.locator('#calcBtn').click();
   await waitForResult(page);
   await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
@@ -470,7 +471,7 @@ test('many buildings on the line are climbed over instead of zigzagging round th
   // get detoured. Fly at 12:30 UTC, like the GHSL test.
   const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
   await page.clock.setFixedTime(noon);
-  await openSite(page, HAIFA, HAIFA_DEST, 'drone=matrice300&payload=1.3&payloadback=1', { hazards: [], buildings: 'many' });
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=matrice300&payloadKg=1.9&payloadBackKg=0', { hazards: [], buildings: 'many' });
   await waitForResult(page);
 
   await expect(page.locator('#buildingInfo')).toContainText('6 of which sit on the direct line');
@@ -556,9 +557,27 @@ test('when no height is safe, that warning comes before everything else', async 
   expect(await top('#flyWarning')).toBeLessThan(await top('#readoutFore'));
 });
 
+test('payload is a weight: older links with a weight factor are converted, and the max takeoff weight is checked', async ({ page }) => {
+  // An older link: payload=2 means carrying the drone's own weight again (Neo 2: 151 g).
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=neo2&payload=2&payloadback=1');
+  await expect(page.locator('#payloadKg')).toHaveValue('0.151');
+  await expect(page.locator('#payloadBackKg')).toHaveValue('0');
+  await expect(page.locator('#payloadNote')).toContainText('over 250 g');
+
+  // The Matrice 300 RTK publishes a 9 kg max takeoff weight: 6.3 + 3 kg is over it.
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=matrice300&payloadKg=3&payloadBackKg=0');
+  await waitForResult(page);
+  await expect(page.locator('#mtow')).toHaveValue('9');
+  await expect(page.locator('#weightWarning')).toContainText('over its 9 kg max takeoff weight');
+  await expect(page.locator('#payloadNote')).toContainText('over its 9 kg max takeoff weight');
+  await page.locator('#droneConfigPanel > summary').click();
+  await page.locator('#payloadKg').fill('2');
+  await expect(page.locator('#payloadNote')).toBeHidden();
+});
+
 test('number fields open a numeric keypad on phones', async ({ page }) => {
   await openSite(page, HAIFA, null, 'drone=mini4pro');
-  const fields = ['dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'health', 'drag', 'payload', 'payloadback'];
+  const fields = ['dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'mtow', 'health', 'drag', 'payloadKg', 'payloadBackKg'];
   for (const id of fields) await expect(page.locator('#' + id)).toHaveAttribute('inputmode', 'decimal');
   await expect(page.getByRole('textbox', { name: 'Search a place or address' })).toBeVisible();
 });

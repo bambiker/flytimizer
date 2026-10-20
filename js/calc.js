@@ -7,7 +7,7 @@
 import { track } from './analytics.js';
 import { BATTERY_RESERVE_PCT, DESCENT_POWER_FACTOR, SPEC_FLIGHT_TIME_FACTOR, batteryPct, climbEfficiency, coldCapacityFactor, energyPctAbove, gaugeUsedPct, fmtPct, legEnergyFromTiming, profileTiming, readBatteryModel } from './battery.js';
 import { MIN_GROUND_SPEED_MS, airspeedFor, formatDuration, getDistanceFromLatLon, groundSpeed, hourIndexNow, interpDir, lat1, lat2, lng1, lng2, marker, trueBearing } from './core.js';
-import { markUnsafe } from './drone.js';
+import { markUnsafe, payloadCheck, payloadFactors } from './drone.js';
 import { renderHazardsAndRoute } from './map-view.js';
 import { currentMission } from './mission.js';
 import { hideNotice, showNotice } from './notice.js';
@@ -59,17 +59,20 @@ export function forecastAt(json, hour){
 // topSpeed is the Sport-mode speed "Least battery" may use by hand.
 export function readFlightInputs(mission){
   function val(id){ return document.getElementById(id).value; }
-  // Photo missions carry the same load both ways.
-  var payloadBackCoef = mission === 'photo' ? val('payload') : val('payloadback');
+  // The payload as a weight factor (drone + payload) / drone; photo
+  // missions carry the same load both ways.
+  var payload = payloadFactors(mission);
+  var payloadOutCoef = payload.out, payloadBackCoef = payload.back;
   var top = parseFloat(val('hor')), cruise = parseFloat(val('cruise'));
   var horiz = cruise > 0 ? Math.min(cruise, top) : top;
   return {
     dwellS: Math.max(0, parseFloat(val('dwell')) || 0),
+    payloadOutCoef: payloadOutCoef,
     payloadBackCoef: payloadBackCoef,
-    speedup: val('asc') / val('payload'),
-    speeddown: val('des') / val('payload'),
-    speedhorizontal: horiz / val('payload'),
-    topSpeed: top / val('payload'),
+    speedup: val('asc') / payloadOutCoef,
+    speeddown: val('des') / payloadOutCoef,
+    speedhorizontal: horiz / payloadOutCoef,
+    topSpeed: top / payloadOutCoef,
     speedupback: val('asc') / payloadBackCoef,
     speeddownback: val('des') / payloadBackCoef,
     speedhorizontalback: horiz / payloadBackCoef,
@@ -1093,8 +1096,13 @@ export async function calcHeight() {
     const tBack = legTimings(heights, pBack.prof, terrainBack, w.gsBack, speedupback, speeddownback, timingOptsBack, routeDist);
 
     const battModel = readBatteryModel();
-    const payloadOut = parseFloat(document.getElementById('payload').value) || 1;
-    const payloadBack = parseFloat(inp.payloadBackCoef) || 1;
+    const payloadOut = inp.payloadOutCoef;
+    const payloadBack = inp.payloadBackCoef;
+    // Over the drone's max takeoff weight: say so up front.
+    const weight = payloadCheck(payloadFactors(mission));
+    const weightWarning = document.getElementById('weightWarning');
+    weightWarning.hidden = !(weight && weight.level === 'over');
+    weightWarning.textContent = weight && weight.level === 'over' ? '⚠️ ' + weight.text : '';
     const battOut = legBattery(heights, battModel, payloadOut, w.airOut, tOut.timing, speedup, temperatureC);
     const battBack = legBattery(heights, battModel, payloadBack, w.airBack, tBack.timing, speedupback, temperatureC);
 

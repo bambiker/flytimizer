@@ -150,3 +150,22 @@ test('profileTiming: a climb steeper than the drone can manage sets the pace', (
   near(gentle.total, 100);
   near(gentle.climb, 10);
 });
+
+test('payload: a weight in kg becomes a weight factor, and the takeoff weight is checked', () => {
+  const fields = { mass: '0.72', payloadKg: '0.36', payloadBackKg: '', mtow: '' };
+  globalThis.document = { getElementById: id => ({ value: fields[id] }) };
+  try {
+    const d = site.payloadFactors('delivery');
+    assert.equal(d.out, 1.5);
+    assert.equal(d.back, 1);   // blank = nothing on the way back
+    assert.equal(site.payloadFactors('photo').back, 1.5);   // photo: same load both ways
+  } finally { delete globalThis.document; }
+  // The Matrice 300 RTK: 6.3 kg, 9 kg max takeoff weight.
+  assert.equal(site.payloadCheck({ mass: 6.3, outKg: 2.7, backKg: 0, mtow: 9 }), null);
+  assert.equal(site.payloadCheck({ mass: 6.3, outKg: 3, backKg: 0, mtow: 9 }).level, 'over');
+  // A sub-250 g drone with a payload leaves the lightest class.
+  assert.equal(site.payloadCheck({ mass: 0.249, outKg: 0.05, backKg: 0, mtow: null }).level, 'class');
+  // No published max: a word of caution; no payload: nothing to say.
+  assert.equal(site.payloadCheck({ mass: 0.895, outKg: 0.2, backKg: 0, mtow: null }).level, 'unknown');
+  assert.equal(site.payloadCheck({ mass: 0.895, outKg: 0, backKg: 0, mtow: null }), null);
+});

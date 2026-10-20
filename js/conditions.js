@@ -126,10 +126,10 @@ export async function checkConditions(){
       html += row('Highest height in this wind', top);
 
       var battModel = readBatteryModel();
-      var payloadOut = parseFloat(document.getElementById('payload').value) || 1;
+      var payloadOut = inp.payloadOutCoef;
       var ranges = roundTripRange({
         heights: heights, legalOk: heights.map(function(h){ return h <= legalCapM + 0.01; }), wx: wx, inp: inp, battModel: battModel,
-        payloadOut: payloadOut, payloadBack: parseFloat(inp.payloadBackCoef) || 1, temperatureC: wx.temperatureC, mission: mission
+        payloadOut: payloadOut, payloadBack: inp.payloadBackCoef, temperatureC: wx.temperatureC, mission: mission
       });
       var ext = rangeExtremes(ranges);
       drawRangeOutline(place.lat, place.lng, ranges, true);

@@ -102,7 +102,8 @@ FLYTIMIZER currently supports configurable parameters such as:
 | Descent speed       | Vertical descent speed                          |
 | Wind resistance     | Maximum wind condition considered for the drone |
 | Drag coefficient    | Aerodynamic drag parameter                      |
-| Payload coefficient | Relative payload effect on flight performance   |
+| Max takeoff weight  | Where the maker publishes one (Matrice 300 RTK: 9 kg); the payload is checked against it |
+| Payload             | Weight carried, in kg (outbound and return); turned into a weight factor (drone + payload) / drone |
 
 Drone presets can be used where available, while individual parameters can also be modified.
 
@@ -112,12 +113,14 @@ Drone presets can be used where available, while individual parameters can also 
 
 Payload can affect flight performance.
 
-FLYTIMIZER allows different payload coefficients for:
+Enter the payload's weight in kg; with the drone's own weight that gives how much heavier it is. A different payload can be set for:
 
 * **Outbound flight**
 * **Return flight**
 
 This is useful for missions such as deliveries where the drone carries a payload on the outbound leg but returns empty.
+
+The takeoff weight is checked: over a published max takeoff weight the result warns not to fly; a sub-250 g drone that goes over 250 g is told it leaves the lightest class; and where the maker publishes no max (consumer drones aren't made to carry payloads) there's a word of caution.
 
 For example:
 

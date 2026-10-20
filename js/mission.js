@@ -1,5 +1,6 @@
 // Mission type (delivery / photo) and its defaults.
 
+import { updatePayloadNote } from './drone.js';
 import { saveSettings } from './share.js';
 import { profileWaypoints } from './terrain.js';
 
@@ -14,7 +15,6 @@ import { profileWaypoints } from './terrain.js';
 // landing or takeoff at the destination, one round-trip mission.
 // ---------------------------------------------------------------
 export var DWELL_DEFAULTS = { delivery: 30, photo: 60 };
-export var PAYLOAD_DEFAULTS = { delivery: 2, photo: 1 };
 
 export function currentMission(){
   var el = document.getElementById('mission');
@@ -26,14 +26,11 @@ export function onMissionChange(){
   var backField = document.getElementById('payloadBackField');
   if (backField) backField.style.display = m === 'photo' ? 'none' : '';
   var lbl = document.getElementById('payloadLabel');
-  if (lbl) lbl.textContent = m === 'photo' ? 'Payload coefficient' : 'Payload coefficient (outbound)';
+  if (lbl) lbl.textContent = m === 'photo' ? 'Payload' : 'Payload (outbound)';
   var d = document.getElementById('dwell');
   var other = m === 'photo' ? 'delivery' : 'photo';
   if (d && parseFloat(d.value) === DWELL_DEFAULTS[other]) d.value = DWELL_DEFAULTS[m];
-  // Photo flights usually carry nothing extra; swap the default payload
-  // too, but leave any value the person typed themselves.
-  var pl = document.getElementById('payload');
-  if (pl && parseFloat(pl.value) === PAYLOAD_DEFAULTS[other]) pl.value = PAYLOAD_DEFAULTS[m];
+  updatePayloadNote();
   var note = document.getElementById('missionNote');
   if (note){
     note.textContent = m === 'photo'
