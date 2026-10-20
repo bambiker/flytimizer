@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Flytimizer — Fastest Drone Altitude for Your Route</title>
+<title>Flytimizer by Windrone — Fastest Drone Altitude for Your Route</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Free drone flight planner: finds the altitude that saves the most flight time and battery on your route, using live wind forecasts, terrain, buildings and no-fly areas. Export DJI waypoint missions.">
 <link rel="canonical" href="https://bambiker.github.io/flytimizer/">
@@ -12,16 +12,16 @@
 <meta name="apple-mobile-web-app-title" content="Flytimizer">
 
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Flytimizer">
+<meta property="og:site_name" content="Flytimizer by Windrone">
 <meta property="og:url" content="https://bambiker.github.io/flytimizer/">
-<meta property="og:title" content="Flytimizer — Fastest Drone Altitude for Your Route">
+<meta property="og:title" content="Flytimizer by Windrone — Fastest Drone Altitude for Your Route">
 <meta property="og:description" content="Live wind, terrain, buildings and no-fly areas — find the altitude that saves the most flight time and battery.">
 <meta property="og:image" content="https://bambiker.github.io/flytimizer/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Flytimizer: a drone route's altitude profile over terrain, with live wind">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Flytimizer — Fastest Drone Altitude for Your Route">
+<meta name="twitter:title" content="Flytimizer by Windrone — Fastest Drone Altitude for Your Route">
 <meta name="twitter:description" content="Live wind, terrain, buildings and no-fly areas — find the altitude that saves the most flight time and battery.">
 <meta name="twitter:image" content="https://bambiker.github.io/flytimizer/og-image.png">
 
@@ -30,6 +30,8 @@
   "@context": "https://schema.org",
   "@type": "WebApplication",
   "name": "Flytimizer",
+  "alternateName": "Flytimizer by Windrone",
+  "creator": { "@type": "Organization", "name": "Windrone" },
   "url": "https://bambiker.github.io/flytimizer/",
   "applicationCategory": "UtilitiesApplication",
   "operatingSystem": "Any (web browser)",
@@ -171,6 +173,12 @@ h1 .logo{
   width: 0.9em;
   height: 0.9em;
   flex: none;
+}
+
+.by-brand{
+  font-size: 0.55em;
+  font-weight: 500;
+  color: var(--muted);
 }
 
 .subtitle{
@@ -993,7 +1001,7 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
 
   <header class="topbar">
     <div class="brand-row">
-      <h1><svg class="logo" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7 7l10 10M17 7L7 17"/><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg> Flytimizer</h1>
+      <h1><svg class="logo" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7 7l10 10M17 7L7 17"/><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg> Flytimizer <span class="by-brand">by Windrone</span></h1>
       <p class="subtitle">Fly (Time & Battery) Optimizer</p>
     </div>
     <button class="btn btn-ghost btn-install" id="installBtn" data-action="install" hidden>Add to home screen</button>
@@ -1313,6 +1321,9 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
     <div class="disclosure-body">
       <p class="changelog-date">20 Oct 2026</p>
       <ul>
+        <li><b>Add to home screen</b>: a button at the top installs
+        Flytimizer like an app (Android, Chrome and Edge); on iPhone and
+        iPad it shows the two taps to do it from Safari.</li>
         <li><b>Payload in kg</b>: enter what the drone carries and the
         app works out how much heavier it is. It warns over a published
         max takeoff weight (Matrice 300 RTK: 9 kg) and when a sub-250 g
