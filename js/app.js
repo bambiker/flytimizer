@@ -7,7 +7,7 @@
 
 import { track } from './analytics.js';
 import { PRESET_FIELDS, applyDronePreset, checkCustom, updatePayloadNote } from './drone.js';
-import { getHeight } from './calc.js';
+import { cancelCalculation, getHeight } from './calc.js';
 import { checkConditions, hideConditions } from './conditions.js';
 import { clearMarkers, getLocation, searchLocation, setOnDestinationPlaced } from './core.js';
 import { clearRouteLayers, initMap } from './map-view.js';
@@ -24,6 +24,7 @@ import { downloadWPML } from './wpml.js';
 // "Start over": clears the points, the route drawn on the map and the
 // result, and the route from the address bar. Drone settings stay.
 function startOver(){
+  cancelCalculation();
   clearMarkers();
   clearRouteLayers();
   clearPlans();

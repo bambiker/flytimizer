@@ -14,6 +14,7 @@
 //                 height tags) on the line; 'towerOnDetour': 'nearby' at first,
 //                 then a 300 m tower on any later route looked up;
 //                 'towerOnFirstDetour': the tower on the second route only
+//   overpassDelayMs  OpenStreetMap lookups answer only after this delay
 //   gnssFail      CelesTrak answers HTTP 403 (no satellite orbits)
 //   kp            Kp index NOAA reports for now (default 2.33)
 //   ipCountry     country of the internet connection (default 'IL')
@@ -105,7 +106,8 @@ export async function openSite(page, from, to, query, sc = {}){
   });
   await ctx.route(/nominatim\.openstreetmap\.org\/reverse/, r => json(r, { address: { country_code: sc.country || 'il', country: sc.country === 'us' ? 'United States' : 'Israel' } }));
   let buildingQueries = 0;
-  await ctx.route(/overpass|maps\.mail\.ru/, r => {
+  await ctx.route(/overpass|maps\.mail\.ru/, async r => {
+    if (sc.overpassDelayMs) await new Promise(res => setTimeout(res, sc.overpassDelayMs));
     if (sc.overpassFail) return r.fulfill({ status: 500, body: 'error' });
     const body = decodeURIComponent((r.request().postData() || r.request().url()).replace(/\+/g, ' '));
     if (/building/.test(body) && !/amenity/.test(body)){

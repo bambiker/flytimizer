@@ -892,7 +892,14 @@ export async function planAlongPath(planCtx, path){
            route: { terrainSamples: samples, terrainBack: back, terrainAvailable: terrainAvailable, path: path, distance: distance } };
 }
 
-export async function calcHeight() {
+// Each calculation gets a number; one that's been replaced (Calculate
+// pressed again, or Start over) stops at its next pause and draws
+// nothing.
+var calcGeneration = 0;
+
+export async function calcHeight(gen) {
+    if (gen === undefined) gen = ++calcGeneration;
+    function stale(){ return gen !== calcGeneration; }
 
     if (marker==0){
        showNotice('calcNotice', 'Choose a start point first: click the map or search for a place.');
@@ -914,7 +921,8 @@ export async function calcHeight() {
     Progress.start([
       { key: 'hazards', label: 'Checking restricted areas (schools, airports…)', est: lookupEst.hazards },
       { key: 'buildings', label: 'Checking buildings and terrain along the route', est: lookupEst.buildings },
-      { key: 'compute', label: 'Calculating optimal heights', est: 0.5 }
+      // Terrain along the final route, then the three plans at every height and speed.
+      { key: 'compute', label: 'Calculating optimal heights', est: 2 }
     ]);
     Progress.stage('hazards');
 
@@ -935,6 +943,7 @@ export async function calcHeight() {
 
     const hazardData = await hazardsPromise;
     const rules = await rulesPromise;
+    if (stale()) return 'stale';
     const altPermit = altitudePermitChecked();
     // Legal height limit above ground for this route (the app never
     // checks above MAX_FLIGHT_ALTITUDE_M, even with a permit).
@@ -965,6 +974,7 @@ export async function calcHeight() {
         .catch(function(err){ console.warn('Terrain lookup failed:', err); return null; });
 
     const wind = await windPromise;
+    if (stale()) return 'stale';
     if (wind.error){
       console.warn('Forecast lookup failed:', wind.error);
       showNotice('calcNotice', "Couldn't load the wind forecast from Open-Meteo, so no heights can be worked out right now. The weather service may be busy - trying again in a minute usually works.",
@@ -975,6 +985,7 @@ export async function calcHeight() {
     }
     const json = wind.json;
     const buildingData = await buildingPromise;
+    if (stale()) return 'stale';
     const buildings = buildingData ? buildingData.buildings : null;
     const buildingList = buildings ? buildings.list : [];
     const buildingHalfWidthUsed = buildingData ? buildingData.buildingHalfWidthUsed : BUILDING_CORRIDOR_HALF_WIDTH_M;
@@ -1058,6 +1069,7 @@ export async function calcHeight() {
         terrainSamples = await getTerrainProfile(avoidance.path)
             .catch(function(err){ console.warn('Terrain lookup failed:', err); return null; });
     }
+    if (stale()) return 'stale';
     const terrainAvailable = terrainSamples !== null;
     if (!terrainAvailable) terrainSamples = flatTerrainProfile(avoidance.path);
 
@@ -1249,32 +1261,47 @@ export async function calcHeight() {
     Progress.finish(hazardData !== null && buildingData !== null && terrainAvailable);
 }
 
-// The Calculate button (and the "Try again" links): runs calcHeight()
-// with the button disabled, then scrolls to the result.
+// The Calculate button (and the "Try again" links): runs calcHeight(),
+// then scrolls to the result. The button stays usable meanwhile:
+// pressing it again (say after changing the payload) drops the running
+// calculation and starts afresh.
+var CALC_LABEL_BUSY = 'Calculating\u2026 (tap to restart)';
+function calcButtonIdle(){
+  var btn = document.getElementById('calcBtn');
+  if (!btn) return;
+  btn.textContent = btn.dataset.label || btn.textContent;
+  btn.classList.remove('busy');
+}
+
+export function cancelCalculation(){
+  calcGeneration++;
+  Progress.finish(false);
+  calcButtonIdle();
+}
+
 export async function getHeight() {
   var btn = document.getElementById('calcBtn');
-  var originalLabel = btn.textContent;
-
-  var resetBtn = document.getElementById('resetBtn');
-
-  btn.disabled = true;
-  btn.textContent = 'Calculating\u2026';
-  if (resetBtn) resetBtn.disabled = true;  // the result would land after the reset
+  if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+  var gen = ++calcGeneration;
+  btn.textContent = CALC_LABEL_BUSY;
+  btn.classList.add('busy');
   hideNotice('calcNotice');
 
   try {
-    if (await calcHeight() === false) return;
+    var res = await calcHeight(gen);
+    if (gen !== calcGeneration || res === false || res === 'stale') return;
     var x = document.getElementById("result");
     x.style.display = "block";
     x.scrollIntoView({behavior: "smooth", block: "start"});
   } catch (err) {
+    if (gen !== calcGeneration) return;
     console.error(err);
     track('calculate', { result: 'error' });
     showNotice('calcNotice', 'Something went wrong while calculating - please try again.');
   } finally {
-    Progress.finish(false); // no-op if it already finished
-    if (resetBtn) resetBtn.disabled = false;
-    btn.disabled = false;
-    btn.textContent = originalLabel;
+    if (gen === calcGeneration){
+      Progress.finish(false); // no-op if it already finished
+      calcButtonIdle();
+    }
   }
 }

@@ -621,6 +621,32 @@ test('new visitor: mission and drone come first, Calculate is always on screen, 
   await expect(page.locator('.route-pin-end')).toHaveText('BDestination');
 });
 
+test('Calculate can be pressed again while it runs: the old calculation is dropped and the new one wins', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { overpassDelayMs: 1500 });
+  const btn = page.locator('#calcBtn');
+  await expect(btn).toHaveText('Calculating… (tap to restart)');
+  await expect(btn).toBeEnabled();
+  // Change the payload while it runs, then restart.
+  await page.locator('#droneConfigPanel > summary').click();
+  await page.locator('#payloadKg').fill('0.1');
+  await btn.click();
+  await waitForResult(page);
+  await expect(btn).toHaveText('Find Optimal Route');
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+  expect(page.url()).toContain('payloadKg=0.1');
+});
+
+test('Start over during a calculation cancels it', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { overpassDelayMs: 1500 });
+  await expect(page.locator('#calcProgress')).toBeVisible();
+  await page.locator('#resetBtn').click();
+  await expect(page.locator('#calcProgress')).toBeHidden();
+  await expect(page.locator('#calcBtn')).toHaveText('Find Optimal Route');
+  await page.waitForTimeout(3500);   // the lookups finish: nothing is drawn
+  await expect(page.locator('#result')).toBeHidden();
+  await expect(page.locator('.leaflet-marker-icon')).toHaveCount(0);
+});
+
 test('number fields open a numeric keypad on phones', async ({ page }) => {
   await openSite(page, HAIFA, null, 'drone=mini4pro');
   const fields = ['dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'mtow', 'health', 'drag', 'payloadKg', 'payloadBackKg'];

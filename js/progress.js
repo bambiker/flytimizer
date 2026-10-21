@@ -111,8 +111,11 @@ export var Progress = {
     this.frac = Math.max(this.frac, Math.min(0.99, (before + f * cur.est) / total));
 
     var remaining = Math.max(cur.est - elapsed, 0) + after;
+    // Past the estimate: only call it slow when it's well past it (map
+    // servers vary a lot), otherwise just say it's still going.
     var eta;
-    if (elapsed > cur.est * 1.3) eta = 'taking longer than usual…';
+    if (elapsed > cur.est * 2 && elapsed - cur.est > 8) eta = 'taking longer than usual…';
+    else if (elapsed > cur.est) eta = 'still working…';
     else if (remaining >= 1.5) eta = '~' + Math.ceil(remaining) + ' s left';
     else eta = 'almost done…';
 
@@ -141,7 +144,7 @@ export var Progress = {
         // Runs that hit a retry, or came from cache (near-instant),
         // say nothing about normal server speed - skip them.
         if (st.actual === null || st.retried || st.actual < 0.15 || st.rawEst <= 0) return;
-        var ratio = Math.min(5, Math.max(0.2, st.actual / st.rawEst));
+        var ratio = Math.min(10, Math.max(0.2, st.actual / st.rawEst));
         var old = factors[st.key] || 1;
         factors[st.key] = 0.7 * old + 0.3 * ratio;
       });
