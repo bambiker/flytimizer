@@ -506,13 +506,17 @@ test('the round-trip range is drawn around the start and can be hidden', async (
   await expect(outline).toHaveCount(1);
   await expect(page.locator('#rangeText')).toContainText(/up to [\d.]+ km toward the \w+/);
   // With only a start point the map zooms out to show the whole range.
+  // The outline's box is measured relative to the map's in the same
+  // frame, since the page may still be scrolling to the result.
+  const inMap = () => page.evaluate(() => {
+    const m = document.getElementById('map').getBoundingClientRect();
+    const o = document.querySelector('.leaflet-overlay-pane path[stroke="#14b8a6"]').getBoundingClientRect();
+    return { left: o.left - m.left, top: o.top - m.top, right: m.right - o.right, bottom: m.bottom - o.bottom, height: o.height, mapHeight: m.height };
+  });
+  await expect.poll(async () => { const r = await inMap(); return r.height / r.mapHeight; }).toBeGreaterThan(0.4);
+  const r = await inMap();
+  for (const side of ['left', 'top', 'right', 'bottom']) expect(r[side], side).toBeGreaterThanOrEqual(-0.5);
   const map = await page.locator('#map').boundingBox();
-  await expect.poll(async () => (await outline.boundingBox()).height).toBeGreaterThan(map.height * 0.4);
-  const box = await outline.boundingBox();
-  expect(box.x).toBeGreaterThanOrEqual(map.x);
-  expect(box.y).toBeGreaterThanOrEqual(map.y);
-  expect(box.x + box.width).toBeLessThanOrEqual(map.x + map.width);
-  expect(box.y + box.height).toBeLessThanOrEqual(map.y + map.height);
 
   await page.getByLabel('Show range on the map').uncheck();
   await expect(outline).toHaveCount(0);
