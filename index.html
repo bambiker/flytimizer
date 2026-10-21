@@ -206,6 +206,26 @@ h1 .logo{
 }
 .calc-bar .btn{ margin: 0; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
 
+/* Start (A) and destination (B) pins on the map. */
+.route-pin{ background: none; border: 0; }
+.route-pin .pin-dot{
+  display: grid; place-items: center;
+  width: 26px; height: 26px; box-sizing: border-box;
+  border-radius: 50%; border: 3px solid #fff;
+  color: #fff; font: 700 13px/1 var(--sans);
+  box-shadow: 0 1px 6px rgba(0,0,0,.5);
+}
+.route-pin-start .pin-dot{ background: #16a34a; }
+.route-pin-end .pin-dot{ background: #dc2626; }
+.route-pin .pin-label{
+  position: absolute; left: 30px; top: 3px;
+  white-space: nowrap; padding: 2px 7px; border-radius: 10px;
+  background: rgba(255,255,255,.92); color: #111827;
+  font: 600 12px/16px var(--sans);
+  box-shadow: 0 1px 4px rgba(0,0,0,.35);
+  pointer-events: none;
+}
+
 .brand-row{
   display:flex;
   align-items: baseline;
@@ -1348,6 +1368,9 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
         <li><b>Easier start</b>: pick the mission and drone at the top,
         tap the start and the destination, and the route is worked out
         right away. The Calculate button now stays on screen.</li>
+        <li>The start and destination are now a green <b>A</b> and a red
+        <b>B</b> on the map, each labelled, so a shared route is easy to
+        read.</li>
       </ul>
       <p class="changelog-date">20 Oct 2026</p>
       <ul>

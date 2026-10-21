@@ -616,6 +616,9 @@ test('new visitor: mission and drone come first, Calculate is always on screen, 
   await page.mouse.click(map.x + map.width * 0.6, map.y + map.height * 0.4);
   await waitForResult(page);
   await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+  // The two pins are told apart: A Start, B Destination.
+  await expect(page.locator('.route-pin-start')).toHaveText('AStart');
+  await expect(page.locator('.route-pin-end')).toHaveText('BDestination');
 });
 
 test('number fields open a numeric keypad on phones', async ({ page }) => {

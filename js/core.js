@@ -125,12 +125,25 @@ export async function searchLocation() {
   }
 }
 
+// The start and destination pins: a green "A" and a red "B", each
+// with its name always shown next to it, so anyone looking at the map
+// (or a shared link) can tell them apart.
+var PIN_LABELS = { start: 'Start', end: 'Destination' };
+export function routePin(latlng, kind){
+  var icon = L.divIcon({
+    className: 'route-pin route-pin-' + kind,
+    html: '<span class="pin-dot">' + (kind === 'start' ? 'A' : 'B') + '</span><span class="pin-label">' + PIN_LABELS[kind] + '</span>',
+    iconSize: [26, 26],
+    iconAnchor: [13, 13]
+  });
+  return L.marker(latlng, { icon: icon, draggable: true, autoPan: true, title: PIN_LABELS[kind], alt: PIN_LABELS[kind], keyboard: true });
+}
+
 export function setstartloc(lat, long)
 {
     if(marker === 0){ // new marker
             marker = 1;
-   marker1 = new L.marker([lat, long],{draggable: true,autoPan: true}).addTo(map);
-            marker1.bindTooltip("Start");  
+   marker1 = routePin([lat, long], 'start').addTo(map);
          markerLocation(1, marker1);    
    //Listen for drag events!
    marker1.on('dragend', function() {
@@ -185,9 +198,7 @@ export function addMarker(e){
         if(marker === 0){
         marker=1;        
        //Create the marker.
-   marker1 = new L.marker(e.latlng,{draggable: true,autoPan: true ,color: 'car'}).addTo(map);
-//marker1.valueOf()._icon.style.marker-color = 'red';
-       marker1.bindTooltip("Start");    
+   marker1 = routePin(e.latlng, 'start').addTo(map);
 
        markerLocation(1, marker1);  
        //Listen for drag events!
@@ -199,9 +210,7 @@ marker1.on('dragend', function() {
         if(marker === 1){
             marker=2;
             //Create the marker.
-   marker2 = new L.marker(e.latlng,{draggable: true,autoPan: true}).addTo(map);
-//marker1.valueOf()._icon.style.marker-color = 'green'    
-            marker2.bindTooltip("Destination");    
+   marker2 = routePin(e.latlng, 'end').addTo(map);
             markerLocation(2, marker2);
             if (onDestinationPlaced) onDestinationPlaced();
             //Listen for drag events!
@@ -225,8 +234,7 @@ export function setDestination(lat, lng){
   if (marker === 0) return;
   if (marker === 1){
     marker = 2;
-    marker2 = new L.marker([lat, lng], { draggable: true, autoPan: true }).addTo(map);
-    marker2.bindTooltip('Destination');
+    marker2 = routePin([lat, lng], 'end').addTo(map);
     marker2.on('dragend', function(){ markerLocation(2, marker2); });
   } else {
     marker2.setLatLng([lat, lng]);
