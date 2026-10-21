@@ -9,7 +9,7 @@ import { track } from './analytics.js';
 import { PRESET_FIELDS, applyDronePreset, checkCustom, updatePayloadNote } from './drone.js';
 import { getHeight } from './calc.js';
 import { checkConditions, hideConditions } from './conditions.js';
-import { clearMarkers, getLocation, searchLocation } from './core.js';
+import { clearMarkers, getLocation, searchLocation, setOnDestinationPlaced } from './core.js';
 import { clearRouteLayers, initMap } from './map-view.js';
 import { onMissionChange } from './mission.js';
 import { addToHomeScreen, initInstall } from './install.js';
@@ -93,3 +93,8 @@ initMap();
 initSiteSettings();
 initSharedState();
 initInstall();
+// With both points on the map there's nothing left to choose: calculate.
+setOnDestinationPlaced(function(){
+  track('calculate_auto', {});
+  getHeight();
+});

@@ -172,6 +172,11 @@ export function clearMarkers(){
   updateResetButton();
 }
 
+// Called when a map click places the destination for the first time
+// (app.js: run the calculation straight away).
+var onDestinationPlaced = null;
+export function setOnDestinationPlaced(fn){ onDestinationPlaced = fn; }
+
 // Map click: the first click places the start, the second the
 // destination, later clicks move the destination.
 export function addMarker(e){
@@ -198,6 +203,7 @@ marker1.on('dragend', function() {
 //marker1.valueOf()._icon.style.marker-color = 'green'    
             marker2.bindTooltip("Destination");    
             markerLocation(2, marker2);
+            if (onDestinationPlaced) onDestinationPlaced();
             //Listen for drag events!
      marker2.on('dragend', function() {
    markerLocation(2, marker2);  

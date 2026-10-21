@@ -600,6 +600,24 @@ test('Add to home screen on an iPhone explains the Share button', async ({ brows
   await ctx.close();
 });
 
+test('new visitor: mission and drone come first, Calculate is always on screen, and a destination tap calculates', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSite(page, HAIFA, null, '');
+  await page.evaluate(() => history.replaceState(null, '', location.pathname));
+  await page.reload();
+  // Step 1 is visible above the map.
+  await expect(page.locator('.setup-panel #mission')).toBeVisible();
+  await expect(page.locator('.setup-panel #droneModel')).toBeVisible();
+  // The Calculate button is in view without scrolling.
+  await expect(page.locator('#calcBtn')).toBeInViewport();
+  // Start, then destination: the result comes without pressing anything.
+  const map = await page.locator('#map').boundingBox();
+  await page.mouse.click(map.x + map.width * 0.4, map.y + map.height * 0.6);
+  await page.mouse.click(map.x + map.width * 0.6, map.y + map.height * 0.4);
+  await waitForResult(page);
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+});
+
 test('number fields open a numeric keypad on phones', async ({ page }) => {
   await openSite(page, HAIFA, null, 'drone=mini4pro');
   const fields = ['dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'mtow', 'health', 'drag', 'payloadKg', 'payloadBackKg'];
