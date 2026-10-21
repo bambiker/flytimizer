@@ -17,6 +17,12 @@
 //   Manual mode isn't counted).  Mini 5 Pro and Flip don't publish a
 //   Normal-mode speed: 12 (like the Mini 4 Pro) and 8 (like the Neo 2)
 //   are assumptions.
+//   Other makers: EVO II Pro V3 and EVO Nano+ Standard mode 10. Skydio
+//   X10 16 (its top speed with obstacle avoidance on). ANAFI Ai (12)
+//   and Potensic Atom 2 (10) don't publish one: assumed.
+//   Battery energy worked out where only mAh is published: ANAFI Ai
+//   from its 366 g pack at 262 Wh/kg, Atom 2 from 2230 mAh x 7.7 V.
+//   EVO II Pro V3 and Skydio X10 publish a max takeoff weight.
 // ---------------------------------------------------------------
 
 // batt = battery energy (Wh), ftime = rated max flight time (min),
@@ -55,7 +61,12 @@ export var DRONE_PRESETS = {
   matrice300:    { name: 'DJI Matrice 300 RTK',  mtow: 9, cruise: 15, hor: 23, asc: 6, des: 5, windres: 12, batt: 548, ftime: 55, mass: 6.3 },
   neo2:          { name: 'DJI Neo 2',            cruise: 8, hor: 12, asc: 5, des: 3, windres: 10.7, batt: 10, ftime: 11.4, mass: 0.151,
                    power: { measured: true, curve: { a: 0.1, b: 0.47 }, climbEff: 0.19, socSlope: 0.002 } },
-  evolite:       { name: 'Autel EVO Lite+',      cruise: 10, hor: 18, asc: 5, des: 4, windres: 10.6, batt: 68.7, ftime: 40, mass: 0.835 }
+  evolite:       { name: 'Autel EVO Lite+',      cruise: 10, hor: 18, asc: 5, des: 4, windres: 10.6, batt: 68.7, ftime: 40, mass: 0.835 },
+  evo2prov3:     { name: 'Autel EVO II Pro V3',  mtow: 1.999, cruise: 10, hor: 20, asc: 8, des: 4, windres: 12, batt: 82, ftime: 40, mass: 1.191 },
+  evonanoplus:   { name: 'Autel EVO Nano+',      cruise: 10, hor: 15, asc: 4, des: 4, windres: 10.7, batt: 17.32, ftime: 28, mass: 0.249 },
+  anafiai:       { name: 'Parrot ANAFI Ai',      cruise: 12, hor: 16, asc: 4, des: 4, windres: 12, batt: 96, ftime: 32, mass: 0.898 },
+  skydiox10:     { name: 'Skydio X10',           mtow: 2.49, cruise: 16, hor: 20, asc: 6, des: 4, windres: 12.8, batt: 156.17, ftime: 40, mass: 2.11 },
+  atom2:         { name: 'Potensic Atom 2',      testSpeed: 5, cruise: 10, hor: 16, asc: 5, des: 4, windres: 10.7, batt: 17.2, ftime: 32, mass: 0.249 }
 };
 // Fields a preset fills in (the rest - payload, drag, battery health -
 // are the person's own).
