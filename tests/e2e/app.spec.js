@@ -402,8 +402,30 @@ test('a route over fewer people that can\'t be flown, even round the tall buildi
   await waitForResult(page);
   const info = page.locator('#peopleInfo');
   await expect(info).toContainText(/A route over fewer people was found, but it passes buildings too tall to fly over at the heights allowed today, and no way round them saves enough people, so it isn’t offered\./);
-  await expect(page.locator('#planPeopleBtn')).toBeHidden();
   await expect(page.locator('.leaflet-overlay-pane path[stroke="#8b5cf6"]')).toHaveAttribute('d', /^(M0 0)?$/);
+  // The tab is still there, says why, and shows the fastest route.
+  const tab = page.locator('#planPeopleBtn');
+  await expect(tab).toContainText('not flyable');
+  const distance = await page.locator('#distance').textContent();
+  await tab.click();
+  await expect(page.locator('#planNote')).toContainText('this is the fastest route');
+  await expect(page.locator('#distance')).toHaveText(distance);
+});
+
+test('the Fewer people tab is always there: same as Fastest when no detour saves people, no data without the population file', async ({ page }) => {
+  // Evenly spread people: no way round saves any.
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [], population: 1500, flatGround: true });
+  await waitForResult(page);
+  const tab = page.locator('#planPeopleBtn');
+  await expect(tab).toContainText('same as Fastest');
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#planNote')).toContainText('No way round passes over clearly fewer people');
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [] });
+  await waitForResult(page);
+  await expect(page.locator('#planPeopleBtn')).toContainText('no data');
 });
 
 test('a route over fewer people that meets a building too tall to fly over is looked for again round it', async ({ page }) => {

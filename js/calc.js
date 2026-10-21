@@ -13,7 +13,7 @@ import { currentMission } from './mission.js';
 import { hideNotice, showNotice } from './notice.js';
 import { BUILDING_AVOID_MAX_COUNT, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_HEIGHT_SAFETY_MARGIN_M, BUILDING_LATERAL_SAFETY_MARGIN_M, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_TYPE_LABEL, MAX_FLIGHT_ALTITUDE_M, getBuildingsNearPath, getHazardsNearRoute } from './osm.js';
 import { renderPeopleInfo } from './people.js';
-import { currentCalc, renderPlan, renderPlanTabs, setCurrentCalc } from './plans.js';
+import { currentCalc, renderPlan, renderPlanTabs, selectedPlan, setCurrentCalc } from './plans.js';
 import { rangeExtremes, renderRange } from './range.js';
 import { Progress, estimateLookupSeconds } from './progress.js';
 import { buildingsCrossingPath, computeAvoidanceRoute, maxLateralDeviationM, maxPathDeviationM, minDistanceFromPath } from './routing.js';
@@ -1026,6 +1026,7 @@ export async function calcHeight(gen) {
     // plan of its own - the "Fewer people" tab - once this one is done.
     let resolveCalcDone;
     const calcDone = new Promise(function(resolve){ resolveCalcDone = resolve; });
+    let peopleStatus = null;
     renderPeopleInfo(avoidance.path, {
       from: { lat: startlat, lng: startlng }, to: { lat: destlat, lng: destlng },
       // Buildings too tall to climb over today are kept out of the way too.
@@ -1034,6 +1035,16 @@ export async function calcHeight(gen) {
       }).map(function(b){
         return { lat: b.lat, lng: b.lng, clearance: b.radius + BUILDING_LATERAL_SAFETY_MARGIN_M, radius: b.radius };
       })),
+      // No separate route over fewer people (yet, or at all): why.
+      onStatus: function(status){
+        peopleStatus = status;
+        calcDone.then(function(done){
+          if (currentCalc !== done.calc || done.calc.plans.people) return;
+          done.calc.peopleStatus = status;
+          renderPlanTabs();
+          if (selectedPlan === 'people') renderPlan();
+        });
+      },
       // Plans the route. It isn't detoured round buildings, so when it
       // passes ones too tall to climb over, research(avoid) looks for
       // another one that keeps clear of them (a few rounds, as the new
@@ -1248,7 +1259,10 @@ export async function calcHeight(gen) {
       speedOut: speedhorizontal,
       speedBack: speedhorizontalback,
       distance: routeDist,
-      droneModel: document.getElementById('droneModel').value
+      droneModel: document.getElementById('droneModel').value,
+      // The Fewer people tab is always there for a route: until (or
+      // unless) it has a plan of its own, this says why.
+      peopleStatus: marker === 2 ? (peopleStatus || { state: 'searching', note: 'Looking for a route over fewer people…' }) : null
     };
     setCurrentCalc(calcObj);
     resolveCalcDone({ planCtx: planCtx, calc: calcObj });
