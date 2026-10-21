@@ -205,6 +205,7 @@ h1 .logo{
   margin: 0 0 12px;
 }
 .calc-bar .btn{ margin: 0; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+.calc-bar .btn.busy{ opacity: .85; }
 
 /* Start (A) and destination (B) pins on the map. */
 .route-pin{ background: none; border: 0; }
@@ -1368,6 +1369,8 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
         <li><b>Easier start</b>: pick the mission and drone at the top,
         tap the start and the destination, and the route is worked out
         right away. The Calculate button now stays on screen.</li>
+        <li>Changed something while it's calculating? Press Calculate
+        again: it starts afresh. Start over stops it too.</li>
         <li>The start and destination are now a green <b>A</b> and a red
         <b>B</b> on the map, each labelled, so a shared route is easy to
         read.</li>
