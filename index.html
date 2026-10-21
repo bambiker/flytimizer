@@ -190,6 +190,42 @@ h1 .logo{
 .btn.btn-install{ padding: 6px 12px; font-size: 13px; }
 .btn-install[hidden]{ display: none; }
 
+.setup-panel .step-title{ margin: 0 0 10px; font-weight: 600; color: var(--ink); }
+.setup-grid{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.step{
+  display: inline-grid; place-items: center;
+  width: 22px; height: 22px; margin-right: 6px;
+  border-radius: 50%; background: var(--accent); color: var(--accent-ink);
+  font-size: 13px; font-weight: 700; vertical-align: 1px;
+}
+/* The Calculate button stays at the bottom of the screen until the
+   page is scrolled to where it belongs. */
+.calc-bar{
+  position: sticky; bottom: 12px; z-index: 1000;
+  margin: 0 0 12px;
+}
+.calc-bar .btn{ margin: 0; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+
+/* Start (A) and destination (B) pins on the map. */
+.route-pin{ background: none; border: 0; }
+.route-pin .pin-dot{
+  display: grid; place-items: center;
+  width: 26px; height: 26px; box-sizing: border-box;
+  border-radius: 50%; border: 3px solid #fff;
+  color: #fff; font: 700 13px/1 var(--sans);
+  box-shadow: 0 1px 6px rgba(0,0,0,.5);
+}
+.route-pin-start .pin-dot{ background: #16a34a; }
+.route-pin-end .pin-dot{ background: #dc2626; }
+.route-pin .pin-label{
+  position: absolute; left: 30px; top: 3px;
+  white-space: nowrap; padding: 2px 7px; border-radius: 10px;
+  background: rgba(255,255,255,.92); color: #111827;
+  font: 600 12px/16px var(--sans);
+  box-shadow: 0 1px 4px rgba(0,0,0,.35);
+  pointer-events: none;
+}
+
 .brand-row{
   display:flex;
   align-items: baseline;
@@ -1010,9 +1046,37 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
 
   <main>
 
-  <p class="lede">Click or search to set the start point. Click again
-  to set the destination.</p>
-  <p class="hint lede-more">Why not just fly at the highest allowed altitude? <a href="guides/best-drone-altitude-in-wind.html">Wind changes with height</a>, so the best altitude is often different for each leg. <a href="guides/">More guides</a></p>
+  <section class="panel setup-panel">
+    <p class="step-title"><span class="step">1</span> What are you flying?</p>
+    <div class="setup-grid">
+      <label class="field">
+        Mission
+        <div class="field-input">
+          <select id="mission">
+            <option value="delivery">Delivery</option>
+            <option value="photo">Photo / inspection</option>
+          </select>
+        </div>
+      </label>
+      <label class="field">
+        Drone model
+        <div class="field-input">
+          <select id="droneModel">
+            <option value="mavic3classic">DJI Mavic 3 Classic</option>
+            <option value="mini4pro">DJI Mini 4 Pro</option>
+            <option value="air3">DJI Air 3</option>
+            <option value="matrice300">DJI Matrice 300 RTK</option>
+            <option value="neo2" selected>DJI Neo 2</option>
+            <option value="evolite">Autel EVO Lite+</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        </label>
+    </div>
+  </section>
+
+  <p class="lede"><span class="step">2</span> Tap the map (or search) for the start point, then tap
+  again for the destination &mdash; the best heights are worked out right away.</p>
 
   <section class="panel map-panel">
     <div id="map"></div>
@@ -1033,17 +1097,10 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
     <div class="conditions" id="conditionsCard" aria-live="polite" hidden></div>
   </section>
 
+  <p class="hint lede-more">Why not just fly at the highest allowed altitude? <a href="guides/best-drone-altitude-in-wind.html">Wind changes with height</a>, so the best altitude is often different for each leg. <a href="guides/">More guides</a></p>
+
   <section class="panel">
     <div class="mission-grid">
-      <label class="field">
-        Mission
-        <div class="field-input">
-          <select id="mission">
-            <option value="delivery">Delivery — land or drop at the destination</option>
-            <option value="photo">Photo / inspection — there and back</option>
-          </select>
-        </div>
-      </label>
       <label class="field">
         Time at destination
         <div class="field-input"><input type="text" inputmode="decimal" id="dwell" value="30"><span class="unit">s</span></div>
@@ -1089,23 +1146,9 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
   </details>
 
   <details class="panel" id="droneConfigPanel">
-      <summary>Drone: <span id="droneSummaryName">DJI Neo 2</span></summary>
+      <summary>Drone details: <span id="droneSummaryName">DJI Neo 2</span> &middot; speeds, battery, payload</summary>
       <div class="disclosure-body">
       <div class="field-grid">
-        <label class="field">
-          Drone model
-          <div class="field-input">
-            <select id="droneModel">
-              <option value="mavic3classic">DJI Mavic 3 Classic</option>
-              <option value="mini4pro">DJI Mini 4 Pro</option>
-              <option value="air3">DJI Air 3</option>
-              <option value="matrice300">DJI Matrice 300 RTK</option>
-              <option value="neo2" selected>DJI Neo 2</option>
-              <option value="evolite">Autel EVO Lite+</option>
-              <option value="custom">Custom</option>
-            </select>
-          </div>
-        </label>
         <label class="field">
           Mission speed
           <div class="field-input"><input type="text" inputmode="decimal" id="cruise" value="8"><span class="unit">m/s</span></div>
@@ -1166,17 +1209,18 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
           above ground.</span>
         </label>
       </div>
-      <p class="field-note">Pick your drone to load its speeds and
+      <p class="field-note">The drone picked above loads its speeds and
       wind resistance rating, or enter your own — editing a value
-      switches the picker to "Custom". A payload coefficient of 2
-      means you're carrying the drone's own weight again, which
-      halves that leg's speed. Battery energy, rated flight time and
+      switches the picker to "Custom". A payload as heavy as the
+      drone itself halves that leg's speed. Battery energy, rated flight time and
       weight drive the battery estimate; lower battery health for
       older packs.</p>
       </div>
     </details>
 
-  <button class="btn btn-primary" id="calcBtn" data-action="calculate">Find Optimal Route</button>
+  <div class="calc-bar">
+    <button class="btn btn-primary" id="calcBtn" data-action="calculate">Find Optimal Route</button>
+  </div>
   <div class="notice" id="calcNotice" role="alert" hidden></div>
 
   <div class="progress" id="calcProgress" hidden>
@@ -1319,6 +1363,15 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
   <details class="panel" id="whatsNew">
     <summary>What's new</summary>
     <div class="disclosure-body">
+      <p class="changelog-date">21 Oct 2026</p>
+      <ul>
+        <li><b>Easier start</b>: pick the mission and drone at the top,
+        tap the start and the destination, and the route is worked out
+        right away. The Calculate button now stays on screen.</li>
+        <li>The start and destination are now a green <b>A</b> and a red
+        <b>B</b> on the map, each labelled, so a shared route is easy to
+        read.</li>
+      </ul>
       <p class="changelog-date">20 Oct 2026</p>
       <ul>
         <li><b>Add to home screen</b>: a button at the top installs
@@ -1531,8 +1584,8 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
   <!-- Bump data-updated (and the What's new list) on every release.
        If the GitHub repo is reachable, the latest commit date
        replaces it automatically when it's newer. -->
-  <p class="updated" id="lastUpdated" data-updated="2026-10-20">
-    Updated <time id="lastUpdatedDate" datetime="2026-10-20">20 Oct 2026</time>
+  <p class="updated" id="lastUpdated" data-updated="2026-10-21">
+    Updated <time id="lastUpdatedDate" datetime="2026-10-21">21 Oct 2026</time>
   </p>
 
   <script>
