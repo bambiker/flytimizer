@@ -64,17 +64,21 @@ export function renderPlanTabs(){
   var tabs = document.getElementById('planTabs');
   if (!tabs || !c) return;
   var eco = c.plans.eco;
-  tabs.style.display = eco || c.plans.people ? '' : 'none';
+  tabs.style.display = eco || c.plans.people || c.peopleStatus ? '' : 'none';
   PLAN_KEYS.forEach(function(key){
     var btn = document.getElementById(PLAN_BUTTONS[key]);
     var plan = c.plans[key];
     if (!btn) return;
-    btn.hidden = !plan;
-    if (!plan) return;
+    // Fewer people without a route of its own still has a tab, saying why.
+    var status = key === 'people' && !plan ? c.peopleStatus : null;
+    btn.hidden = !plan && !status;
+    if (!plan && !status) return;
     btn.classList.toggle('active', selectedPlan === key);
     btn.setAttribute('aria-selected', selectedPlan === key ? 'true' : 'false');
     var detail = '';
-    if (plan.out && plan.back && isFinite(plan.totalTime)){
+    if (status){
+      detail = PEOPLE_STATUS_LABEL[status.state] || '';
+    } else if (plan.out && plan.back && isFinite(plan.totalTime)){
       detail = formatDuration(plan.totalTime) + (isFinite(plan.totalBatt) ? ' · ' + fmtPct(plan.totalBatt) : '');
     }
     btn.innerHTML = '<span class="plan-title">' + PLAN_TITLES[key] + '</span><span class="plan-detail">' + (detail || 'no safe option') + '</span>';
@@ -84,13 +88,24 @@ export function renderPlanTabs(){
     var same = eco && c.plans.fast.out && eco.out && c.plans.fast.back && eco.back &&
       c.plans.fast.out.i === eco.out.i && c.plans.fast.out.mode === eco.out.mode && c.plans.fast.out.speed === eco.out.speed &&
       c.plans.fast.back.i === eco.back.i && c.plans.fast.back.mode === eco.back.mode && c.plans.fast.back.speed === eco.back.speed;
-    note.textContent = same ? 'On this route the fastest plan is also the most battery-efficient.' : '';
-    note.style.display = same ? 'block' : 'none';
+    var text = selectedPlan === 'people' && !c.plans.people && c.peopleStatus ? c.peopleStatus.note
+      : same && selectedPlan !== 'people' ? 'On this route the fastest plan is also the most battery-efficient.' : '';
+    note.textContent = text;
+    note.style.display = text ? 'block' : 'none';
   }
 }
 
+// Tab labels for a Fewer people tab with no route of its own.
+var PEOPLE_STATUS_LABEL = { searching: 'looking…', same: 'same as Fastest', nodata: 'no data', unflyable: 'not flyable' };
+
+// The plan a tab shows: Fewer people without a route of its own shows
+// the fastest one (its note says why).
+function planFor(c, key){
+  return c.plans[key] || (key === 'people' && c.peopleStatus ? c.plans.fast : null);
+}
+
 export function selectPlan(key){
-  if (!currentCalc || !currentCalc.plans[key]) return;
+  if (!currentCalc || !planFor(currentCalc, key)) return;
   selectedPlan = key;
   renderPlan();
 }
@@ -100,8 +115,8 @@ export function selectPlan(key){
 export function renderPlan(){
   var c = currentCalc;
   if (!c) return;
-  if (!c.plans[selectedPlan]) selectedPlan = 'fast';
-  var plan = c.plans[selectedPlan];
+  if (!planFor(c, selectedPlan)) selectedPlan = 'fast';
+  var plan = planFor(c, selectedPlan);
   var out = plan.out, back = plan.back;
   // The route this plan flies: its own for "Fewer people", else the main one.
   var r = plan.route || { terrainSamples: c.terrainSamples, terrainBack: c.terrainBack, terrainAvailable: c.terrainAvailable, path: c.path, distance: c.distance };

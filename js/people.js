@@ -8,7 +8,7 @@
 // for a first look at ground risk, not a head count.
 
 import { GHSL_POP_URL, ghslCells } from './ghsl.js';
-import { suggestFewerPeopleRoute } from './lowpop.js';
+import { LOWPOP_MAX_ROUTE_M, LOWPOP_MIN_PEOPLE_SAVED, suggestFewerPeopleRoute } from './lowpop.js';
 import { showAltRoute } from './map-view.js';
 import { densifyPath } from './terrain.js';
 import { fmtDist } from './units.js';
@@ -82,6 +82,7 @@ export async function renderPeopleInfo(path, opts){
   if (!el) return null;
   opts = opts || {};
   var seq = ++renderSeq;   // a newer calculation wins over a slow older one
+  function status(state, note){ if (opts.onStatus) opts.onStatus({ state: state, note: note }); }
   el.textContent = 'Counting the people who live under the route…';
   el.style.display = 'block';
   var r;
@@ -89,7 +90,10 @@ export async function renderPeopleInfo(path, opts){
     r = await peopleUnderRoute(path);
   } catch (err){
     console.warn('Population data unavailable:', err);
-    if (seq === renderSeq) el.style.display = 'none';
+    if (seq === renderSeq){
+      el.style.display = 'none';
+      status('nodata', 'The population data couldn’t be loaded, so no route over fewer people could be looked for: this is the fastest route.');
+    }
     return null;
   }
   if (seq !== renderSeq) return null;
@@ -119,19 +123,29 @@ export async function renderPeopleInfo(path, opts){
         }
         showAltRoute(null);
         note.textContent = ' A route over fewer people was found, but ' + res.reason + ', so it isn\u2019t offered.';
+        status('unflyable', 'A route over fewer people was found, but ' + res.reason + ': this is the fastest route.');
       }, function(err){
         console.warn('Planning the route over fewer people failed:', err);
         if (seq !== renderSeq) return;
         showAltRoute(null);
         note.textContent = ' A route over fewer people was found, but it couldn\u2019t be planned.';
+        status('unflyable', 'A route over fewer people was found, but it couldn’t be planned: this is the fastest route.');
       });
-    } else if (r.people >= 20){
+    } else if (r.people >= LOWPOP_MIN_PEOPLE_SAVED){
       note.textContent = ' No way round passes over clearly fewer people for a modest detour here.';
       el.appendChild(note);
+    }
+    if (!alt){
+      status('same', r.people < LOWPOP_MIN_PEOPLE_SAVED
+        ? 'Hardly anyone lives under this route, so the fastest route is also the one over the fewest people.'
+        : opts.distance > LOWPOP_MAX_ROUTE_M
+          ? 'Routes over ' + fmtDist(LOWPOP_MAX_ROUTE_M) + ' aren’t searched for a way round people: this is the fastest route.'
+          : 'No way round passes over clearly fewer people for a modest detour, so this is the fastest route.');
     }
     r.alternative = alt;
   } catch (err){
     console.warn('Fewer-people route search failed:', err);
+    if (seq === renderSeq) status('nodata', 'The search for a route over fewer people failed: this is the fastest route.');
   }
   return r;
 }
