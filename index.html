@@ -1063,12 +1063,27 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
         Drone model
         <div class="field-input">
           <select id="droneModel">
-            <option value="mavic3classic">DJI Mavic 3 Classic</option>
-            <option value="mini4pro">DJI Mini 4 Pro</option>
-            <option value="air3">DJI Air 3</option>
-            <option value="matrice300">DJI Matrice 300 RTK</option>
-            <option value="neo2" selected>DJI Neo 2</option>
-            <option value="evolite">Autel EVO Lite+</option>
+            <optgroup label="DJI Mini">
+              <option value="mini3">DJI Mini 3</option>
+              <option value="mini4k">DJI Mini 4K</option>
+              <option value="mini4pro">DJI Mini 4 Pro</option>
+              <option value="mini5pro">DJI Mini 5 Pro</option>
+            </optgroup>
+            <optgroup label="DJI Air and Mavic">
+              <option value="air3">DJI Air 3</option>
+              <option value="air3s">DJI Air 3S</option>
+              <option value="mavic3classic">DJI Mavic 3 Classic</option>
+              <option value="mavic4pro">DJI Mavic 4 Pro</option>
+            </optgroup>
+            <optgroup label="DJI Neo, Flip and Avata">
+              <option value="neo2" selected>DJI Neo 2</option>
+              <option value="flip">DJI Flip</option>
+              <option value="avata2">DJI Avata 2</option>
+            </optgroup>
+            <optgroup label="Enterprise and other makers">
+              <option value="matrice300">DJI Matrice 300 RTK</option>
+              <option value="evolite">Autel EVO Lite+</option>
+            </optgroup>
             <option value="custom">Custom</option>
           </select>
         </div>
@@ -1369,6 +1384,8 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
         <li><b>Easier start</b>: pick the mission and drone at the top,
         tap the start and the destination, and the route is worked out
         right away. The Calculate button now stays on screen.</li>
+        <li><b>7 more drones</b>: DJI Mini 3, Mini 4K, Mini 5 Pro, Air 3S,
+        Mavic 4 Pro, Flip and Avata 2, from DJI's spec sheets.</li>
         <li>Changed something while it's calculating? Press Calculate
         again: it starts afresh. Start over stops it too.</li>
         <li>The start and destination are now a green <b>A</b> and a red

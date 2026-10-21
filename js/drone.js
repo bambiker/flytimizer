@@ -12,6 +12,11 @@
 //   Mini 4 Pro, Air 3: Normal 12, DJI Fly waypoints up to 12.
 //   Matrice 300 RTK: P-mode 17, DJI Pilot 2 missions up to 15.
 //   Neo 2: Normal 8.  EVO Lite+: Standard 10 (Ludicrous 18).
+//   Mini 3, Mini 4K: Normal 10.  Air 3S: Normal 12.  Mavic 4 Pro:
+//   Normal 15 (from third-party tables).  Avata 2: Normal 8 (Sport 16;
+//   Manual mode isn't counted).  Mini 5 Pro and Flip don't publish a
+//   Normal-mode speed: 12 (like the Mini 4 Pro) and 8 (like the Neo 2)
+//   are assumptions.
 // ---------------------------------------------------------------
 
 // batt = battery energy (Wh), ftime = rated max flight time (min),
@@ -26,8 +31,10 @@
 // Matrice 300 RTK: 9 kg). The consumer drones have none: they aren't
 // made to carry a payload.
 // testSpeed (m/s) = the speed the maker measured ftime at, from the
-// spec sheet's footnote: Mavic 3 Classic 32.4 km/h, Air 3 28.8 km/h,
-// Mini 4 Pro 21.6 km/h. The others don't say; battery.js assumes 6 m/s.
+// spec sheet's footnote: Mavic 3 Classic, Air 3S and Mavic 4 Pro
+// 32.4 km/h, Air 3 28.8 km/h, Mini 4 Pro, Mini 3 and Avata 2 21.6 km/h,
+// Flip 6 m/s, Mini 4K 17 km/h. The others don't say; battery.js
+// assumes 6 m/s. Avata 2: 2150 mAh x 14.76 V = 31.7 Wh.
 // power (optional) = the speed curve and climb efficiency measured
 // from a drone's logs, replacing the defaults in battery.js. The Neo 2
 // draws more power the faster it flies (no dip at moderate speed), and
@@ -35,6 +42,13 @@
 // each gauge % holds as the battery runs down: on the Neo 2 about 0.110
 // Wh per % near full and 0.091 Wh per % near empty (k = 0.002 per %).
 export var DRONE_PRESETS = {
+  mini3:         { name: 'DJI Mini 3',           testSpeed: 6, cruise: 10, hor: 16, asc: 5, des: 3.5, windres: 10.7, batt: 18.1, ftime: 38, mass: 0.248 },
+  mini4k:        { name: 'DJI Mini 4K',          testSpeed: 4.7, cruise: 10, hor: 16, asc: 5, des: 3.5, windres: 10.7, batt: 17.32, ftime: 31, mass: 0.246 },
+  mini5pro:      { name: 'DJI Mini 5 Pro',       cruise: 12, hor: 18, asc: 10, des: 6, windres: 12, batt: 19.52, ftime: 36, mass: 0.249 },
+  air3s:         { name: 'DJI Air 3S',           testSpeed: 9, cruise: 12, hor: 21, asc: 10, des: 10, windres: 12, batt: 62.5, ftime: 45, mass: 0.724 },
+  mavic4pro:     { name: 'DJI Mavic 4 Pro',      testSpeed: 9, cruise: 15, hor: 25, asc: 10, des: 10, windres: 12, batt: 95.3, ftime: 51, mass: 1.063 },
+  flip:          { name: 'DJI Flip',             testSpeed: 6, cruise: 8, hor: 12, asc: 5, des: 5, windres: 10.7, batt: 22.3, ftime: 31, mass: 0.249 },
+  avata2:        { name: 'DJI Avata 2',          testSpeed: 6, cruise: 8, hor: 16, asc: 9, des: 9, windres: 10.7, batt: 31.7, ftime: 23, mass: 0.377 },
   mavic3classic: { name: 'DJI Mavic 3 Classic', testSpeed: 9, cruise: 15, hor: 21, asc: 8, des: 6, windres: 12, batt: 77, ftime: 46, mass: 0.895 },
   mini4pro:      { name: 'DJI Mini 4 Pro',       testSpeed: 6, cruise: 12, hor: 16, asc: 5, des: 5, windres: 10.7, batt: 18.96, ftime: 34, mass: 0.249 },
   air3:          { name: 'DJI Air 3',            testSpeed: 8, cruise: 12, hor: 21, asc: 10, des: 10, windres: 12, batt: 62.6, ftime: 46, mass: 0.72 },

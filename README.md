@@ -24,7 +24,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 
 * 📍 Set a **start point and destination** on the map, by place search, or from your current location
 * 🌬️ Live hourly wind forecast at several altitudes, with estimated gusts, and a **48-hour outlook** to pick the best time
-* 🚁 Drone presets (DJI, Autel) or custom drone parameters
+* 🚁 Drone presets (DJI Mini 3 / 4K / 4 Pro / 5 Pro, Air 3 / 3S, Mavic 3 Classic / 4 Pro, Neo 2, Flip, Avata 2, Matrice 300 RTK; Autel EVO Lite+) or custom drone parameters
 * 📦 **Delivery** missions (different payload on the way back) or **photo / inspection** round trips
 * ⛰️ **Terrain following**: heights are above the ground, using Copernicus GLO-90 elevation
 * 🏢 Clearance above mapped buildings, or a detour around ones too tall to climb over; where OpenStreetMap has no height for a building, the average building height around it from the EU's Global Human Settlement Layer (GHS-BUILT-H, 2018) is used instead of a guess
