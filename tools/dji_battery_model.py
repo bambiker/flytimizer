@@ -40,6 +40,9 @@ What it does
        site new  - the site's current Neo 2 preset: the same, plus the
                    gauge's last percents holding less energy (socSlope),
                    from the battery % the flight started at
+       site fit  - the site's own formula with its hover power, speed
+                   curve and climb cost fitted to the OTHER flights' power
+                   (what a new preset from these logs would score)
        no wind   - this model, wind assumed zero
        same day  - this model, wind estimated from the OTHER flights of
                    the same day (what you would know before flying)
@@ -108,6 +111,7 @@ MIN_EVAL_AIRBORNE_S = 60.0
 WIND_SPEEDS = np.arange(0.0, 12.01, 0.5)
 WIND_DIRS = np.arange(0.0, 360.0, 10.0)
 WIND_ITERS = 4
+SPEED_TERMS = 2           # power vs airspeed: 2 = 1 + a*x + b*x^3 (b >= 0); 3 = free cubic
 
 DATETIME_COL = "CUSTOM.dateTime"
 NEEDED = [
@@ -148,7 +152,7 @@ def site_gauge_used(spec, energy_pct, start_pct):
     left = (-b + np.sqrt(b * b + 4 * a * target)) / (2 * a)
     return start_pct - left
 
-METHODS = ["naive", "site old", "site 27", "site new", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
+METHODS = ["naive", "site old", "site 27", "site new", "site fit", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
 
 MIN_STEPS_PER_BATTERY = 40    # 1% steps needed for a battery's own curve
 # Batteries age: a flight this many flights (of the same battery) away
@@ -487,6 +491,24 @@ def lstsq(X, y):
     return beta
 
 
+def fit_power(X, y):
+    """Power coefficients with a stable speed curve. With SPEED_TERMS = 2
+    the curve is 1 + a*x + b*x^3 (the site's form, no x^2 term) and the
+    x^3 term can't go negative - so power can't fall at high speed, and
+    the curve can't trade itself off against the wind estimate. With 3,
+    all of x, x^2, x^3 are free (the old behaviour)."""
+    if SPEED_TERMS >= 3:
+        return lstsq(X, y)
+    cols = [0, 1, 3, 4, 5, 6, 7]
+    beta = np.zeros(X.shape[1])
+    beta[cols] = lstsq(X[:, cols], y)
+    if beta[3] < 0:
+        cols = [0, 1, 4, 5, 6, 7]
+        beta = np.zeros(X.shape[1])
+        beta[cols] = lstsq(X[:, cols], y)
+    return beta
+
+
 def r2(y, pred):
     ok = np.isfinite(y) & np.isfinite(pred)
     ss = np.sum((y[ok] - y[ok].mean()) ** 2)
@@ -532,14 +554,14 @@ def fit_model(flights, with_wind=True):
 
     for _ in range(WIND_ITERS if with_wind else 1):
         X = np.vstack([flight_design(f, winds[f.session]) for f in flights])
-        beta = lstsq(X, y)
+        beta = fit_power(X, y)
         if not with_wind:
             break
         for s in sessions:
             winds[s] = estimate_wind(beta, [f for f in flights if f.session == s])
 
     X = np.vstack([flight_design(f, winds[f.session]) for f in flights])
-    beta = lstsq(X, y)
+    beta = fit_power(X, y)
     va_max = float(np.nanmax(SPEED_SCALE * X[:, 1]))
     return {"beta": beta, "winds": winds, "va_max": va_max, "r2": r2(y, X @ beta)}
 
@@ -573,6 +595,49 @@ def _airspeed_factor(v, spec):
 
 def _spec_hover(spec):
     return spec.wh * 60.0 / spec.minutes / _airspeed_factor(spec.test_speed, spec)
+
+
+def fit_site(flights, base=None, degree=1):
+    """The site's own battery formula (js/battery.js) fitted directly to
+    the logs: hover power, speed curve 1 + a*x + b*x^3 (x = ground speed /
+    top speed; b >= 0) and climb cost from the power; descent stays the
+    site's fixed 0.9 x hover. The battery energy (100% -> 0%) and the
+    gauge slope (socSlope) come from the Wh-per-% curve. Returns a spec
+    like SPEC_NEW, with the flight time that gives that hover power."""
+    base = SimpleNamespace(**vars(base or SPEC_NEW))
+    curve = fit_wh_curve(flights, None, degree)
+    base.wh = float(energy_between(curve, 100, 0))
+    mid = float(curve_whp(curve, 50))
+    base.soc_slope = float(curve.coef[-2] / mid) if len(curve.coef) == 2 and mid > 0 else 0.0
+    rows, ys, ws = [], [], []
+    for f in flights:
+        b = f.bins
+        x = np.clip(np.hypot(b["vn"], b["ve"]).to_numpy() / base.vmax, 0, 1.2)
+        up = b["up"].to_numpy()
+        climb, desc = up > 0.3, up < -0.3
+        cruise = ~(climb | desc)
+        X = np.zeros((len(b), 4))
+        X[cruise, 0], X[cruise, 1], X[cruise, 2] = 1.0, x[cruise], x[cruise] ** 3
+        X[climb, 0], X[climb, 3] = 1.0, up[climb]
+        X[desc, 0] = base.descent_factor
+        rows.append(X)
+        ys.append(b["P"].to_numpy())
+        ws.append(np.sqrt(b["dur"].to_numpy()))
+    X, y, w = np.vstack(rows), np.concatenate(ys), np.concatenate(ws)
+    cols = [0, 1, 2, 3]
+    theta = np.zeros(4)
+    theta[cols] = lstsq(X[:, cols] * w[:, None], y * w)
+    if theta[2] < 0:                       # keep power rising at high speed
+        cols = [0, 1, 3]
+        theta = np.zeros(4)
+        theta[cols] = lstsq(X[:, cols] * w[:, None], y * w)
+    hover, ha, hb, k = theta
+    spec = SimpleNamespace(**vars(base))
+    spec.curve_a, spec.curve_b = ha / hover, hb / hover
+    spec.climb_eff = base.mass * 9.81 / k if k > 0 else 10.0
+    spec.minutes = base.wh * 60.0 / (hover * _airspeed_factor(base.test_speed, spec))
+    spec.hover = hover
+    return spec
 
 
 def spec_power(f, spec=SPEC):
@@ -788,6 +853,7 @@ def leave_one_out(flights, group, degree, long_min):
         if not train:
             continue
         model = fit_model(train)
+        site_fit = fit_site(train, degree=degree)
         whp, rate, whp_src = wh_per_pct(train, f.battery)
         if not np.isfinite(whp):
             continue
@@ -800,6 +866,7 @@ def leave_one_out(flights, group, degree, long_min):
             "site old": spec_power(f, SPEC),
             "site 27": spec_power(f, SPEC_27),
             "site new": spec_power(f, SPEC_NEW),
+            "site fit": spec_power(f, site_fit),
             "no wind": predict_power(model, f, (0.0, 0.0)),
             "same day": predict_power(model, f, same_day or (0.0, 0.0)),
             "own wind": predict_power(model, f, own),
@@ -810,6 +877,9 @@ def leave_one_out(flights, group, degree, long_min):
             "site 27": np.sum(power["site 27"] * dur) / 3600.0 / SPEC_27.wh * 100.0,
             "site new": site_gauge_used(
                 SPEC_NEW, np.sum(power["site new"] * dur) / 3600.0 / SPEC_NEW.wh * 100.0,
+                f.soc_start),
+            "site fit": site_gauge_used(
+                site_fit, np.sum(power["site fit"] * dur) / 3600.0 / site_fit.wh * 100.0,
                 f.soc_start),
             "E/% flat": f.energy_wh / whp,
             "E/% curve": f.soc_start - soc_after(curve, f.soc_start, f.energy_wh),
@@ -924,6 +994,21 @@ def report_full_model(flights, model, degree):
         pn = _spec_hover(SPEC_NEW) * _airspeed_factor(v, SPEC_NEW)
         print(f"  {v:4.0f} m/s: {p[0]:6.1f} W / {po:6.1f} W / {pn:6.1f} W")
     print(f"  (highest airspeed in the data: {model['va_max']:.1f} m/s)")
+
+    fit = fit_site(flights, degree=degree)
+    print()
+    print("site preset fitted to all these flights (the site's own formula):")
+    print(f"  hover {fit.hover:.1f} W   curve a={fit.curve_a:.3f} b={fit.curve_b:.3f}   "
+          f"climb efficiency {fit.climb_eff:.2f}   battery {fit.wh:.2f} Wh, "
+          f"socSlope {fit.soc_slope:.4f}")
+    print(f"  -> js/drone.js: batt: {fit.wh:.1f}, ftime: {fit.minutes:.1f}, "
+          f"power: {{ curve: {{ a: {fit.curve_a:.2f}, b: {fit.curve_b:.2f} }}, "
+          f"climbEff: {fit.climb_eff:.2f}, socSlope: {fit.soc_slope:.4f} }}")
+    print("  level flight power, this fit / current site preset:")
+    for v in (0, 3, 6, 9):
+        pf = _spec_hover(fit) * _airspeed_factor(v, fit)
+        pn = _spec_hover(SPEC_NEW) * _airspeed_factor(v, SPEC_NEW)
+        print(f"    {v:2d} m/s: {pf:5.1f} W / {pn:5.1f} W")
 
     print()
     print("estimated wind per day (from the power data; check against a")
@@ -1443,7 +1528,7 @@ def save_plots(out_dir, loo_results, route_curve, reserve, flights, curve):
     if loo_results:
         fig, ax = plt.subplots(figsize=(6.5, 6))
         actual = [r.flight.soc_drop for r in loo_results]
-        for m in ("naive", "site old", "site 27", "site new", "no wind"):
+        for m in ("naive", "site old", "site new", "site fit", "no wind"):
             ax.scatter(actual, [r.drop[m] for r in loo_results], label=m, s=22)
         top = max(actual + [r.drop[m] for r in loo_results for m in METHODS]) * 1.05
         ax.plot([0, top], [0, top], color="black", linewidth=0.8)
@@ -1516,6 +1601,9 @@ def parse_args():
     p.add_argument("--half-life", type=float, default=HALF_LIFE_FLIGHTS,
                    help="battery ageing: a flight this many of the same battery's "
                         "flights away counts half (default 30; 0 = all equal)")
+    p.add_argument("--speed-terms", type=int, choices=[2, 3], default=SPEED_TERMS,
+                   help="power vs airspeed: 2 = 1 + a*x + b*x^3, b >= 0 (default, "
+                        "stable); 3 = free cubic (the old fit)")
     p.add_argument("--no-capacity", action="store_true",
                    help="ignore the battery-reported capacity (to compare)")
     p.add_argument("--long-min", type=float, default=25.0,
@@ -1530,8 +1618,9 @@ def parse_args():
 
 
 def main():
-    global HALF_LIFE_FLIGHTS, USE_CAPACITY
+    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS
     args = parse_args()
+    SPEED_TERMS = args.speed_terms
     HALF_LIFE_FLIGHTS = args.half_life
     USE_CAPACITY = not args.no_capacity
     flights = load_all(args.path, read_battery_map(args.battery_map))
