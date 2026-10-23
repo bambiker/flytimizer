@@ -13,7 +13,7 @@ import { DRONE_PRESETS } from './drone.js';
 //    energy / that time = average power at that speed, which pins down
 //    the power curve for this drone.
 //  - Those times are lab figures, flown down to 0%: the Neo 2's spec
-//    said 19 min where its logs measured 11.4. So a flight time that
+//    said 19 min where its logs measured 10.5. So a flight time that
 //    isn't measured (every drone but the Neo 2, and custom drones) is
 //    taken as SPEC_FLIGHT_TIME_FACTOR of the rated one - on the safe
 //    side.

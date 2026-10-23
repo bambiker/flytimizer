@@ -37,9 +37,9 @@ What it does
        site 27   - the Neo 2 preset from PR #27: 10 Wh, 11.4 min, and the
                    speed curve and climb efficiency measured from these
                    logs; every gauge % holds the same energy
-       site new  - the site's current Neo 2 preset: the same, plus the
-                   gauge's last percents holding less energy (socSlope),
-                   from the battery % the flight started at
+       site new  - the site's current Neo 2 preset (its formula fitted to
+                   21 flights), with the gauge's last percents holding
+                   less energy (socSlope), from the flight's start %
        site fit  - the site's own formula with its hover power, speed
                    curve and climb cost fitted to the OTHER flights' power
                    (what a new preset from these logs would score)
@@ -134,8 +134,10 @@ SPEC.soc_slope = 0.0
 # The Neo 2 preset from PR #27: its own speed curve and climb efficiency.
 SPEC_27 = SimpleNamespace(**{**vars(SPEC), "wh": 10.0, "minutes": 11.4,
                              "curve_a": 0.1, "curve_b": 0.47, "climb_eff": 0.19})
-# The current Neo 2 preset: also the gauge's last percents holding less.
-SPEC_NEW = SimpleNamespace(**{**vars(SPEC_27), "soc_slope": 0.002})
+# The current Neo 2 preset: the site's formula fitted to 21 flights
+# ('site preset fitted'), with the gauge's last percents holding less.
+SPEC_NEW = SimpleNamespace(**{**vars(SPEC_27), "minutes": 10.5, "curve_a": -0.03,
+                              "curve_b": 0.79, "climb_eff": 0.14, "soc_slope": 0.0017})
 
 
 def site_gauge_used(spec, energy_pct, start_pct):
