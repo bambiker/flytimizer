@@ -46,6 +46,8 @@ What it does
        no wind   - this model, wind assumed zero
        same day  - this model, wind estimated from the OTHER flights of
                    the same day (what you would know before flying)
+       forecast  - this model, with the Open-Meteo forecast wind at the
+                   flight's place, hour and height (calm if none)
        own wind  - this model, wind fitted on the test flight itself
                    (an upper bound: not available before the flight)
        E/% flat  - the TRUE energy of the flight converted with one fixed
@@ -89,6 +91,9 @@ import json
 import os
 import re
 import sys
+import urllib.parse
+import urllib.request
+from datetime import date as _date
 from types import SimpleNamespace
 
 import numpy as np
@@ -213,14 +218,14 @@ def flight_start(raw, name):
     """When the flight started, from the file name (..._2026-10-14_[17-05-39])
     or the log's dateTime; used to put each battery's flights in order."""
     m = re.search(r"(\d{4}-\d{2}-\d{2})_\[(\d{2})-(\d{2})-(\d{2})\]", name)
-    if m:
-        return pd.Timestamp(f"{m.group(1)} {m.group(2)}:{m.group(3)}:{m.group(4)}")
+    if m:   # the phone's local time
+        return pd.Timestamp(f"{m.group(1)} {m.group(2)}:{m.group(3)}:{m.group(4)}"), False
     if DATETIME_COL in raw.columns:
-        parsed = pd.to_datetime(raw[DATETIME_COL], errors="coerce")
+        parsed = pd.to_datetime(raw[DATETIME_COL], errors="coerce", utc=True)
         parsed = parsed[parsed.dt.year > 2000]
-        if len(parsed):
-            return pd.Timestamp(parsed.iloc[0]).tz_localize(None)
-    return pd.NaT
+        if len(parsed):   # UTC
+            return pd.Timestamp(parsed.iloc[0]).tz_localize(None), True
+    return pd.NaT, False
 
 
 def _battery_column_median(raw, *needles):
@@ -337,7 +342,8 @@ def load_flight(path, battery_map):
         soc_start=soc_start,
         soc_end=soc_end,
         steps=soc_steps(d),
-        start=flight_start(raw, name),
+        start=flight_start(raw, name)[0],
+        start_utc=flight_start(raw, name)[1],
         full_cap=_battery_column_median(raw, "fullcap", "fullchargecap")[0],
         cycles=_battery_column_median(raw, "cycle", "loopnum")[0],
         cap_cols=[c for c in (_battery_column_median(raw, "fullcap", "fullchargecap")[1],
@@ -432,6 +438,12 @@ def load_all(path, battery_map):
         f.duration_s = float(b["dur"].sum())
         f.energy_wh = float(b["eJ"].sum() / 3600.0)
         f.soc_drop = f.soc_start - f.soc_end
+        lat, lon = b["lat"].to_numpy(), b["lon"].to_numpy()
+        ok = np.isfinite(lat) & np.isfinite(lon) & (np.abs(lat) > 1e-3)
+        f.lat0 = float(np.median(lat[ok])) if ok.any() else np.nan
+        f.lon0 = float(np.median(lon[ok])) if ok.any() else np.nan
+        f.mean_h = float(np.average(b["h"], weights=b["dur"])) if len(b) else np.nan
+        f.meteo = None
 
     # Each battery's flights in time order: 0 = its first logged flight.
     for bat in {f.battery for f in flights}:
@@ -865,6 +877,7 @@ def leave_one_out(flights, group, degree, long_min):
         own = estimate_wind(model["beta"], [f])
 
         power = {
+            "forecast": predict_power(model, f, tuple(f.meteo.wind) if f.meteo else (0.0, 0.0)),
             "site old": spec_power(f, SPEC),
             "site 27": spec_power(f, SPEC_27),
             "site new": spec_power(f, SPEC_NEW),
@@ -886,7 +899,7 @@ def leave_one_out(flights, group, degree, long_min):
             "E/% flat": f.energy_wh / whp,
             "E/% curve": f.soc_start - soc_after(curve, f.soc_start, f.energy_wh),
         }
-        for m in ("no wind", "same day", "own wind"):
+        for m in ("no wind", "same day", "own wind", "forecast"):
             e = np.sum(power[m] * dur) / 3600.0
             drop[m] = f.soc_start - soc_after(curve, f.soc_start, e)
 
@@ -1127,6 +1140,8 @@ def wind_report(flights, model, degree):
     print("the wind estimated for that day, 'own' the wind fitted to that flight")
     print("alone (noisier). 'peak' is the worst 10 s: the most extra power the")
     print("wind demanded, and when.")
+    print(f"(wind source: {'Open-Meteo per flight' if WIND_SOURCE == 'meteo' else 'estimated per day'};"
+          " 'day' column = that wind)")
     print()
     print(f"  {'flight':38s} {'wind (day)':>22s} {'+% day':>7s} {'+% own':>7s} "
           f"{'+Wh':>6s} {'share':>6s} {'peak W':>7s} {'at min':>6s}")
@@ -1135,7 +1150,7 @@ def wind_report(flights, model, degree):
         dur = f.bins["dur"].to_numpy()
         if dur.sum() < 30:
             continue
-        w_day = model["winds"].get(f.session, (0.0, 0.0))
+        w_day = flight_wind(model, f)
         w_own = estimate_wind(model["beta"], [f])
         calm = predict_power(model, f, (0.0, 0.0))
         e_calm = np.sum(calm * dur) / 3600.0
@@ -1179,7 +1194,7 @@ def wind_report(flights, model, degree):
     drift_rows = []
     for f in flights:
         hv = hover_drift(f)
-        w = model["winds"].get(f.session, (0.0, 0.0))
+        w = flight_wind(model, f)
         air = np.hypot(*w) * 60.0
         if not hv:
             print(f"  {f.name[:38]:38s} {'-':>6s} {'':>5s} {'':>9s} {'':>6s} {'':>6s} {air:9.0f}")
@@ -1248,7 +1263,7 @@ def wind_integrals(flights, model, degree):
         dur = b["dur"].to_numpy()
         if dur.sum() < 30:
             continue
-        w = np.array(model["winds"].get(f.session, (0.0, 0.0)))
+        w = np.array(flight_wind(model, f))
         vn, ve = b["vn"].to_numpy(), b["ve"].to_numpy()
         gs = np.hypot(vn, ve)
         moving = gs >= MOVING_MIN_SPEED
@@ -1331,6 +1346,170 @@ def save_wind_plots(out_dir, integrals):
     fig.tight_layout()
     fig.savefig(os.path.join(out_dir, "wind_integrals.png"), dpi=120)
     plt.close(fig)
+
+
+# ---------------------------------------------------------------------
+# Wind from Open-Meteo (what the forecast said at the flight's place and hour)
+# ---------------------------------------------------------------------
+
+# Historical forecasts (the forecast as it was issued), then the regular
+# forecast API, which also serves the last ~3 months with start/end dates.
+METEO_URLS = [
+    "https://historical-forecast-api.open-meteo.com/v1/forecast",
+    "https://api.open-meteo.com/v1/forecast",
+]
+METEO_HOURLY = "wind_speed_10m,wind_direction_10m,wind_speed_80m,wind_direction_80m,wind_gusts_10m"
+METEO_CACHE = os.path.expanduser("~/.cache/dji_battery_model")
+WIND_SOURCE = "estimate"   # what the wind sections use: "estimate" or "meteo"
+
+
+def _meteo_day(lat, lon, day):
+    """Open-Meteo hourly wind for one place and local date, cached on disk.
+    Returns the JSON, or None (with the error) when it can't be had."""
+    key = f"{lat:.2f}_{lon:.2f}_{day}.json"
+    path = os.path.join(METEO_CACHE, key)
+    if os.path.exists(path):
+        try:
+            with open(path) as fh:
+                return json.load(fh), None
+        except (OSError, ValueError):
+            pass
+    params = urllib.parse.urlencode({
+        "latitude": f"{lat:.4f}", "longitude": f"{lon:.4f}",
+        "start_date": day, "end_date": day, "hourly": METEO_HOURLY,
+        "wind_speed_unit": "ms", "timezone": "auto",
+    })
+    err = None
+    for url in METEO_URLS:
+        try:
+            with urllib.request.urlopen(url + "?" + params, timeout=20) as resp:
+                data = json.load(resp)
+            if "hourly" not in data:
+                err = data.get("reason", "no hourly data")
+                continue
+            if day < _date.today().isoformat():   # past days don't change
+                os.makedirs(METEO_CACHE, exist_ok=True)
+                with open(path, "w") as fh:
+                    json.dump(data, fh)
+            return data, None
+        except Exception as e:  # noqa: BLE001 - network or server trouble
+            err = e
+    return None, err
+
+
+def _uv(speed, from_deg):
+    """Wind 'from' direction and speed -> (north, east) motion of the air."""
+    return wind_vector(np.asarray(speed, float), np.asarray(from_deg, float))
+
+
+def meteo_wind(f):
+    """The Open-Meteo wind at the flight's place, middle of the flight and
+    mean height above take-off. Between 10 m and 80 m the wind vector is
+    interpolated on log height; below 10 m it is scaled down by the same
+    power law. Returns a namespace (wind=(north, east), speed, from_deg,
+    gust, height) or None, and an error text."""
+    if not (np.isfinite(f.lat0) and np.isfinite(f.lon0)) or pd.isna(f.start):
+        return None, "no GPS position or start time"
+    local_start = f.start
+    data, err = _meteo_day(round(f.lat0, 2), round(f.lon0, 2), local_start.date().isoformat())
+    if data is None:
+        return None, str(err)
+    if f.start_utc:
+        local_start = f.start + pd.Timedelta(seconds=data.get("utc_offset_seconds", 0))
+        if local_start.date().isoformat() != f.start.date().isoformat():
+            data, err = _meteo_day(round(f.lat0, 2), round(f.lon0, 2),
+                                   local_start.date().isoformat())
+            if data is None:
+                return None, str(err)
+    h = data["hourly"]
+    times = pd.to_datetime(h["time"])
+    mid = local_start + pd.Timedelta(seconds=f.duration_s / 2.0)
+    x = (mid - times[0]).total_seconds() / 3600.0
+    idx = np.arange(len(times), dtype=float)
+
+    def at(name):
+        v = np.array([np.nan if a is None else a for a in h[name]], float)
+        ok = np.isfinite(v)
+        return float(np.interp(x, idx[ok], v[ok])) if ok.any() else np.nan
+
+    def uv_at(level):
+        sp = np.array([np.nan if a is None else a for a in h[f"wind_speed_{level}m"]], float)
+        di = np.array([np.nan if a is None else a for a in h[f"wind_direction_{level}m"]], float)
+        n, e = _uv(sp, di)
+        ok = np.isfinite(n) & np.isfinite(e)
+        if not ok.any():
+            return np.nan, np.nan
+        return float(np.interp(x, idx[ok], n[ok])), float(np.interp(x, idx[ok], e[ok]))
+
+    n10, e10 = uv_at(10)
+    n80, e80 = uv_at(80)
+    if not np.isfinite(n10):
+        return None, "no 10 m wind for that hour"
+    height = float(np.clip(f.mean_h if np.isfinite(f.mean_h) else 10.0, 2.0, 120.0))
+    s10, s80 = np.hypot(n10, e10), np.hypot(n80, e80)
+    if height >= 10 and np.isfinite(n80):
+        t = min(np.log(height / 10.0) / np.log(8.0), 1.0)
+        wn, we = n10 + t * (n80 - n10), e10 + t * (e80 - e10)
+    else:
+        alpha = float(np.clip(np.log(s80 / s10) / np.log(8.0), 0.0, 0.5)) \
+            if np.isfinite(s80) and s10 > 0.1 and s80 > 0 else 0.14
+        k = (height / 10.0) ** alpha if height < 10 else 1.0
+        wn, we = n10 * k, e10 * k
+    speed = float(np.hypot(wn, we))
+    from_deg = float((np.degrees(np.arctan2(we, wn)) + 180.0) % 360.0)
+    return SimpleNamespace(wind=(wn, we), speed=speed, from_deg=from_deg,
+                           gust=at("wind_gusts_10m"), height=height), None
+
+
+def attach_meteo(flights):
+    print()
+    print("=" * 78)
+    print("WIND FROM OPEN-METEO")
+    print("=" * 78)
+    print("The forecast wind at each flight's place and hour (Open-Meteo's")
+    print("stored historical forecasts), at the flight's mean height. Compared")
+    print("with the wind the power model estimated for that day.")
+    print()
+    print(f"  {'flight':38s} {'height':>6s} {'Open-Meteo':>22s} {'gust':>5s} "
+          f"{'estimated (day)':>22s}")
+    errors = set()
+    for f in flights:
+        f.meteo, err = meteo_wind(f)
+        if err:
+            errors.add(err)
+    return errors
+
+
+def report_meteo(flights, model, errors):
+    got = [f for f in flights if f.meteo]
+    for f in flights:
+        est = wind_from_text(model["winds"].get(f.session, (0.0, 0.0)))
+        if f.meteo:
+            m = f.meteo
+            met = wind_from_text(m.wind)
+            print(f"  {f.name[:38]:38s} {m.height:5.0f}m {met:>22s} {m.gust:5.1f} {est:>22s}")
+        else:
+            print(f"  {f.name[:38]:38s} {'':>6s} {'-':>22s} {'':>5s} {est:>22s}")
+    if errors:
+        print()
+        print("  could not get Open-Meteo wind for some flights: " + "; ".join(sorted(errors))[:300])
+        print("  (needs internet; answers are cached in ~/.cache/dji_battery_model)")
+    if got:
+        print()
+        print("by day (mean speed, m/s):")
+        print(f"  {'day':10s} {'Open-Meteo':>10s} {'estimated':>10s}")
+        for d in sorted({f.session for f in got}):
+            ff = [f for f in got if f.session == d]
+            est = np.hypot(*model["winds"].get(d, (0.0, 0.0)))
+            print(f"  {d:10s} {np.mean([f.meteo.speed for f in ff]):10.1f} {est:10.1f}")
+    return got
+
+
+def flight_wind(model, f):
+    """The wind used for one flight in the wind sections."""
+    if WIND_SOURCE == "meteo" and f.meteo is not None:
+        return tuple(f.meteo.wind)
+    return model["winds"].get(f.session, (0.0, 0.0))
 
 
 # ---------------------------------------------------------------------
@@ -1603,6 +1782,11 @@ def parse_args():
     p.add_argument("--half-life", type=float, default=HALF_LIFE_FLIGHTS,
                    help="battery ageing: a flight this many of the same battery's "
                         "flights away counts half (default 30; 0 = all equal)")
+    p.add_argument("--no-weather", action="store_true",
+                   help="don't fetch the Open-Meteo wind for each flight")
+    p.add_argument("--wind-source", choices=["estimate", "meteo"], default="estimate",
+                   help="wind used in the wind-effect sections: estimated from the "
+                        "power (default) or Open-Meteo's")
     p.add_argument("--speed-terms", type=int, choices=[2, 3], default=SPEED_TERMS,
                    help="power vs airspeed: 2 = 1 + a*x + b*x^3, b >= 0 (default, "
                         "stable); 3 = free cubic (the old fit)")
@@ -1620,8 +1804,9 @@ def parse_args():
 
 
 def main():
-    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS
+    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS, WIND_SOURCE
     args = parse_args()
+    WIND_SOURCE = args.wind_source
     SPEED_TERMS = args.speed_terms
     HALF_LIFE_FLIGHTS = args.half_life
     USE_CAPACITY = not args.no_capacity
@@ -1629,6 +1814,10 @@ def main():
 
     model = fit_model(flights)
     report_full_model(flights, model, args.curve_degree)
+    if not args.no_weather:
+        errors = attach_meteo(flights)
+        if report_meteo(flights, model, errors):
+            METHODS.insert(METHODS.index("own wind"), "forecast")
     battery_health(flights, args.curve_degree, SPEC_NEW.wh)
     if not args.no_wind_report:
         wind_report(flights, model, args.curve_degree)
