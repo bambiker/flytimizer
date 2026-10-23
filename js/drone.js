@@ -27,12 +27,14 @@
 
 // batt = battery energy (Wh), ftime = rated max flight time (min),
 // mass = takeoff weight (kg) - from the manufacturers' spec sheets,
-// used by the battery estimate. Except the Neo 2: its batt and ftime
-// are measured from 18 real flight logs (two packs) with
-// tools/dji_battery_model.py - 10 Wh between 100% and 0% on the
-// battery gauge, 47 W hovering and about 52.5 W in level flight at
-// 6 m/s, which is 11.4 min on that energy. The spec sheet's 11.5 Wh /
-// 19 min made the estimate about a third too low.
+// used by the battery estimate. Except the Neo 2: its figures are the
+// site's own formula fitted to 21 real flight logs (two packs) with
+// tools/dji_battery_model.py ('site preset fitted'): 10 Wh between
+// 100% and 0% on the battery gauge, about 53 W hovering and 57 W in
+// level flight at 6 m/s, which is 10.5 min on that energy. Hover comes
+// out above the ~49 W measured, because this formula has no terms for
+// take-off and accelerating and folds them in. The spec sheet's
+// 11.5 Wh / 19 min made the estimate about a third too low.
 // mtow = max takeoff weight (kg), where the maker publishes one (the
 // Matrice 300 RTK: 9 kg). The consumer drones have none: they aren't
 // made to carry a payload.
@@ -43,10 +45,11 @@
 // assumes 6 m/s. Avata 2: 2150 mAh x 14.76 V = 31.7 Wh.
 // power (optional) = the speed curve and climb efficiency measured
 // from a drone's logs, replacing the defaults in battery.js. The Neo 2
-// draws more power the faster it flies (no dip at moderate speed), and
-// climbing costs it about 7.7 W per m/s. socSlope = how much less energy
-// each gauge % holds as the battery runs down: on the Neo 2 about 0.110
-// Wh per % near full and 0.091 Wh per % near empty (k = 0.002 per %).
+// draws more power the faster it flies (almost no dip at moderate
+// speed), and climbing costs it about 10.6 W per m/s. socSlope = how
+// much less energy each gauge % holds as the battery runs down: on the
+// Neo 2 about 0.109 Wh per % near full and 0.092 Wh per % near empty
+// (k = 0.0017 per %).
 export var DRONE_PRESETS = {
   mini3:         { name: 'DJI Mini 3',           testSpeed: 6, cruise: 10, hor: 16, asc: 5, des: 3.5, windres: 10.7, batt: 18.1, ftime: 38, mass: 0.248 },
   mini4k:        { name: 'DJI Mini 4K',          testSpeed: 4.7, cruise: 10, hor: 16, asc: 5, des: 3.5, windres: 10.7, batt: 17.32, ftime: 31, mass: 0.246 },
@@ -59,8 +62,8 @@ export var DRONE_PRESETS = {
   mini4pro:      { name: 'DJI Mini 4 Pro',       testSpeed: 6, cruise: 12, hor: 16, asc: 5, des: 5, windres: 10.7, batt: 18.96, ftime: 34, mass: 0.249 },
   air3:          { name: 'DJI Air 3',            testSpeed: 8, cruise: 12, hor: 21, asc: 10, des: 10, windres: 12, batt: 62.6, ftime: 46, mass: 0.72 },
   matrice300:    { name: 'DJI Matrice 300 RTK',  mtow: 9, cruise: 15, hor: 23, asc: 6, des: 5, windres: 12, batt: 548, ftime: 55, mass: 6.3 },
-  neo2:          { name: 'DJI Neo 2',            cruise: 8, hor: 12, asc: 5, des: 3, windres: 10.7, batt: 10, ftime: 11.4, mass: 0.151,
-                   power: { measured: true, curve: { a: 0.1, b: 0.47 }, climbEff: 0.19, socSlope: 0.002 } },
+  neo2:          { name: 'DJI Neo 2',            cruise: 8, hor: 12, asc: 5, des: 3, windres: 10.7, batt: 10, ftime: 10.5, mass: 0.151,
+                   power: { measured: true, curve: { a: -0.03, b: 0.79 }, climbEff: 0.14, socSlope: 0.0017 } },
   evolite:       { name: 'Autel EVO Lite+',      cruise: 10, hor: 18, asc: 5, des: 4, windres: 10.6, batt: 68.7, ftime: 40, mass: 0.835 },
   evo2prov3:     { name: 'Autel EVO II Pro V3',  mtow: 1.999, cruise: 10, hor: 20, asc: 8, des: 4, windres: 12, batt: 82, ftime: 40, mass: 1.191 },
   evonanoplus:   { name: 'Autel EVO Nano+',      cruise: 10, hor: 15, asc: 4, des: 4, windres: 10.7, batt: 17.32, ftime: 28, mass: 0.249 },

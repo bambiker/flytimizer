@@ -45,17 +45,17 @@ test('readBatteryModel calibrates hover power from the rated flight time, cut si
 });
 
 test('a preset with a measured power curve (Neo 2) uses it; other drones keep the default', () => {
-  const neo = model({ droneModel: 'neo2', batt: '10', ftime: '11.4' });
-  assert.deepEqual(neo.curve, { a: 0.1, b: 0.47 });
-  assert.equal(neo.climbEff, 0.19);
-  near(neo.hoverW, 47.4, 0.1);   // measured hover power
+  const neo = model({ droneModel: 'neo2', batt: '10', ftime: '10.5' });
+  assert.deepEqual(neo.curve, { a: -0.03, b: 0.79 });
+  assert.equal(neo.climbEff, 0.14);
+  near(neo.hoverW, 52.7, 0.1);   // hover power fitted from the logs
   assert.ok(site.airspeedPowerFactor(6, 12, neo.curve) > 1);   // no dip at moderate speed
   // Rated test still uses the whole battery with the measured curve.
-  near(site.batteryPct(neo, site.legEnergyWh(neo, 1, site.SPEC_TEST_SPEED_MS, 11.4 * 60, 0, 0, 5, 3), 20), 100, 1e-9);
+  near(site.batteryPct(neo, site.legEnergyWh(neo, 1, site.SPEC_TEST_SPEED_MS, 10.5 * 60, 0, 0, 5, 3), 20), 100, 1e-9);
   // Climbing costs m*g/efficiency per m/s on top of hovering: ~7.8 W per m/s.
   const hover60 = site.legEnergyWh(neo, 1, 0, 60, 0, 0, 5, 3);
   const climb60 = site.legEnergyWh(neo, 1, 0, 0, 300, 0, 5, 3);
-  near((climb60 - hover60) * 3600 / 60 / 5, 0.151 * 9.81 / 0.19, 1e-9);
+  near((climb60 - hover60) * 3600 / 60 / 5, 0.151 * 9.81 / 0.14, 1e-9);
 
   const other = model({ droneModel: 'mini4pro' });
   assert.equal(other.curve, site.DEFAULT_POWER_CURVE);
@@ -69,13 +69,13 @@ test('gauge %: with a socSlope the last percents hold less energy; without one, 
   assert.equal(site.gaugeUsedPct(flat, 37), 37);
   assert.equal(site.energyPctAbove(flat, 20), 80);
 
-  const neo = model({ droneModel: 'neo2', batt: '10', ftime: '11.4' });
-  assert.equal(neo.socSlope, 0.002);
+  const neo = model({ droneModel: 'neo2', batt: '10', ftime: '10.5' });
+  assert.equal(neo.socSlope, 0.0017);
   near(site.gaugeUsedPct(neo, 0), 0, 1e-9);
   near(site.gaugeUsedPct(neo, 100), 100, 1e-9);           // the whole battery is still 100%
   assert.ok(site.gaugeUsedPct(neo, 40) < 40);             // from full, the first percents hold more
   assert.ok(site.gaugeUsedPct(neo, 20, 30) > 20);         // near empty, they hold less
-  near(site.energyPctAbove(neo, 20), 81.6, 1e-9);          // more energy above the 20% reserve
+  near(site.energyPctAbove(neo, 20), 81.36, 1e-9);          // more energy above the 20% reserve
   // Round trip: the gauge reading after the energy used matches.
   const used = site.gaugeUsedPct(neo, 50);
   near(site.energyPctAbove(neo, 100 - used), 50, 1e-9);
