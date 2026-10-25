@@ -22,6 +22,7 @@ import { updateUrlForRoute } from './share.js';
 import { skippedSiteTypes, splitHazards } from './sites.js';
 import { MAX_AGL_M, buildAltitudeProfile, buildingAltitudeRequirements, flatTerrainProfile, getTerrainProfile, renderTerrainProfile, reverseSamples, setMaxAglM } from './terrain.js';
 import { chooseUnits, escapeHtml, fmtDist, fmtLen, fmtSpeed, unitsImperial } from './units.js';
+import { loadUrbanArea, routeUrbanFactors, urbanFactorFor } from './urbanwind.js';
 import { renderCompassRose } from './visuals.js';
 import { forecastOffsetH, getJSON, renderForecastStrip } from './weather.js';
 
@@ -103,7 +104,7 @@ export function readFlightInputs(mission){
 // route length is known. dronedegrees is the REVERSE bearing
 // (destination -> start); the formulas below rely on that convention.
 export function windByHeight(heights, wx, dronedegrees, inp){
-  var w = { ws: [], wd: [], estgust: [], crosswind: [], windResOk: [], crosswindOkOut: [], crosswindOkBack: [],
+  var w = { ws: [], wsOpen: [], urbanFactor: [], wd: [], estgust: [], crosswind: [], windResOk: [], crosswindOkOut: [], crosswindOkBack: [],
             gsOut: [], gsBack: [], airOut: [], airBack: [], headwindOkOut: [], headwindOkBack: [] };
   var holdGround = inp.speedMode !== 'air';
   var dragF = parseFloat(inp.drag) || 1;
@@ -122,11 +123,21 @@ export function windByHeight(heights, wx, dronedegrees, inp){
       w.wd[i] = interpDir(wx.wd80, wx.wd120, (heights[i] - 80) / 40);
     }
     var diffangle = (w.wd[i] - dronedegrees) / 180 * Math.PI;
+    // Buildings along the route (wx.urban, see urbanwind.js) change the
+    // average wind the drone flies in, so its times and battery. The
+    // gust and crosswind checks keep the forecast wind (never less):
+    // the building model is an estimate, and buildings make the wind
+    // gustier even where they slow it down.
+    var f = urbanFactorFor(wx.urban, heights[i]);
+    w.wsOpen[i] = w.ws[i];
+    w.urbanFactor[i] = f;
+    var wsCheck = Math.max(w.ws[i], w.ws[i] * f);
+    w.ws[i] = w.ws[i] * f;
     // Gust extrapolated from the 10m gust/average ratio, and the
     // crosswind component (perpendicular to heading) of the average
     // wind - used as separate flyability checks.
-    w.estgust[i] = w.ws[i] * wx.gustFactor;
-    w.crosswind[i] = w.ws[i] * Math.abs(Math.sin(diffangle));
+    w.estgust[i] = wsCheck * wx.gustFactor;
+    w.crosswind[i] = wsCheck * Math.abs(Math.sin(diffangle));
     w.windResOk[i] = w.estgust[i] < inp.windResistance;
     w.crosswindOkOut[i] = inp.speedhorizontal > w.crosswind[i];
     w.crosswindOkBack[i] = inp.speedhorizontalback > w.crosswind[i];
@@ -437,6 +448,39 @@ export function renderTerrainInfo(terrainAvailable, terrainSamples){
   }
   terrainInfo.style.display = 'block';
   return terrainBaseText;
+}
+
+// Whether to use the building effect on the wind (the setting is on
+// unless switched off).
+export function urbanWindChecked(){
+  var el = typeof document !== 'undefined' && document.getElementById('urbanWind');
+  return !el || el.checked;
+}
+
+function pctLabel(f){
+  var p = Math.round((1 - f) * 100);
+  return p >= 0 ? p + '% weaker' : (-p) + '% stronger';
+}
+
+// One line on what the buildings along the route do to the wind.
+export function renderUrbanWindInfo(urban, on){
+  var el = document.getElementById('urbanWindInfo');
+  if (!el) return;
+  if (!on || !urban){
+    el.style.display = 'none';
+    return;
+  }
+  if (urban.maxW < 0.05){
+    el.textContent = 'No built-up area along the route, so the forecast wind is used as it is.';
+  } else {
+    var i30 = urban.heights.indexOf(30), iTop = urban.heights.length - 1;
+    el.textContent = 'Buildings along the route: the wind is about ' + pctLabel(urban.factor[i30 >= 0 ? i30 : 0]) +
+      ' than over open ground at ' + fmtLen(urban.heights[i30 >= 0 ? i30 : 0]) + ' and ' + pctLabel(urban.factor[iTop]) +
+      ' at ' + fmtLen(urban.heights[iTop]) + '; near the ground (' + fmtLen(10) + ') about ' + pctLabel(urban.start.factor) +
+      ' at the start and ' + pctLabel(urban.dest.factor) + ' at the destination. Used for the flight times and battery; ' +
+      'the gust and crosswind checks keep the forecast wind. An estimate from building data (beta).';
+  }
+  el.style.display = 'block';
 }
 
 // r: { buildings, sorted, minSafeAltitude, effectiveCeilingM, legalCapM,
@@ -972,6 +1016,11 @@ export async function calcHeight(gen) {
     // buildings. Reused as-is unless buildings force a further detour.
     const firstTerrainPromise = getTerrainProfile(avoidance.path)
         .catch(function(err){ console.warn('Terrain lookup failed:', err); return null; });
+    // Building data and model for the building effect on the wind
+    // (optional: without it the forecast is used as it is).
+    const urbanPromise = urbanWindChecked()
+        ? loadUrbanArea(avoidance.path).catch(function(err){ console.warn('Building wind lookup failed:', err); return null; })
+        : Promise.resolve(null);
 
     const wind = await windPromise;
     if (stale()) return 'stale';
@@ -1002,6 +1051,12 @@ export async function calcHeight(gen) {
     const speedupback = inp.speedupback, speeddownback = inp.speeddownback, speedhorizontalback = inp.speedhorizontalback;
 
     const heights = CANDIDATE_HEIGHTS_M.slice();
+    const urbanArea = await urbanPromise;
+    if (stale()) return 'stale';
+    if (urbanArea){
+      const wd = windByHeight(heights, wx, dronedegrees, inp).wd;
+      wx.urban = routeUrbanFactors(urbanArea, heights, wd, wx.wd10);
+    }
     const w = windByHeight(heights, wx, dronedegrees, inp);
     const legalOk = heights.map(function(h){ return h <= legalCapM + 0.01; });
     const effectiveCeilingM = flyableCeilingM(heights, legalOk, w);
@@ -1164,6 +1219,7 @@ export async function calcHeight(gen) {
     });
     renderRulesInfo(rules, legalCapM, altPermit);
     const terrainBaseText = renderTerrainInfo(terrainAvailable, terrainSamples);
+    renderUrbanWindInfo(wx.urban, urbanWindChecked());
     renderBuildingInfo({
       buildings: buildings, sorted: sortedBuildings, minSafeAltitude: minSafeAltitude,
       effectiveCeilingM: effectiveCeilingM, legalCapM: legalCapM,
@@ -1226,8 +1282,9 @@ export async function calcHeight(gen) {
     const plans = planner.plans;
 
     // How far the drone can get and back from the start, every way.
+    // (Every direction from the start, so not the building factor of this route.)
     const ranges = roundTripRange({
-      heights: heights, legalOk: legalOk, wx: wx, inp: inp, battModel: battModel,
+      heights: heights, legalOk: legalOk, wx: Object.assign({}, wx, { urban: null }), inp: inp, battModel: battModel,
       payloadOut: payloadOut, payloadBack: payloadBack, temperatureC: temperatureC, mission: mission
     });
     renderRange(startlat, startlng, ranges, marker == 1);

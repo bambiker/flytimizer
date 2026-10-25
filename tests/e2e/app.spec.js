@@ -939,3 +939,32 @@ test('speed in wind: ground speed is the default, air speed changes the result a
   await waitForResult(page);
   await expect(page.locator('#speedMode')).toHaveValue('air');
 });
+
+test('buildings along the route slow the wind used for the times, and the setting switches it off', async ({ page }) => {
+  // A model that leaves half the wind everywhere it's fully built up.
+  const urbanModel = { init: Math.log(0.5), lr: 0.1, w_full: 0.25, trees: [] };
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { ghsl: 20, builtS: 0.4, urbanModel, hazards: [], flatGround: true });
+  await waitForResult(page);
+  const info = page.locator('#urbanWindInfo');
+  await expect(info).toHaveCSS('display', 'block');
+  await expect(info).toContainText('Buildings along the route: the wind is about 50% weaker than over open ground at 30 m');
+  await expect(info).toContainText('the gust and crosswind checks keep the forecast wind');
+  const ws30 = async () => Number((await page.locator('#ws30').textContent()).match(/[\d.]+/)[0]);
+  const slowed = await ws30();
+
+  await page.evaluate(() => { document.getElementById('droneConfigPanel').open = true; });
+  await page.locator('#urbanWind').uncheck();
+  await expect(info).toHaveCSS('display', 'none');
+  await expect.poll(ws30).toBeGreaterThan(slowed * 1.5);
+  // Half the wind, within the rounding of the numbers shown.
+  const ratio = slowed / await ws30();
+  expect(ratio).toBeGreaterThan(0.42);
+  expect(ratio).toBeLessThan(0.58);
+});
+
+test('without the building data the forecast wind is used as it is', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { ghsl: 20, hazards: [], flatGround: true,
+    urbanModel: { init: Math.log(0.5), lr: 0.1, w_full: 0.25, trees: [] } });
+  await waitForResult(page);
+  await expect(page.locator('#urbanWindInfo')).toHaveCSS('display', 'none');
+});

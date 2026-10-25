@@ -23,6 +23,10 @@
 //                 default: the file can't be downloaded
 //   ghsl          building height (m) the GHSL height file gives around
 //                 the route (default: the file can't be downloaded)
+//   builtS        built-up share of each cell (0-1) in the GHSL built-up
+//                 surface file (default: the file can't be downloaded)
+//   urbanModel    the building-wind model (data/urban_wind_model.json)
+//                 to serve (default: not found)
 //   country       ISO code Nominatim reports (default 'il')
 //   imperial      saved unit preference
 //   places        place-search results: { 'query text': [lat, lng] }
@@ -169,13 +173,19 @@ export async function openSite(page, from, to, query, sc = {}){
   const heightTiff = sc.ghsl !== undefined ? makeGhslTiff(Object.assign({ value: () => sc.ghsl }, ghslBox)) : null;
   const popValue = typeof sc.population === 'function' ? sc.population : () => sc.population;
   const popTiff = sc.population !== undefined ? makeGhslTiff(Object.assign({ value: popValue, bits: 64 }, ghslBox)) : null;
+  // Built-up surface in m2 per cell, like the real file.
+  const cellArea = lat => (ghslBox.dx * 111320) * (ghslBox.dx * 111320 * Math.cos(lat * Math.PI / 180));
+  const builtTiff = sc.builtS !== undefined ? makeGhslTiff(Object.assign({ value: lat => sc.builtS * cellArea(lat) }, ghslBox)) : null;
   await ctx.route(/jrc-ghsl\.s3\./, r => {
-    const tiff = /ghs-pop/.test(r.request().url()) ? popTiff : heightTiff;
+    const url = r.request().url();
+    const tiff = /ghs-pop/.test(url) ? popTiff : /ghs-built-s/.test(url) ? builtTiff : heightTiff;
     if (!tiff) return r.abort();
     const part = rangeOf(tiff, r.request().headers()['range']);
     if (!part) return r.fulfill({ status: 200, body: tiff });
     r.fulfill({ status: 206, body: part, headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'image/tiff' } });
   });
+
+  await ctx.route(SITE + '/data/urban_wind_model.json', r => sc.urbanModel ? json(r, sc.urbanModel) : r.fulfill({ status: 404 }));
 
   const q = 'from=' + from.join(',') + (to ? '&to=' + to.join(',') : '') + (query ? '&' + query : '');
   await page.goto(SITE + '/index.html?' + q);
