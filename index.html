@@ -1233,6 +1233,12 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
           (e.g. a CAAI permit or FAA waiver) &mdash; allow up to 120&nbsp;m
           above ground.</span>
         </label>
+        <label class="field-check">
+          <input type="checkbox" id="urbanWind" checked>
+          <span>Account for buildings slowing the wind along the route
+          (beta: estimated from building data, for the flight times and
+          battery)</span>
+        </label>
       </div>
       <p class="field-note">The drone picked above loads its speeds and
       wind resistance rating, or enter your own — editing a value
@@ -1362,6 +1368,7 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
 
     <p class="hint" id="rulesInfo" style="display:none; margin-bottom:10px"></p>
     <p class="hint" id="terrainInfo" style="display:none"></p>
+    <p class="hint" id="urbanWindInfo" style="display:none"></p>
     <p class="hint" id="buildingInfo" style="display:none"></p>
     <p class="hint" id="hazardInfo" style="display:none"></p>
     <p class="hint" id="peopleInfo" style="display:none"></p>
@@ -1381,13 +1388,21 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
     </details>
   </section>
 
-  <p class="credit">Imagery &copy; Esri, Maxar, Earthstar Geographics. Map data &copy; OpenStreetMap contributors. Wind and elevation data from <a href="https://open-meteo.com" target="_blank">open-meteo.com</a> (elevation: Copernicus DEM GLO-90). Building heights missing from OpenStreetMap: <a href="https://human-settlement.emergency.copernicus.eu/" target="_blank">GHS-BUILT-H R2023A</a>, and people under the route: GHS-POP R2023A, &copy; European Union, 2023 (CC BY 4.0).</p>
+  <p class="credit">Imagery &copy; Esri, Maxar, Earthstar Geographics. Map data &copy; OpenStreetMap contributors. Wind and elevation data from <a href="https://open-meteo.com" target="_blank">open-meteo.com</a> (elevation: Copernicus DEM GLO-90). Building heights missing from OpenStreetMap: <a href="https://human-settlement.emergency.copernicus.eu/" target="_blank">GHS-BUILT-H R2023A</a>, buildings' effect on the wind: GHS-BUILT-H and GHS-BUILT-S R2023A, and people under the route: GHS-POP R2023A, &copy; European Union, 2023 (CC BY 4.0).</p>
 
   <script type="module" src="js/app.js"></script>
 
   <details class="panel" id="whatsNew">
     <summary>What's new</summary>
     <div class="disclosure-body">
+      <p class="changelog-date">25 Oct 2026</p>
+      <ul>
+        <li><b>Buildings slow the wind</b> (beta): along a route through
+        a built-up area, the wind at each height is scaled by how much
+        the buildings around it shelter it, for the flight times and
+        battery. The gust and crosswind checks still use the forecast.
+        It can be switched off in the drone settings.</li>
+      </ul>
       <p class="changelog-date">21 Oct 2026</p>
       <ul>
         <li><b>Easier start</b>: pick the mission and drone at the top,

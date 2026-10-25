@@ -181,6 +181,16 @@ export function initSharedState(){
     permitEl.addEventListener('change', function(){ storageSet('flytimizerAltPermit', permitEl.checked); });
   }
 
+  // Building effect on the wind: on unless switched off (remembered).
+  var urbanEl = document.getElementById('urbanWind');
+  if (urbanEl){
+    urbanEl.checked = storageGet('flytimizerUrbanWind') !== false;
+    urbanEl.addEventListener('change', function(){
+      storageSet('flytimizerUrbanWind', urbanEl.checked);
+      if (marker > 0 && document.getElementById('result').style.display === 'block') getHeight();
+    });
+  }
+
   var unitsEl = document.getElementById('unitsSelect');
   if (unitsEl){
     var savedUnits = storageGet(UNITS_KEY);

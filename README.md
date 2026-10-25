@@ -27,6 +27,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 * 🚁 Drone presets (DJI Mini 3 / 4K / 4 Pro / 5 Pro, Air 3 / 3S, Mavic 3 Classic / 4 Pro, Neo 2, Flip, Avata 2, Matrice 300 RTK; Autel EVO Nano+ / Lite+ / II Pro V3; Parrot ANAFI Ai; Potensic Atom 2; Skydio X10) or custom drone parameters
 * 📦 **Delivery** missions (different payload on the way back) or **photo / inspection** round trips
 * ⛰️ **Terrain following**: heights are above the ground, using Copernicus GLO-90 elevation
+* 🏙️ **Buildings slow the wind** (beta): along the route, the forecast wind at each height is scaled by how much the buildings around it shelter it, from a model trained on CFD simulations and checked against weather stations in four cities; used for the flight times and battery, never to loosen the gust and crosswind checks
 * 🏢 Clearance above mapped buildings, or a detour around ones too tall to climb over; where OpenStreetMap has no height for a building, the average building height around it from the EU's Global Human Settlement Layer (GHS-BUILT-H, 2018) is used instead of a guess
 * 🏫 Detours around restricted and sensitive sites from OpenStreetMap: schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites; sites that aren't no-fly zones under the local rules (schools, hospitals, playgrounds…) can be switched off in **Restricted areas**
 * ⚖️ **Country rules** (height limit, keep-out distances, no-fly sites) for Israel and the United States, with Israel's as the default elsewhere
@@ -156,7 +157,7 @@ A start or destination inside a keep-out zone doesn't send the route out to the 
 * **Wind and weather**: Open-Meteo hourly forecasts at several heights (10, 80, 120 m), with gusts, rain, visibility and temperature. Forecasts are inherently uncertain, so results are estimates, not guaranteed flight conditions.
 * **Elevation**: Copernicus GLO-90 via Open-Meteo.
 * **Map features**: OpenStreetMap (Overpass), with backup servers.
-* **Building heights and population**: the EU's Global Human Settlement Layer (GHS-BUILT-H 2018, GHS-POP 2025, CC BY 4.0), read straight from its public file in small pieces.
+* **Building heights and population**: the EU's Global Human Settlement Layer (GHS-BUILT-H 2018, GHS-BUILT-S 2020, GHS-POP 2025, CC BY 4.0), read straight from its public file in small pieces.
 * **Satellites**: CelesTrak orbit data, propagated in the browser to predict how many GPS, Galileo, GLONASS and BeiDou satellites are overhead. **Kp index**: NOAA SWPC.
 * **Spoofing check**: the country of your internet connection (geojs.io) and your device's time zone.
 
@@ -187,7 +188,7 @@ Examples include:
 * Detailed battery modeling (the battery estimate is a simple physical model, roughly ±20%, calibrated from flight logs only for the Neo 2 so far)
 * Detailed motor/propeller efficiency
 * Turbulence
-* Building-induced local wind fields
+* Building-induced local wind fields (only their average effect along the route, as a beta: see *Buildings and the wind* below)
 * Complete 3D CFD wind modeling
 * Dynamic obstacles
 * Air traffic
@@ -206,6 +207,34 @@ The current optimization should therefore be considered a **decision-support est
 Potential future development includes:
 
 ### Building-Scale Wind
+
+A first step is in the site: **Buildings and the wind** (beta, `js/urbanwind.js`).
+For every height and every point along the route, a factor scales the
+forecast wind:
+
+```text
+factor = (1 - w) + w × ratio
+```
+
+* `ratio` is how much of the open-ground wind is left among the buildings
+  there (the highest value within 40 m, so a sheltered courtyard doesn't
+  stand for a whole street). It comes from a small gradient-boosting
+  model that imitates a U-Net trained on OpenFOAM simulations of Tel
+  Aviv; the model only reads GHSL building height and built-up surface
+  around the point (250 m around it, and 600 m upwind), so it works
+  anywhere.
+* `w` fades the correction out where little is built (full from 25%
+  of the ground covered by buildings), so in open country the forecast
+  is used as it is.
+* Above 80 m (the highest level of the simulations) the 80 m value is used.
+
+Checked against weather stations (Tel Aviv, Jerusalem, Tokyo, Singapore;
+35 stations, 2024), Open-Meteo × the U-Net's building factor had a
+lower error than Open-Meteo alone in three of the four cities and over
+all of them together (about 10% lower RMSE). The factor changes the
+wind used for the flight times and battery; the gust and crosswind
+limits keep the forecast wind (or the corrected one where that's
+stronger). It can be switched off in the drone settings.
 
 Future versions may incorporate local wind effects around buildings, terrain and urban structures.
 

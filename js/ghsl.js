@@ -19,6 +19,10 @@
 
 export var GHSL_URL = 'https://jrc-ghsl.s3.eu-central-1.amazonaws.com/ghs-built-h-anbh/r2023a/4326/3asec/2018/GHS_BUILT_H_ANBH_E2018_GLOBE_R2023A_4326_3ss_V1_0.tif';
 export var GHSL_POP_URL = 'https://jrc-ghsl.s3.eu-central-1.amazonaws.com/ghs-pop/r2023a/4326/3asec/2025/GHS_POP_E2025_GLOBE_R2023A_4326_3ss_V1_0.tif';
+// GHS-BUILT-S R2023A: square metres of buildings in each cell (2020),
+// same grid - with the heights it gives how built-up the area around
+// the route is, for the building effect on the wind (urbanwind.js).
+export var GHSL_BUILT_S_URL = 'https://jrc-ghsl.s3.eu-central-1.amazonaws.com/ghs-built-s/r2023a/4326/3asec/2020/GHS_BUILT_S_E2020_GLOBE_R2023A_4326_3ss_V1_0.tif';
 export var GHSL_FETCH_TIMEOUT_MS = 10000;
 export var GHSL_HEADER_BYTES = 16384;
 var GHSL_TILE_CACHE_MAX = 4;
@@ -40,8 +44,9 @@ async function fetchRange(start, length, url){
 export var ghslIO = { fetchRange: fetchRange };
 
 // The parts of a little-endian BigTIFF header we need. Throws if the
-// file isn't laid out the way this reader expects (tiled, one 32- or
-// 64-bit float band, deflate or no compression, no predictor).
+// file isn't laid out the way this reader expects (tiled, one band of
+// 32- or 64-bit floats or 8-, 16- or 32-bit integers, deflate or no
+// compression, no predictor).
 export function parseGhslHeader(buf){
   var dv = new DataView(buf);
   if (dv.getUint16(0, true) !== 0x4949 || dv.getUint16(2, true) !== 43) throw new Error('GHSL: not a little-endian BigTIFF');
@@ -72,7 +77,9 @@ export function parseGhslHeader(buf){
   }
   var compression = values(259)[0];
   var bits = values(258)[0];
-  if ((bits !== 32 && bits !== 64) || values(339)[0] !== 3) throw new Error('GHSL: expected 32- or 64-bit float samples');
+  var format = tags[339] ? values(339)[0] : 1;          // 1 unsigned, 2 signed, 3 float
+  var sample = { '3:32': 'f32', '3:64': 'f64', '1:8': 'u8', '1:16': 'u16', '1:32': 'u32', '2:16': 'i16', '2:32': 'i32' }[format + ':' + bits];
+  if (!sample) throw new Error('GHSL: expected 32- or 64-bit float samples');
   if (compression !== 1 && compression !== 8 && compression !== 32946) throw new Error('GHSL: unsupported compression ' + compression);
   if (tags[317] && values(317)[0] !== 1) throw new Error('GHSL: predictors not supported');
   var scale = values(33550), tie = values(33922);
@@ -80,7 +87,7 @@ export function parseGhslHeader(buf){
   return {
     width: values(256)[0], height: values(257)[0],
     tileW: values(322)[0], tileH: values(323)[0],
-    deflate: compression !== 1, bits: bits,
+    deflate: compression !== 1, bits: bits, sample: sample,
     offsetsAt: tags[324].at,
     countsAt: counts.at, countsSize: counts.type === 16 ? 8 : 4,
     // Top-left corner of the top-left pixel, and pixel size, in degrees.
@@ -122,7 +129,8 @@ async function getTile(url, h, tileRow, tileCol){
   if (length > 0){
     var raw = await ghslIO.fetchRange(offset, length, url);
     var bytes = h.deflate ? await inflate(raw) : raw;
-    data = h.bits === 64 ? new Float64Array(bytes) : new Float32Array(bytes);
+    var Arr = { f32: Float32Array, f64: Float64Array, u8: Uint8Array, u16: Uint16Array, u32: Uint32Array, i16: Int16Array, i32: Int32Array }[h.sample || (h.bits === 64 ? 'f64' : 'f32')];
+    data = new Arr(bytes);
   }
   tileCache.set(key, data);
   if (tileCache.size > GHSL_TILE_CACHE_MAX) tileCache.delete(tileCache.keys().next().value);
@@ -172,4 +180,39 @@ export async function ghslCells(url, points, neighbours){
 // data. Rejects if the data can't be read.
 export async function ghslHeights(points){
   return (await ghslCells(GHSL_URL, points, true)).values;
+}
+
+// Every cell of the file between the given latitudes and longitudes, as
+// one grid (rows north to south): { values, rows, cols, top, left, dy,
+// dx }, top/left being the outer corner of the first cell. Empty tiles
+// read as 0, cells outside the file as NaN. Rejects if the file can't
+// be read, or if the area is larger than maxCells.
+export async function ghslGrid(url, south, west, north, east, maxCells){
+  var h = await getHeader(url);
+  var c0 = Math.floor((west - h.x0) / h.dx), c1 = Math.floor((east - h.x0) / h.dx);
+  var r0 = Math.floor((h.y0 - north) / h.dy), r1 = Math.floor((h.y0 - south) / h.dy);
+  var rows = r1 - r0 + 1, cols = c1 - c0 + 1;
+  if (rows * cols > (maxCells || 400000)) throw new Error('GHSL: area too large');
+  var values = new Float32Array(rows * cols).fill(NaN);
+  var jobs = [];
+  for (var tr = Math.floor(Math.max(r0, 0) / h.tileH); tr <= Math.floor(Math.min(r1, h.height - 1) / h.tileH); tr++){
+    for (var tc = Math.floor(Math.max(c0, 0) / h.tileW); tc <= Math.floor(Math.min(c1, h.width - 1) / h.tileW); tc++){
+      jobs.push({ tr: tr, tc: tc, data: getTile(url, h, tr, tc) });
+    }
+  }
+  var datas = await Promise.all(jobs.map(function(j){ return j.data; }));
+  jobs.forEach(function(j, k){
+    var t = datas[k];
+    for (var r = 0; r < h.tileH; r++){
+      var row = j.tr * h.tileH + r;
+      if (row < r0 || row > r1 || row >= h.height) continue;
+      for (var c = 0; c < h.tileW; c++){
+        var col = j.tc * h.tileW + c;
+        if (col < c0 || col > c1 || col >= h.width) continue;
+        var v = t ? t[r * h.tileW + c] : 0;
+        values[(row - r0) * cols + (col - c0)] = isFinite(v) ? v : 0;
+      }
+    }
+  });
+  return { values: values, rows: rows, cols: cols, top: h.y0 - r0 * h.dy, left: h.x0 + c0 * h.dx, dy: h.dy, dx: h.dx };
 }
