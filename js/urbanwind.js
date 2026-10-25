@@ -93,6 +93,12 @@ export function urbanFeatures(g, lat, lng, wdir, z){
       if (Math.abs(dr) <= 1 && Math.abs(dc) <= 1 && H > hloc) hloc = H;
     }
   }
+  // A coarse grid can have no cell centre within the disk: then the cell
+  // the point is in stands for it.
+  if (n === 0 && r0 >= 0 && r0 < g.rows && c0 >= 0 && c0 < g.cols){
+    var ko = r0 * g.cols + c0;
+    sF = g.F[ko]; sFH = g.F[ko] * g.H[ko]; n = 1;
+  }
   var lam = n > 0 ? sF / n : 0;
   var hm = sF > 1e-6 ? sFH / sF : 0;
   var lamup = un > 0 ? uF / un : lam;

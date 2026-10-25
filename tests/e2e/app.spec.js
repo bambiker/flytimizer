@@ -956,7 +956,10 @@ test('buildings along the route slow the wind used for the times, and the settin
   await page.locator('#urbanWind').uncheck();
   await expect(info).toHaveCSS('display', 'none');
   await expect.poll(ws30).toBeGreaterThan(slowed * 1.5);
-  expect(await ws30()).toBeCloseTo(slowed * 2, 0);
+  // Half the wind, within the rounding of the numbers shown.
+  const ratio = slowed / await ws30();
+  expect(ratio).toBeGreaterThan(0.42);
+  expect(ratio).toBeLessThan(0.58);
 });
 
 test('without the building data the forecast wind is used as it is', async ({ page }) => {
