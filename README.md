@@ -219,22 +219,34 @@ factor = (1 - w) + w × ratio
 * `ratio` is how much of the open-ground wind is left among the buildings
   there (the highest value within 40 m, so a sheltered courtyard doesn't
   stand for a whole street). It comes from a small gradient-boosting
-  model that imitates a U-Net trained on OpenFOAM simulations of Tel
-  Aviv; the model only reads GHSL building height and built-up surface
-  around the point (250 m around it, and 600 m upwind), so it works
-  anywhere.
-* `w` fades the correction out where little is built (full from 25%
-  of the ground covered by buildings), so in open country the forecast
-  is used as it is.
+  model (`data/urban_wind_model.json`, 200 trees) that imitates a U-Net
+  trained on OpenFOAM simulations of Tel Aviv; the model only reads GHSL
+  building height and built-up surface around the point (250 m around
+  it, and 600 m upwind), so it works anywhere. It is fitted to the 70th
+  percentile of the U-Net's values for similar surroundings rather than
+  their mean: weather stations, like drones, are mostly in the open part
+  of a block, not in its most sheltered corners.
+* `w` fades the correction out where little is built (full from 40% of
+  the ground covered by buildings in GHSL), so in open country the
+  forecast is used as it is.
 * Above 80 m (the highest level of the simulations) the 80 m value is used.
 
-Checked against weather stations (Tel Aviv, Jerusalem, Tokyo, Singapore;
-35 stations, 2024), Open-Meteo × the U-Net's building factor had a
-lower error than Open-Meteo alone in three of the four cities and over
-all of them together (about 10% lower RMSE). The factor changes the
-wind used for the flight times and battery; the gust and crosswind
-limits keep the forecast wind (or the corrected one where that's
-stronger). It can be switched off in the drone settings.
+Checked against 35 weather stations in Tel Aviv, Jerusalem, Tokyo and
+Singapore (2024, hourly), with the model trained on the other cities
+each time it imitates the U-Net in a city it hasn't seen (R² 0.35–0.56
+on the U-Net's values). Against the measurements, over all hours:
+
+| | RMSE (m/s) | bias (m/s) |
+|---|---|---|
+| Open-Meteo | 1.69 | +0.42 |
+| Open-Meteo × this model | 1.50 | −0.03 |
+| Open-Meteo × the full U-Net (needs detailed building maps) | 1.46 | −0.22 |
+
+It beats Open-Meteo in Jerusalem and Singapore and is about even with it
+in Tel Aviv and Tokyo. The factor changes the wind used for the flight
+times and battery; the gust and crosswind limits keep the forecast wind
+(or the corrected one where that's stronger). It can be switched off in
+the drone settings.
 
 Future versions may incorporate local wind effects around buildings, terrain and urban structures.
 
