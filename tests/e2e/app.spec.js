@@ -675,6 +675,8 @@ test('Start over during a calculation cancels it', async ({ page }) => {
 
 test('a long route reads the forecast at several places along it, and a windier stretch shows in the times', async ({ page }) => {
   const far = [HAIFA[0] + 0.06, HAIFA[1] + 0.03];   // ~7 km
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);   // the fake forecast varies by hour
   const lats = [];
   page.on('request', r => { if (/open-meteo\.com\/v1\/forecast/.test(r.url())) lats.push(new URL(r.url()).searchParams.get('latitude')); });
   await openSite(page, HAIFA, far, 'drone=mavic3classic', { hazards: [], flatGround: true });
@@ -682,7 +684,7 @@ test('a long route reads the forecast at several places along it, and a windier 
   expect(lats.some(l => l.split(',').length >= 3)).toBe(true);
   const calm = await page.locator('#planFastBtn .plan-detail').textContent();
 
-  await openSite(page, HAIFA, far, 'drone=mavic3classic', { hazards: [], flatGround: true, windMulAlong: 1.6 });
+  await openSite(page, HAIFA, far, 'drone=mavic3classic', { hazards: [], flatGround: true, windMulAlong: 1.3 });
   await waitForResult(page);
   await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
   expect(await page.locator('#planFastBtn .plan-detail').textContent()).not.toBe(calm);
@@ -964,6 +966,12 @@ test('buildings along the route slow the wind used for the times, and the settin
   await expect(info).toHaveCSS('display', 'block');
   await expect(info).toContainText('Buildings along the route: the wind is about 50% weaker than over open ground at 30 m');
   await expect(info).toContainText('the gust and crosswind checks keep the forecast wind');
+  // Takeoff and landing among the buildings: half the forecast wind there too, shown up front.
+  const ground = page.locator('#groundWindInfo');
+  await expect(ground).toBeVisible();
+  await expect(ground).toContainText('sheltered by the buildings');
+  await expect(ground).toContainText('at the start');
+  await expect(ground).toContainText('at the destination');
   const ws30 = async () => Number((await page.locator('#ws30').textContent()).match(/[\d.]+/)[0]);
   const slowed = await ws30();
 
@@ -975,6 +983,17 @@ test('buildings along the route slow the wind used for the times, and the settin
   const ratio = slowed / await ws30();
   expect(ratio).toBeGreaterThan(0.42);
   expect(ratio).toBeLessThan(0.58);
+});
+
+test('gusts among the buildings at takeoff over the drone\'s rating give a takeoff and landing warning', async ({ page }) => {
+  // A model that funnels the wind to 2.5 times the open wind where it's built up.
+  const urbanModel = { init: Math.log(2.5), lr: 0.1, w_full: 0.25, trees: [] };
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { ghsl: 20, builtS: 0.4, urbanModel, hazards: [], flatGround: true });
+  await waitForResult(page);
+  await expect(page.locator('#groundWindInfo')).toContainText('funnelled by the buildings');
+  await expect(page.locator('#groundWindWarning')).toContainText('Gusts low down at the start and the destination');
 });
 
 test('without the building data the forecast wind is used as it is', async ({ page }) => {

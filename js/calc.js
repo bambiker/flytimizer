@@ -23,7 +23,7 @@ import { skippedSiteTypes, splitHazards } from './sites.js';
 import { MAX_AGL_M, buildAltitudeProfile, buildingAltitudeRequirements, flatTerrainProfile, getTerrainProfile, renderTerrainProfile, reverseSamples, setMaxAglM } from './terrain.js';
 import { chooseUnits, escapeHtml, fmtDist, fmtLen, fmtSpeed, unitsImperial } from './units.js';
 import { loadUrbanArea, routeUrbanFactors, urbanFactorFor } from './urbanwind.js';
-import { legSegmentSpeeds, makeWindField, routeSegments } from './windfield.js';
+import { endpointWinds, legSegmentSpeeds, makeWindField, routeSegments } from './windfield.js';
 import { renderCompassRose } from './visuals.js';
 import { forecastOffsetH, getForecasts, renderForecastStrip, routeForecastPoints } from './weather.js';
 
@@ -479,6 +479,34 @@ function pctLabel(f){
   return p >= 0 ? p + '% weaker' : (-p) + '% stronger';
 }
 
+// Takeoff and landing: the wind low down at the start and (for a
+// delivery) the destination, among the buildings there, and a warning
+// when the gusts there may be too much for the drone.
+export function renderGroundWind(start, dest, windResistance){
+  var info = document.getElementById('groundWindInfo');
+  var warn = document.getElementById('groundWindWarning');
+  if (!info || !warn) return;
+  function range(g){
+    var lo = Math.min.apply(null, g.map(function(x){ return x.ws; })), hi = Math.max.apply(null, g.map(function(x){ return x.ws; }));
+    return (Math.abs(hi - lo) < 0.5 ? 'about ' + fmtSpeed(hi) : fmtSpeed(lo) + '–' + fmtSpeed(hi));
+  }
+  function effect(g){
+    var f = g[0].factor;
+    return f > 1.15 ? ', funnelled by the buildings' : f < 0.85 ? ', sheltered by the buildings' : '';
+  }
+  function gust(g){ return Math.max.apply(null, g.map(function(x){ return x.gust; })); }
+  var places = [{ name: 'the start', g: start }];
+  if (dest) places.push({ name: 'the destination', g: dest });
+  info.textContent = 'Takeoff and landing (' + fmtLen(start[0].h) + '–' + fmtLen(start[start.length - 1].h) + ' up): wind ' +
+    places.map(function(p){ return range(p.g) + ' at ' + p.name + ' (gusts ~' + fmtSpeed(gust(p.g)) + effect(p.g) + ')'; }).join(', ') + '.';
+  info.hidden = false;
+  var bad = places.filter(function(p){ return p.g.some(function(x){ return x.gustCheck >= windResistance; }); });
+  warn.hidden = !bad.length;
+  warn.textContent = bad.length ? '⚠️ Gusts low down at ' + bad.map(function(p){ return p.name; }).join(' and ') +
+    ' may reach ~' + fmtSpeed(Math.max.apply(null, bad.map(function(p){ return Math.max.apply(null, p.g.map(function(x){ return x.gustCheck; })); }))) +
+    ', at or over this drone’s ' + fmtSpeed(windResistance) + ' rating: take off and land somewhere more open, or wait for calmer wind.' : '';
+}
+
 // One line on what the buildings along the route do to the wind.
 export function renderUrbanWindInfo(urban, on){
   var el = document.getElementById('urbanWindInfo');
@@ -493,8 +521,7 @@ export function renderUrbanWindInfo(urban, on){
     var i30 = urban.heights.indexOf(30), iTop = urban.heights.length - 1;
     el.textContent = 'Buildings along the route: the wind is about ' + pctLabel(urban.factor[i30 >= 0 ? i30 : 0]) +
       ' than over open ground at ' + fmtLen(urban.heights[i30 >= 0 ? i30 : 0]) + ' and ' + pctLabel(urban.factor[iTop]) +
-      ' at ' + fmtLen(urban.heights[iTop]) + '; near the ground (' + fmtLen(10) + ') about ' + pctLabel(urban.start.factor) +
-      ' at the start and ' + pctLabel(urban.dest.factor) + ' at the destination. Used for the flight times and battery; ' +
+      ' at ' + fmtLen(urban.heights[iTop]) + ' (worked out stretch by stretch). Used for the flight times and battery; ' +
       'the gust and crosswind checks keep the forecast wind. An estimate from building data (beta).';
   }
   el.style.display = 'block';
@@ -1218,6 +1245,10 @@ export async function calcHeight(gen) {
     const timingOptsBack = { skipTakeoff: mission === 'photo' };
     // Every stretch of each leg with its own wind and heading (windfield.js).
     const windField = makeWindField(forecastPoints, urbanArea, heights);
+    // The wind where the drone takes off and lands (a photo mission
+    // turns round in the air at the destination).
+    renderGroundWind(endpointWinds(forecastPoints, urbanArea, startlat, startlng),
+      marker === 2 && mission !== 'photo' ? endpointWinds(forecastPoints, urbanArea, destlat, destlng) : null, inp.windResistance);
     const segOut = routeSegments(terrainSamples, heights, windField, inp.windResistance);
     const segBack = routeSegments(terrainBack, heights, windField, inp.windResistance);
     const lwOut = legWind(w, segOut, speedhorizontal, inp, 'Out', heights);

@@ -244,7 +244,13 @@ on the U-Net's values). Against the measurements, over all hours:
 | Open-Meteo × the full U-Net (needs detailed building maps) | 1.46 | −0.22 |
 
 It beats Open-Meteo in Jerusalem and Singapore and is about even with it
-in Tel Aviv and Tokyo. The factor changes the wind used for the flight
+in Tel Aviv and Tokyo.
+
+The same model gives the wind low down where the drone takes off and
+lands (10–30 m, at the start and, for a delivery, the destination):
+funnelled between buildings or sheltered by them. The result shows it,
+and warns when the gusts there may reach the drone's wind rating (the
+check never takes the wind below the forecast). The factor changes the wind used for the flight
 times and battery; the gust and crosswind limits keep the forecast wind
 (or the corrected one where that's stronger). It can be switched off in
 the drone settings.

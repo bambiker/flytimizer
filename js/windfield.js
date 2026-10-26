@@ -125,3 +125,28 @@ export function legSegmentSpeeds(seg, hs, inp){
   }
   return out;
 }
+
+// Takeoff and landing happen low down, among the buildings, where the
+// building model gives the wind between them - slowed in a sheltered
+// street, or funnelled faster round a block. At a point (the start or
+// the destination), for each of `heights` (m): { h, ws (with the
+// buildings), wsForecast, factor, gust (estimate), gustCheck (never
+// below the forecast's, for the safety check) }.
+export var GROUND_WIND_HEIGHTS = [10, 20, 30];
+export function endpointWinds(points, urbanArea, lat, lng, heights){
+  heights = heights || GROUND_WIND_HEIGHTS;
+  var p = points[0], best = Infinity;
+  points.forEach(function(q){
+    var d = getDistanceFromLatLon(lat, lng, q.lat, q.lng);
+    if (d < best){ best = d; p = q; }
+  });
+  return heights.map(function(h){
+    var w = windAtHeight(p.wx, h);
+    var f = urbanArea ? urbanFactorAt(urbanArea.model, urbanArea.grid, lat, lng, w.wd, h).factor : 1;
+    return {
+      h: h, ws: w.ws * f, wsForecast: w.ws, factor: f,
+      gust: w.ws * f * p.wx.gustFactor,
+      gustCheck: Math.max(w.ws, w.ws * f) * p.wx.gustFactor
+    };
+  });
+}

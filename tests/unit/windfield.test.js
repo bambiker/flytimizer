@@ -89,3 +89,24 @@ test('route forecast points: just the start on a short route, up to 5 along a lo
   assert.equal(many.length, 5);
   near(many[4].lng, 35.5);
 });
+
+test('takeoff and landing wind: the building model at low heights, with a cautious gust check', () => {
+  // A fully built grid where the model says the wind is 1.5 x the open one (funnelled).
+  const n = 30;
+  const grid = { H: new Float32Array(n * n).fill(20), F: new Float32Array(n * n).fill(1), rows: n, cols: n,
+    top: 32.0 + n * 0.0008 / 2, left: 35.0 - n * 0.00095 / 2, dy: 0.0008, dx: 0.00095 };
+  const fast = { model: { init: Math.log(1.5), lr: 0, w_full: 0.25, trees: [] }, grid };
+  const pts = [{ lat: 32, lng: 35, wx: wx(4, 270) }];
+  const g = site.endpointWinds(pts, fast, 32, 35);
+  assert.deepEqual(g.map(x => x.h), [10, 20, 30]);
+  near(g[0].factor, 1.5, 1e-9);
+  near(g[0].ws, 6, 1e-9);
+  near(g[0].gustCheck, 6 * 1.2, 1e-9);
+  // Sheltered (half the wind): the estimate drops, the gust check keeps the forecast.
+  const calm = { model: { init: Math.log(0.5), lr: 0, w_full: 0.25, trees: [] }, grid };
+  const s = site.endpointWinds(pts, calm, 32, 35);
+  near(s[0].ws, 2, 1e-9);
+  near(s[0].gustCheck, 4 * 1.2, 1e-9);
+  // Without building data: the forecast.
+  near(site.endpointWinds(pts, null, 32, 35)[0].ws, 4, 1e-9);
+});
