@@ -109,14 +109,38 @@ export function legEnergyWh(model, payloadCoef, airspeed, horTimeS, climbUpM, cl
 // drone climbs and descends while it travels, so each stretch takes
 // whichever is longer - covering the distance, or the height change
 // at the climb/descent rate. Takeoff and landing are purely vertical.
+// gs is one ground speed for the whole leg, or one per stretch between
+// samples (windfield.js). With per-stretch speeds the cruising time is
+// also given per stretch (cruiseSeg), so the energy can use each
+// stretch's own airspeed.
 export function profileTiming(prof, samples, gs, upSpeed, downSpeed, opts){
   opts = opts || {};
   var pts = prof.pts;
   var takeoff = opts.skipTakeoff ? 0 : Math.max(0, pts[0].alt - samples[0].g) / upSpeed;
   var landing = opts.skipLanding ? 0 : Math.max(0, pts[pts.length - 1].alt - samples[samples.length - 1].g) / downSpeed;
   var cruise = 0, climb = takeoff, desc = landing;
+  var perSeg = Array.isArray(gs);
+  var cruiseSeg = perSeg ? gs.map(function(){ return 0; }) : null;
+  // Time to fly from s0 to s1 along the samples, stretch by stretch;
+  // each stretch's share goes into `shares` when given.
+  var k = 0;
+  function horizTime(s0, s1, shares){
+    if (!perSeg) return (s1 - s0) / gs;
+    while (k > 0 && samples[k].s > s0) k--;
+    var t = 0;
+    for (var j = k; j < gs.length && samples[j].s < s1; j++){
+      var a = Math.max(s0, samples[j].s), b = Math.min(s1, samples[j + 1].s);
+      if (b <= a) continue;
+      var tj = (b - a) / gs[j];
+      t += tj;
+      if (shares) shares.push([j, tj]);
+      if (samples[j + 1].s <= s1) k = j;
+    }
+    return t;
+  }
   for (var i = 1; i < pts.length; i++){
-    var th = (pts[i].s - pts[i-1].s) / gs;
+    var shares = perSeg ? [] : null;
+    var th = horizTime(pts[i-1].s, pts[i].s, shares);
     var dz = pts[i].alt - pts[i-1].alt;
     var tv = dz > 0 ? dz / upSpeed : -dz / downSpeed;
     if (tv > th){
@@ -126,18 +150,33 @@ export function profileTiming(prof, samples, gs, upSpeed, downSpeed, opts){
       // Mostly cruising; the climbing share still costs extra power.
       if (dz > 0){ climb += tv; cruise += th - tv; }
       else { desc += tv; cruise += th - tv; }
+      if (shares && th > 0) shares.forEach(function(sh){ cruiseSeg[sh[0]] += sh[1] * (th - tv) / th; });
     }
   }
-  return { total: cruise + climb + desc, cruise: cruise, climb: climb, desc: desc };
+  var out = { total: cruise + climb + desc, cruise: cruise, climb: climb, desc: desc };
+  if (cruiseSeg) out.cruiseSeg = cruiseSeg;
+  return out;
 }
 
 export function legEnergyFromTiming(model, payloadCoef, airspeed, timing, upSpeed){
   if (!timing || !isFinite(timing.total)) return Infinity;
   var baseW = model.hoverW * Math.pow(Math.max(payloadCoef, 0.1), 1.5);
-  var cruiseW = baseW * airspeedPowerFactor(airspeed, model.vmax, model.curve);
   var climbW = baseW + model.massKg * payloadCoef * 9.81 * upSpeed / climbEfficiency(model);
   var descW = baseW * DESCENT_POWER_FACTOR;
-  return (cruiseW * timing.cruise + climbW * timing.climb + descW * timing.desc) / 3600;
+  // Per-stretch airspeeds (windfield.js) with per-stretch cruising times.
+  var cruiseJ = 0;
+  if (Array.isArray(airspeed) && timing.cruiseSeg){
+    for (var k = 0; k < timing.cruiseSeg.length; k++){
+      if (timing.cruiseSeg[k] > 0) cruiseJ += baseW * airspeedPowerFactor(airspeed[k], model.vmax, model.curve) * timing.cruiseSeg[k];
+    }
+  } else {
+    cruiseJ = baseW * airspeedPowerFactor(Array.isArray(airspeed) ? meanOf(airspeed) : airspeed, model.vmax, model.curve) * timing.cruise;
+  }
+  return (cruiseJ + climbW * timing.climb + descW * timing.desc) / 3600;
+}
+
+function meanOf(a){
+  return a.length ? a.reduce(function(s, x){ return s + x; }, 0) / a.length : 0;
 }
 
 export function batteryPct(model, energyWh, tempC){

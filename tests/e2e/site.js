@@ -3,6 +3,8 @@
 //
 // Scenario options:
 //   windMul       multiply all forecast wind speeds and gusts
+//   windMulAlong  multiply the wind at the forecast places after the
+//                 first (a long route asks for several)
 //   overpassFail  Overpass answers HTTP 500
 //   elevFail      the elevation API answers HTTP 500
 //   flatGround    every elevation is 40 m
@@ -95,7 +97,14 @@ export async function openSite(page, from, to, query, sc = {}){
     const file = path.join(MODULES, m[1], m[2]);
     r.fulfill({ status: 200, body: fs.readFileSync(file), contentType: TYPES[path.extname(file)] });
   });
-  await ctx.route(/api\.open-meteo\.com\/v1\/forecast/, r => sc.forecastFail ? r.fulfill({ status: 500, body: 'error' }) : json(r, forecast(sc.windMul || 1)));
+  // A list of places gets a list of forecasts; sc.windMulAlong scales
+  // the wind at the places after the first (default: the same).
+  await ctx.route(/api\.open-meteo\.com\/v1\/forecast/, r => {
+    if (sc.forecastFail) return r.fulfill({ status: 500, body: 'error' });
+    const n = new URL(r.request().url()).searchParams.get('latitude').split(',').length;
+    if (n === 1) return json(r, forecast(sc.windMul || 1));
+    json(r, Array.from({ length: n }, (x, k) => forecast((sc.windMul || 1) * (k > 0 && sc.windMulAlong ? sc.windMulAlong : 1))));
+  });
   await ctx.route(/api\.open-meteo\.com\/v1\/elevation/, r => {
     if (sc.elevFail) return r.fulfill({ status: 500, body: 'error' });
     const u = new URL(r.request().url());

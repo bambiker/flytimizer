@@ -24,6 +24,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 
 * 📍 Set a **start point and destination** on the map, by place search, or from your current location
 * 🌬️ Live hourly wind forecast at several altitudes, with estimated gusts, and a **48-hour outlook** to pick the best time
+* 🧭 **Wind stretch by stretch**: every ~30 m of a leg gets its own wind - the forecast at the nearest of up to 5 places along a long route, the building effect at that spot, and its own heading - for the times and battery
 * 🚁 Drone presets (DJI Mini 3 / 4K / 4 Pro / 5 Pro, Air 3 / 3S, Mavic 3 Classic / 4 Pro, Neo 2, Flip, Avata 2, Matrice 300 RTK; Autel EVO Nano+ / Lite+ / II Pro V3; Parrot ANAFI Ai; Potensic Atom 2; Skydio X10) or custom drone parameters
 * 📦 **Delivery** missions (different payload on the way back) or **photo / inspection** round trips
 * ⛰️ **Terrain following**: heights are above the ground, using Copernicus GLO-90 elevation

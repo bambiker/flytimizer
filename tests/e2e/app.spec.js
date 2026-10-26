@@ -673,6 +673,21 @@ test('Start over during a calculation cancels it', async ({ page }) => {
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(0);
 });
 
+test('a long route reads the forecast at several places along it, and a windier stretch shows in the times', async ({ page }) => {
+  const far = [HAIFA[0] + 0.06, HAIFA[1] + 0.03];   // ~7 km
+  const lats = [];
+  page.on('request', r => { if (/open-meteo\.com\/v1\/forecast/.test(r.url())) lats.push(new URL(r.url()).searchParams.get('latitude')); });
+  await openSite(page, HAIFA, far, 'drone=mavic3classic', { hazards: [], flatGround: true });
+  await waitForResult(page);
+  expect(lats.some(l => l.split(',').length >= 3)).toBe(true);
+  const calm = await page.locator('#planFastBtn .plan-detail').textContent();
+
+  await openSite(page, HAIFA, far, 'drone=mavic3classic', { hazards: [], flatGround: true, windMulAlong: 1.6 });
+  await waitForResult(page);
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+  expect(await page.locator('#planFastBtn .plan-detail').textContent()).not.toBe(calm);
+});
+
 test('number fields open a numeric keypad on phones', async ({ page }) => {
   await openSite(page, HAIFA, null, 'drone=mini4pro');
   const fields = ['dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'mtow', 'health', 'drag', 'payloadKg', 'payloadBackKg'];
