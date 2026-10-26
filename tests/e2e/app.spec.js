@@ -105,26 +105,24 @@ test('the DJI flight plan downloads as a valid WPML archive', async ({ page }) =
   expect(waylines).toContain('wpml:executeHeight');
 });
 
-test('into the wind a plan may fly in Sport mode; the download stays at the mission speed, and fastest is never slower than least battery', async ({ page }) => {
+test('into the wind every plan stays a waypoint mission: no Sport mode, the download at the mission speed, and fastest never slower than least battery', async ({ page }) => {
   const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
   await page.clock.setFixedTime(noon);
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=air3');
   await waitForResult(page);
   await expect(page.locator('#cruise')).toHaveValue('12');
   await expect(page.locator('#hor')).toHaveValue('21');
-  // Into the wind, the fastest plan flies the leg in Sport mode too.
-  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
-  await expect(page.locator('#sportNote')).toContainText('faster than a mission');
-
-  await page.locator('#planEcoBtn').click();
-  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
-  await expect(page.locator('#sportNote')).toContainText('faster than a mission');
+  await expect(page.locator('#styleFore')).not.toContainText('Sport');
   const missionSpeed = await page.evaluate(() => 12 * 0.72 / (0.72 + (parseFloat(document.getElementById('payloadKg').value) || 0)));
   const kmz = await downloadMission(page);
-  expect(kmz.name).toBe('flytimizer-least-battery-outbound.kmz');
+  expect(kmz.name).toBe('flytimizer-outbound.kmz');
   const waylines = await kmz.zip.file('wpmz/waylines.wpml').async('string');
   const speed = parseFloat(waylines.match(/<wpml:autoFlightSpeed>([\d.]+)</)[1]);
   expect(speed).toBeCloseTo(missionSpeed, 1);
+
+  await page.locator('#planEcoBtn').click();
+  await expect(page.locator('#styleFore')).not.toContainText('Sport');
+  await expect(page.locator('#styleBack')).not.toContainText('Sport');
 
   // The fastest plan is never slower than least battery.
   const seconds = async id => {
@@ -136,18 +134,16 @@ test('into the wind a plan may fly in Sport mode; the download stays at the miss
   expect(fast).toBeLessThanOrEqual(await seconds('planEcoBtn'));
 });
 
-test('when the wind is too strong for the mission speed, the fastest plan flies that leg in Sport mode', async ({ page }) => {
+test('when the wind is too strong for the mission speed, that leg has no safe height rather than a Sport-mode leg', async ({ page }) => {
   // At this hour the fake forecast's wind is more than the Neo 2 carrying its own weight can handle at its
-  // mission speed (8 m/s, halved), but not at its Sport speed.
+  // mission speed (8 m/s, halved), though not at its Sport speed.
   const morning = new Date(); morning.setUTCHours(8, 32, 0, 0);
   await page.clock.setFixedTime(morning);
   await openSite(page, HAIFA, null, 'payloadKg=0.151');
   await page.locator('#calcBtn').click();
   await waitForResult(page);
-  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
-  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
-  await expect(page.locator('#flyWarning')).toBeHidden();
-  await expect(page.locator('#sportNote')).toContainText('too strong for a mission');
+  await expect(page.locator('#readoutFore')).toHaveClass(/unsafe/);
+  await expect(page.locator('#styleFore')).not.toContainText('Sport');
 });
 
 test('wind stronger than the drone can handle gives a clear no-fly warning', async ({ page }) => {
