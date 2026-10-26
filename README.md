@@ -24,6 +24,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 
 * 📍 Set a **start point and destination** on the map, by place search, or from your current location
 * 🌬️ Live hourly wind forecast at several altitudes, with estimated gusts, and a **48-hour outlook** to pick the best time
+* 🧭 **Wind stretch by stretch**: every ~30 m of a leg gets its own wind - the forecast at the nearest of up to 5 places along a long route, the building effect at that spot, and its own heading - for the times and battery
 * 🚁 Drone presets (DJI Mini 3 / 4K / 4 Pro / 5 Pro, Air 3 / 3S, Mavic 3 Classic / 4 Pro, Neo 2, Flip, Avata 2, Matrice 300 RTK; Autel EVO Nano+ / Lite+ / II Pro V3; Parrot ANAFI Ai; Potensic Atom 2; Skydio X10) or custom drone parameters
 * 📦 **Delivery** missions (different payload on the way back) or **photo / inspection** round trips
 * ⛰️ **Terrain following**: heights are above the ground, using Copernicus GLO-90 elevation
@@ -35,7 +36,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 * 🔋 **Battery estimate** per leg, adjusted for payload, wind, climbs, cold and battery health, with a reserve warning; the DJI Neo 2 preset is calibrated from real flight logs (power curve, climb efficiency, usable energy)
 * 📡 **Conditions here** button: for the start point (or your location), the predicted number of navigation satellites overhead (GPS, Galileo, GLONASS, BeiDou, from CelesTrak orbits), the Kp index (NOAA), the highest height today's wind allows for your drone, and the round-trip range; with your own location it also checks for **GPS spoofing** (a position in another country than your internet connection and time zone, e.g. the common fake fix at Beirut airport)
 * 🧭 **Round-trip range** drawn on the map: how far the drone can fly from the start and still get back with the reserve, in every direction, with today's wind
-* 🔄 Up to three plans, each with its own heights, battery and flight-plan downloads: **fastest** (into a headwind it may fly a leg at the Sport-mode top speed, by hand), **least battery** (heights, flight style and, where it saves battery, another speed per leg: slower, or into a headwind the Sport-mode top speed, flown by hand) and **fewer people** (the fastest plan along the route over fewer people, when there is one)
+* 🔄 Up to three plans, each with its own heights, battery and flight-plan downloads: **fastest** (at the mission speed), **least battery** (heights, flight style and, where it saves battery, a slower speed per leg) and **fewer people** (the fastest plan along the route over fewer people, when there is one)
 * 💨 Drones that hold a set **ground speed** (DJI waypoint missions, most multirotors) or a set **airspeed** (fixed-wing, or flying flat out), which behave differently with a tailwind
 * 🌧️ Rain, visibility and temperature, with warnings
 * 🗺️ **DJI flight-plan export** (WPML `.kmz` for DJI Pilot 2)
@@ -98,7 +99,7 @@ FLYTIMIZER currently supports configurable parameters such as:
 | Parameter           | Description                                     |
 | ------------------- | ----------------------------------------------- |
 | Mission speed       | Normal-mode / waypoint-mission speed, used by the plans and the flight-plan downloads |
-| Top speed (Sport)   | Sport-mode top speed: used by the battery model, by "least battery" for a leg into a headwind flown by hand, and by any plan for a leg the wind is too strong to fly at the mission speed |
+| Top speed (Sport)   | Sport-mode top speed: used by the battery model and as the cap on the mission speed. The plans never fly in Sport mode, so every plan can be downloaded as a waypoint mission |
 | Ascent speed        | Vertical climb speed                            |
 | Descent speed       | Vertical descent speed                          |
 | Wind resistance     | Maximum wind condition considered for the drone |
@@ -243,7 +244,13 @@ on the U-Net's values). Against the measurements, over all hours:
 | Open-Meteo × the full U-Net (needs detailed building maps) | 1.46 | −0.22 |
 
 It beats Open-Meteo in Jerusalem and Singapore and is about even with it
-in Tel Aviv and Tokyo. The factor changes the wind used for the flight
+in Tel Aviv and Tokyo.
+
+The same model gives the wind low down where the drone takes off and
+lands (10–30 m, at the start and, for a delivery, the destination):
+funnelled between buildings or sheltered by them. The result shows it,
+and warns when the gusts there may reach the drone's wind rating (the
+check never takes the wind below the forecast). The factor changes the wind used for the flight
 times and battery; the gust and crosswind limits keep the forecast wind
 (or the corrected one where that's stronger). It can be switched off in
 the drone settings.

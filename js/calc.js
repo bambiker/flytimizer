@@ -23,8 +23,9 @@ import { skippedSiteTypes, splitHazards } from './sites.js';
 import { MAX_AGL_M, buildAltitudeProfile, buildingAltitudeRequirements, flatTerrainProfile, getTerrainProfile, renderTerrainProfile, reverseSamples, setMaxAglM } from './terrain.js';
 import { chooseUnits, escapeHtml, fmtDist, fmtLen, fmtSpeed, unitsImperial } from './units.js';
 import { loadUrbanArea, routeUrbanFactors, urbanFactorFor } from './urbanwind.js';
+import { endpointWinds, legSegmentSpeeds, makeWindField, routeSegments } from './windfield.js';
 import { renderCompassRose } from './visuals.js';
-import { forecastOffsetH, getJSON, renderForecastStrip } from './weather.js';
+import { forecastOffsetH, getForecasts, renderForecastStrip, routeForecastPoints } from './weather.js';
 
 // Heights (m above ground) every route is checked at.
 export var CANDIDATE_HEIGHTS_M = [30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
@@ -56,8 +57,8 @@ export function forecastAt(json, hour){
 
 // The drone and mission settings from the form. Speeds are divided by
 // the payload coefficient for each leg. The plans fly at the mission
-// speed (no faster than the top speed; the top speed if it's blank);
-// topSpeed is the Sport-mode speed "Least battery" may use by hand.
+// speed (no faster than the top speed; the top speed if it's blank),
+// the most a waypoint mission flies.
 export function readFlightInputs(mission){
   function val(id){ return document.getElementById(id).value; }
   // The payload as a weight factor (drone + payload) / drone; photo
@@ -73,11 +74,9 @@ export function readFlightInputs(mission){
     speedup: val('asc') / payloadOutCoef,
     speeddown: val('des') / payloadOutCoef,
     speedhorizontal: horiz / payloadOutCoef,
-    topSpeed: top / payloadOutCoef,
     speedupback: val('asc') / payloadBackCoef,
     speeddownback: val('des') / payloadBackCoef,
     speedhorizontalback: horiz / payloadBackCoef,
-    topSpeedBack: top / payloadBackCoef,
     drag: val('drag'),
     windResistance: parseFloat(val('windres')),
     speedMode: val('speedMode') === 'air' ? 'air' : 'ground'
@@ -276,13 +275,29 @@ export function legProfiles(heights, samples, req, hs, up, down){
 // distance; timeV = everything the climbs and descents add on top
 // (takeoff, landing, and any stretch where the height change is
 // slower than the distance).
+// gs[i]: one ground speed for the leg, or one per stretch (windfield.js).
 export function legTimings(heights, prof, samples, gs, up, down, opts, routeDist){
   var t = { timing: [], timeH: [], timeV: [] };
   for (var i = 0; i < heights.length; i++){
-    t.timing[i] = gs[i] > MIN_GROUND_SPEED_MS ? profileTiming(prof[i], samples, gs[i], up, down, opts) : null;
-    t.timeH[i] = t.timing[i] ? routeDist / gs[i] : Infinity;
+    t.timing[i] = gsFlyable(gs[i]) ? profileTiming(prof[i], samples, gs[i], up, down, opts) : null;
+    t.timeH[i] = t.timing[i] ? flatTime(gs[i], samples, routeDist) : Infinity;
     t.timeV[i] = t.timing[i] ? t.timing[i].total - t.timeH[i] : 0;
   }
+  return t;
+}
+
+// The drone makes headway: on every stretch, with per-stretch speeds.
+export function gsFlyable(gs){
+  if (!Array.isArray(gs)) return gs > MIN_GROUND_SPEED_MS;
+  for (var k = 0; k < gs.length; k++) if (!(gs[k] > MIN_GROUND_SPEED_MS)) return false;
+  return gs.length > 0;
+}
+
+// Time to fly the route level, without climbs.
+function flatTime(gs, samples, routeDist){
+  if (!Array.isArray(gs)) return routeDist / gs;
+  var t = 0;
+  for (var k = 0; k < gs.length; k++) t += (samples[k + 1].s - samples[k].s) / gs[k];
   return t;
 }
 
@@ -462,6 +477,34 @@ function pctLabel(f){
   return p >= 0 ? p + '% weaker' : (-p) + '% stronger';
 }
 
+// Takeoff and landing: the wind low down at the start and (for a
+// delivery) the destination, among the buildings there, and a warning
+// when the gusts there may be too much for the drone.
+export function renderGroundWind(start, dest, windResistance){
+  var info = document.getElementById('groundWindInfo');
+  var warn = document.getElementById('groundWindWarning');
+  if (!info || !warn) return;
+  function range(g){
+    var lo = Math.min.apply(null, g.map(function(x){ return x.ws; })), hi = Math.max.apply(null, g.map(function(x){ return x.ws; }));
+    return (Math.abs(hi - lo) < 0.5 ? 'about ' + fmtSpeed(hi) : fmtSpeed(lo) + '–' + fmtSpeed(hi));
+  }
+  function effect(g){
+    var f = g[0].factor;
+    return f > 1.15 ? ', funnelled by the buildings' : f < 0.85 ? ', sheltered by the buildings' : '';
+  }
+  function gust(g){ return Math.max.apply(null, g.map(function(x){ return x.gust; })); }
+  var places = [{ name: 'the start', g: start }];
+  if (dest) places.push({ name: 'the destination', g: dest });
+  info.textContent = 'Takeoff and landing (' + fmtLen(start[0].h) + '–' + fmtLen(start[start.length - 1].h) + ' up): wind ' +
+    places.map(function(p){ return range(p.g) + ' at ' + p.name + ' (gusts ~' + fmtSpeed(gust(p.g)) + effect(p.g) + ')'; }).join(', ') + '.';
+  info.hidden = false;
+  var bad = places.filter(function(p){ return p.g.some(function(x){ return x.gustCheck >= windResistance; }); });
+  warn.hidden = !bad.length;
+  warn.textContent = bad.length ? '⚠️ Gusts low down at ' + bad.map(function(p){ return p.name; }).join(' and ') +
+    ' may reach ~' + fmtSpeed(Math.max.apply(null, bad.map(function(p){ return Math.max.apply(null, p.g.map(function(x){ return x.gustCheck; })); }))) +
+    ', at or over this drone’s ' + fmtSpeed(windResistance) + ' rating: take off and land somewhere more open, or wait for calmer wind.' : '';
+}
+
 // One line on what the buildings along the route do to the wind.
 export function renderUrbanWindInfo(urban, on){
   var el = document.getElementById('urbanWindInfo');
@@ -476,8 +519,7 @@ export function renderUrbanWindInfo(urban, on){
     var i30 = urban.heights.indexOf(30), iTop = urban.heights.length - 1;
     el.textContent = 'Buildings along the route: the wind is about ' + pctLabel(urban.factor[i30 >= 0 ? i30 : 0]) +
       ' than over open ground at ' + fmtLen(urban.heights[i30 >= 0 ? i30 : 0]) + ' and ' + pctLabel(urban.factor[iTop]) +
-      ' at ' + fmtLen(urban.heights[iTop]) + '; near the ground (' + fmtLen(10) + ') about ' + pctLabel(urban.start.factor) +
-      ' at the start and ' + pctLabel(urban.dest.factor) + ' at the destination. Used for the flight times and battery; ' +
+      ' at ' + fmtLen(urban.heights[iTop]) + ' (worked out stretch by stretch). Used for the flight times and battery; ' +
       'the gust and crosswind checks keep the forecast wind. An estimate from building data (beta).';
   }
   el.style.display = 'block';
@@ -685,65 +727,58 @@ export function renderConditions(wx){
 // flyable (height x profile style) candidate for each leg.
 // Speeds "Least battery" also tries, as a share of the mission speed:
 // flying slower can use less battery per kilometre (above all with a
-// tailwind, or holding airspeed), at the cost of time. Into a strong
-// headwind flying faster can use less, since the drone spends less
-// time fighting it - up to the Sport-mode top speed, which a mission
-// can't fly, so such a leg is flown by hand.
+// tailwind, or holding airspeed), at the cost of time. Never faster:
+// every plan stays a waypoint mission (Normal mode), so it can be
+// downloaded and flown as it is - Sport mode is by hand only.
 export var ECO_SPEED_FACTORS = [0.5, 0.6, 0.7, 0.8, 0.9];
-var ECO_FASTER_STEPS = [1 / 3, 2 / 3, 1];
-export var ECO_SPORT_MIN_HEADWIND_MS = 1;
-// Flying by hand in Sport mode has to be worth it: at least this much
-// of a battery saved over the best plan at mission speed or slower.
-export var ECO_SPORT_MIN_SAVING_PCT = 1;
-
-// ECO_SPEED_FACTORS plus the steps from the mission speed up to the top
-// speed, when that's faster.
-export function ecoSpeedFactors(inp){
-  var ratio = topSpeedFactor(inp);
-  if (!ratio) return ECO_SPEED_FACTORS.slice();
-  return ECO_SPEED_FACTORS.concat(ECO_FASTER_STEPS.map(function(k){ return 1 + k * (ratio - 1); }));
-}
-
-// The top speed as a multiple of the mission speed, or null if it
-// isn't faster.
-export function topSpeedFactor(inp){
-  var ratio = Math.min(inp.topSpeed / inp.speedhorizontal, inp.topSpeedBack / inp.speedhorizontalback);
-  return ratio > 1.01 ? ratio : null;
-}
 
 // The legs (as buildPlans takes them) for a route flown at `factor` x
 // the set speed. ctx: { heights, wx, dronedegrees, inp, legalOk,
 // battModel, temperatureC, payloadOut, payloadBack, timingOptsOut,
 // timingOptsBack }. route: { samples, back, reqOut, reqBack, pOut,
 // pBack, buildingOk, distance }. Profiles keep their full-speed shape.
-// anyWind: allow a faster-than-mission leg whatever the wind (the
-// fallback for a leg the mission speed can't fly).
-export function legsAtSpeed(ctx, route, factor, anyWind){
+export function legsAtSpeed(ctx, route, factor){
   var inp = ctx.inp, h = ctx.heights;
   var hsOut = inp.speedhorizontal * factor, hsBack = inp.speedhorizontalback * factor;
   var w = windByHeight(h, ctx.wx, ctx.dronedegrees, Object.assign({}, inp, { speedhorizontal: hsOut, speedhorizontalback: hsBack }));
-  var tOut = legTimings(h, route.pOut.prof, route.samples, w.gsOut, inp.speedup, inp.speeddown, ctx.timingOptsOut, route.distance);
-  var tBack = legTimings(h, route.pBack.prof, route.back, w.gsBack, inp.speedupback, inp.speeddownback, ctx.timingOptsBack, route.distance);
-  // Faster than the mission speed (Sport mode, by hand) only into the
-  // wind: where, at the mission speed, the wind costs the leg at least
-  // ECO_SPORT_MIN_HEADWIND_MS of ground speed.
-  var base = factor > 1 && !anyWind ? windByHeight(h, ctx.wx, ctx.dronedegrees, inp) : null;
-  function intoWind(air, gs, i){ return !base || air[i] - gs[i] >= ECO_SPORT_MIN_HEADWIND_MS; }
-  function flyable(ok, cross, head, air, gs){
-    return h.map(function(x, i){ return ctx.legalOk[i] && route.buildingOk[i] && w.windResOk[i] && cross[i] && head[i] && ok[i] && intoWind(air, gs, i); });
+  // Each stretch's own wind and heading (route.segOut/segBack, see
+  // windfield.js) when there are; else the route's one wind.
+  var out = legWind(w, route.segOut, hsOut, inp, 'Out', h), back = legWind(w, route.segBack, hsBack, inp, 'Back', h);
+  var tOut = legTimings(h, route.pOut.prof, route.samples, out.gs, inp.speedup, inp.speeddown, ctx.timingOptsOut, route.distance);
+  var tBack = legTimings(h, route.pBack.prof, route.back, back.gs, inp.speedupback, inp.speeddownback, ctx.timingOptsBack, route.distance);
+  function flyable(ok, L){
+    return h.map(function(x, i){ return ctx.legalOk[i] && route.buildingOk[i] && L.gustOk[i] && L.cross[i] && L.head[i] && ok[i]; });
   }
   return {
     w: w,
-    out: { prof: route.pOut.prof, flyable: flyable(route.pOut.ok, w.crosswindOkOut, w.headwindOkOut, base && base.airOut, base && base.gsOut), timeV: tOut.timeV, timeH: tOut.timeH,
-           batt: legBattery(h, ctx.battModel, ctx.payloadOut, w.airOut, tOut.timing, inp.speedup, ctx.temperatureC),
-           gs: w.gsOut, air: w.airOut, cross: w.crosswindOkOut, head: w.headwindOkOut, payload: ctx.payloadOut, hs: hsOut, speedFactor: factor,
+    out: { prof: route.pOut.prof, flyable: flyable(route.pOut.ok, out), timeV: tOut.timeV, timeH: tOut.timeH,
+           batt: legBattery(h, ctx.battModel, ctx.payloadOut, out.air, tOut.timing, inp.speedup, ctx.temperatureC),
+           gs: out.gs, air: out.air, cross: out.cross, head: out.head, gustOk: out.gustOk, payload: ctx.payloadOut, hs: hsOut, speedFactor: factor,
            up: inp.speedup, down: inp.speeddown, samples: route.samples, req: route.reqOut,
            climbRun: inp.speedhorizontal / inp.speedup, descRun: inp.speedhorizontal / inp.speeddown, timingOpts: ctx.timingOptsOut },
-    back: { prof: route.pBack.prof, flyable: flyable(route.pBack.ok, w.crosswindOkBack, w.headwindOkBack, base && base.airBack, base && base.gsBack), timeV: tBack.timeV, timeH: tBack.timeH,
-            batt: legBattery(h, ctx.battModel, ctx.payloadBack, w.airBack, tBack.timing, inp.speedupback, ctx.temperatureC),
-            gs: w.gsBack, air: w.airBack, cross: w.crosswindOkBack, head: w.headwindOkBack, payload: ctx.payloadBack, hs: hsBack, speedFactor: factor,
+    back: { prof: route.pBack.prof, flyable: flyable(route.pBack.ok, back), timeV: tBack.timeV, timeH: tBack.timeH,
+            batt: legBattery(h, ctx.battModel, ctx.payloadBack, back.air, tBack.timing, inp.speedupback, ctx.temperatureC),
+            gs: back.gs, air: back.air, cross: back.cross, head: back.head, gustOk: back.gustOk, payload: ctx.payloadBack, hs: hsBack, speedFactor: factor,
             up: inp.speedupback, down: inp.speeddownback, samples: route.back, req: route.reqBack,
             climbRun: inp.speedhorizontalback / inp.speedupback, descRun: inp.speedhorizontalback / inp.speeddownback, timingOpts: ctx.timingOptsBack }
+  };
+}
+
+// One leg's ground speeds, airspeeds and wind checks per height: per
+// stretch from seg (windfield.js), or the route's one wind from w.
+// side: 'Out' or 'Back'.
+export function legWind(w, seg, hs, inp, side, heights){
+  if (!seg || !seg.len.length){   // no route (a hover): the one wind
+    return { gs: w['gs' + side], air: w['air' + side], cross: w['crosswindOk' + side], head: w['headwindOk' + side], gustOk: w.windResOk };
+  }
+  var sp = legSegmentSpeeds(seg, hs, inp);
+  return {
+    gs: sp.gs, air: sp.air,
+    // A stretch with too much crosswind has no ground speed, so the
+    // headway check covers it.
+    cross: heights.map(function(){ return true; }),
+    head: sp.gs.map(gsFlyable),
+    gustOk: heights.map(function(x, i){ return w.windResOk[i] && seg.gustOk[i]; })
   };
 }
 
@@ -770,9 +805,9 @@ export function buildPlans(c){
     var top = nearestHeightIdx(Math.min(prof.maxAGL, heights[heights.length - 1]));
     if (heights[top] < prof.maxAGL - 0.5 && top < heights.length - 1) top++;
     var windOk = true;
-    for (var j = idx; j <= top; j++) if (!(c.w.windResOk[j] && L.cross[j] && L.head[j])) windOk = false;
+    for (var j = idx; j <= top; j++) if (!((L.gustOk ? L.gustOk[j] : c.w.windResOk[j]) && L.cross[j] && L.head[j])) windOk = false;
     var w = nearestHeightIdx(prof.meanAGL);
-    var timing = L.gs[w] > MIN_GROUND_SPEED_MS ? profileTiming(prof, L.samples, L.gs[w], L.up, L.down, L.timingOpts) : null;
+    var timing = gsFlyable(L.gs[w]) ? profileTiming(prof, L.samples, L.gs[w], L.up, L.down, L.timingOpts) : null;
     var batt = (battModel && timing) ? batteryPct(battModel, legEnergyFromTiming(battModel, L.payload, L.air[w], timing, L.up), temperatureC) : NaN;
     return { i: idx, mode: 'level', prof: prof, time: timing ? timing.total : Infinity, batt: batt, ok: c.legalOk[idx] && c.buildingOk[idx] && prof.ok && windOk && !!timing };
   }
@@ -786,7 +821,6 @@ export function buildPlans(c){
     return list.filter(function(cand){ return cand.ok && isFinite(cand.time); }).map(function(cand){
       cand.speed = L.hs;
       cand.speedFactor = L.speedFactor || 1;
-      if (L.sportNeeded) cand.sportNeeded = true;
       return cand;
     });
   }
@@ -800,13 +834,6 @@ export function buildPlans(c){
     return best;
   }
   var candOut = legCandidates(c.legs.out), candBack = legCandidates(c.legs.back);
-  // A leg the mission speed can't fly (the wind is too strong for it)
-  // may still be flown by hand at the top speed (c.sportLegs).
-  function orSport(cands, L){
-    return cands.length || !L ? cands : legCandidates(Object.assign({}, L, { sportNeeded: true }));
-  }
-  candOut = orSport(candOut, c.sportLegs && c.sportLegs.out);
-  candBack = orSport(candBack, c.sportLegs && c.sportLegs.back);
   // What a pair of legs adds at the destination: the time spent
   // there (hovering, at the outbound weight), and for photo missions
   // the climb or descent between the two legs' heights.
@@ -851,25 +878,15 @@ export function buildPlans(c){
     // One leg unflyable: still show the other one.
     return best || { out: pickBest(outs, primary, secondary), back: pickBest(backs, primary, secondary), totalTime: NaN, totalBatt: NaN };
   }
-  // The same legs at other speeds (c.speedLegs), each leg on its own:
-  // slower ones only ever save battery; faster ones (Sport mode, by
-  // hand, into the wind) can also be quicker, so the fastest plan
-  // takes them too - otherwise least battery could beat it on time.
+  // The same legs at slower speeds (c.speedLegs), each leg on its
+  // own: they only ever save battery, so only least battery takes them.
   var ecoOut = candOut, ecoBack = candBack;
   (c.speedLegs || []).forEach(function(v){
     ecoOut = ecoOut.concat(legCandidates(v.out));
     ecoBack = ecoBack.concat(legCandidates(v.back));
   });
-  function notSlower(cand){ return cand.speedFactor >= 1; }
-  var plans = { fast: pickPair('time', 'batt', ecoOut.filter(notSlower), ecoBack.filter(notSlower)), eco: null };
-  if (battModel){
-    plans.eco = pickPair('batt', 'time', ecoOut, ecoBack);
-    if ((plans.eco.out && plans.eco.out.speedFactor > 1) || (plans.eco.back && plans.eco.back.speedFactor > 1)){
-      var notSport = function(cand){ return cand.speedFactor <= 1; };
-      var calm = pickPair('batt', 'time', ecoOut.filter(notSport), ecoBack.filter(notSport));
-      if (isFinite(calm.totalBatt) && !(plans.eco.totalBatt <= calm.totalBatt - ECO_SPORT_MIN_SAVING_PCT)) plans.eco = calm;
-    }
-  }
+  var plans = { fast: pickPair('time', 'batt'), eco: null };
+  if (battModel) plans.eco = pickPair('batt', 'time', ecoOut, ecoBack);
   return { plans: plans, evalLeg: evalLeg, pairExtras: pairExtras, battModel: battModel };
 }
 
@@ -923,11 +940,14 @@ export async function planAlongPath(planCtx, path){
     pBack: legProfiles(c.heights, back, reqBack, inp.speedhorizontalback, inp.speedupback, inp.speeddownback),
     buildingOk: c.heights.map(function(h){ return h >= minSafe; })
   };
+  if (c.windField){
+    route.segOut = routeSegments(samples, c.heights, c.windField, inp.windResistance);
+    route.segBack = routeSegments(back, c.heights, c.windField, inp.windResistance);
+  }
   var full = legsAtSpeed(c, route, 1);
   var planner = buildPlans({
     heights: c.heights, legs: { out: full.out, back: full.back },
-    speedLegs: ecoSpeedFactors(inp).map(function(f){ return legsAtSpeed(c, route, f); }),
-    sportLegs: topSpeedFactor(inp) ? legsAtSpeed(c, route, topSpeedFactor(inp), true) : null,
+    speedLegs: ECO_SPEED_FACTORS.map(function(f){ return legsAtSpeed(c, route, f); }),
     w: full.w, legalOk: c.legalOk, buildingOk: route.buildingOk, terrainAvailable: terrainAvailable,
     battModel: c.battModel, temperatureC: c.temperatureC, mission: c.mission, dwellS: inp.dwellS,
     payloadOut: c.payloadOut, payloadBack: c.payloadBack, speedupback: inp.speedupback, speeddownback: inp.speeddownback
@@ -977,7 +997,9 @@ export async function calcHeight(gen) {
     // that swing (see getBuildingsNearPath below).
     // Settled straight away, so a failed forecast is reported below
     // rather than as an unhandled rejection while the other lookups run.
-    const windPromise = getJSON().then(function(json){ return { json: json }; }, function(err){ return { error: err }; });
+    // The start, and on a long route a few more places along it.
+    const windPromise = getForecasts(routeForecastPoints(startlat, startlng, destlat, destlng, getDistanceFromLatLon(startlat, startlng, destlat, destlng)))
+        .then(function(list){ return { json: list[0], along: list }; }, function(err){ return { error: err }; });
     // Country rules for the start point - looked up alongside the
     // hazards (never fails: falls back to approximate boxes, then to
     // Israel's rules).
@@ -1044,6 +1066,8 @@ export async function calcHeight(gen) {
     const hour = Math.min(nowHourIdx + forecastOffsetH, json.hourly.time.length - 1);
     const wx = forecastAt(json, hour);
     const temperatureC = wx.temperatureC;
+    const forecastPoints = routeForecastPoints(startlat, startlng, destlat, destlng, getDistanceFromLatLon(startlat, startlng, destlat, destlng))
+      .map(function(p, k){ return { lat: p.lat, lng: p.lng, wx: k === 0 ? wx : forecastAt(wind.along[k], hour) }; });
 
     const mission = currentMission();
     const inp = readFlightInputs(mission);
@@ -1170,8 +1194,18 @@ export async function calcHeight(gen) {
     // every height.
     const timingOptsOut = { skipLanding: mission === 'photo' };
     const timingOptsBack = { skipTakeoff: mission === 'photo' };
-    const tOut = legTimings(heights, pOut.prof, terrainSamples, w.gsOut, speedup, speeddown, timingOptsOut, routeDist);
-    const tBack = legTimings(heights, pBack.prof, terrainBack, w.gsBack, speedupback, speeddownback, timingOptsBack, routeDist);
+    // Every stretch of each leg with its own wind and heading (windfield.js).
+    const windField = makeWindField(forecastPoints, urbanArea, heights);
+    // The wind where the drone takes off and lands (a photo mission
+    // turns round in the air at the destination).
+    renderGroundWind(endpointWinds(forecastPoints, urbanArea, startlat, startlng),
+      marker === 2 && mission !== 'photo' ? endpointWinds(forecastPoints, urbanArea, destlat, destlng) : null, inp.windResistance);
+    const segOut = routeSegments(terrainSamples, heights, windField, inp.windResistance);
+    const segBack = routeSegments(terrainBack, heights, windField, inp.windResistance);
+    const lwOut = legWind(w, segOut, speedhorizontal, inp, 'Out', heights);
+    const lwBack = legWind(w, segBack, speedhorizontalback, inp, 'Back', heights);
+    const tOut = legTimings(heights, pOut.prof, terrainSamples, lwOut.gs, speedup, speeddown, timingOptsOut, routeDist);
+    const tBack = legTimings(heights, pBack.prof, terrainBack, lwBack.gs, speedupback, speeddownback, timingOptsBack, routeDist);
 
     const battModel = readBatteryModel();
     const payloadOut = inp.payloadOutCoef;
@@ -1181,8 +1215,8 @@ export async function calcHeight(gen) {
     const weightWarning = document.getElementById('weightWarning');
     weightWarning.hidden = !(weight && weight.level === 'over');
     weightWarning.textContent = weight && weight.level === 'over' ? '⚠️ ' + weight.text : '';
-    const battOut = legBattery(heights, battModel, payloadOut, w.airOut, tOut.timing, speedup, temperatureC);
-    const battBack = legBattery(heights, battModel, payloadBack, w.airBack, tBack.timing, speedupback, temperatureC);
+    const battOut = legBattery(heights, battModel, payloadOut, lwOut.air, tOut.timing, speedup, temperatureC);
+    const battBack = legBattery(heights, battModel, payloadBack, lwBack.air, tBack.timing, speedupback, temperatureC);
 
     // A height isn't flyable if:
     //  - it's above the legal height limit, or
@@ -1201,10 +1235,10 @@ export async function calcHeight(gen) {
     const minSafeAltitude = maxBuildingHeight > 0 ? (maxBuildingHeight + BUILDING_HEIGHT_SAFETY_MARGIN_M) : 30;
     const buildingOk = heights.map(function(h){ return h >= minSafeAltitude; });
     const flyableOut = heights.map(function(h, i){
-      return legalOk[i] && buildingOk[i] && w.windResOk[i] && w.crosswindOkOut[i] && w.headwindOkOut[i] && pOut.ok[i];
+      return legalOk[i] && buildingOk[i] && lwOut.gustOk[i] && lwOut.cross[i] && lwOut.head[i] && pOut.ok[i];
     });
     const flyableBack = heights.map(function(h, i){
-      return legalOk[i] && buildingOk[i] && w.windResOk[i] && w.crosswindOkBack[i] && w.headwindOkBack[i] && pBack.ok[i];
+      return legalOk[i] && buildingOk[i] && lwBack.gustOk[i] && lwBack.cross[i] && lwBack.head[i] && pBack.ok[i];
     });
     const minhor = fastestFlyableIdx(flyableOut, tOut.timeV, tOut.timeH);
     const minhorb = fastestFlyableIdx(flyableBack, tBack.timeV, tBack.timeH);
@@ -1255,10 +1289,10 @@ export async function calcHeight(gen) {
 
     // ---- Plans: fastest (above) and least battery.
     const legs = {
-      out: { prof: pOut.prof, flyable: flyableOut, timeV: tOut.timeV, timeH: tOut.timeH, batt: battOut, gs: w.gsOut, air: w.airOut, cross: w.crosswindOkOut, head: w.headwindOkOut,
+      out: { prof: pOut.prof, flyable: flyableOut, timeV: tOut.timeV, timeH: tOut.timeH, batt: battOut, gs: lwOut.gs, air: lwOut.air, cross: lwOut.cross, head: lwOut.head, gustOk: lwOut.gustOk,
              payload: payloadOut, hs: speedhorizontal, up: speedup, down: speeddown, samples: terrainSamples, req: reqOut,
              climbRun: speedhorizontal / speedup, descRun: speedhorizontal / speeddown, timingOpts: timingOptsOut },
-      back: { prof: pBack.prof, flyable: flyableBack, timeV: tBack.timeV, timeH: tBack.timeH, batt: battBack, gs: w.gsBack, air: w.airBack, cross: w.crosswindOkBack, head: w.headwindOkBack,
+      back: { prof: pBack.prof, flyable: flyableBack, timeV: tBack.timeV, timeH: tBack.timeH, batt: battBack, gs: lwBack.gs, air: lwBack.air, cross: lwBack.cross, head: lwBack.head, gustOk: lwBack.gustOk,
              payload: payloadBack, hs: speedhorizontalback, up: speedupback, down: speeddownback, samples: terrainBack, req: reqBack,
              climbRun: speedhorizontalback / speedupback, descRun: speedhorizontalback / speeddownback, timingOpts: timingOptsBack }
     };
@@ -1268,14 +1302,13 @@ export async function calcHeight(gen) {
       heights: heights, wx: wx, dronedegrees: dronedegrees, inp: inp, legalOk: legalOk, battModel: battModel,
       temperatureC: temperatureC, payloadOut: payloadOut, payloadBack: payloadBack, mission: mission,
       timingOptsOut: timingOptsOut, timingOptsBack: timingOptsBack, effectiveCeilingM: effectiveCeilingM,
-      straightDistM: straightDistM, w: w, terrainAvailable: terrainAvailable
+      straightDistM: straightDistM, w: w, terrainAvailable: terrainAvailable, windField: windField
     };
     const mainRoute = { samples: terrainSamples, back: terrainBack, reqOut: reqOut, reqBack: reqBack, pOut: pOut, pBack: pBack,
-                        buildingOk: buildingOk, distance: routeDist };
-    const speedLegs = ecoSpeedFactors(inp).map(function(f){ return legsAtSpeed(planCtx, mainRoute, f); });
-    const sportF = topSpeedFactor(inp);
+                        buildingOk: buildingOk, distance: routeDist, segOut: segOut, segBack: segBack };
+    const speedLegs = ECO_SPEED_FACTORS.map(function(f){ return legsAtSpeed(planCtx, mainRoute, f); });
     const planner = buildPlans({
-      heights: heights, legs: legs, speedLegs: speedLegs, sportLegs: sportF ? legsAtSpeed(planCtx, mainRoute, sportF, true) : null, w: w, legalOk: legalOk, buildingOk: buildingOk, terrainAvailable: terrainAvailable,
+      heights: heights, legs: legs, speedLegs: speedLegs, w: w, legalOk: legalOk, buildingOk: buildingOk, terrainAvailable: terrainAvailable,
       battModel: battModel, temperatureC: temperatureC, mission: mission, dwellS: inp.dwellS,
       payloadOut: payloadOut, payloadBack: payloadBack, speedupback: speedupback, speeddownback: speeddownback
     });

@@ -11,17 +11,49 @@ import { fmtLen, fmtSpeed } from './units.js';
 export var forecastCache = new Map();
 export var FORECAST_CACHE_MS = 10 * 60 * 1000;
 
-export async function getJSON() {
-   var key = lat1.toFixed(3) + ',' + lng1.toFixed(3);
-   var hit = forecastCache.get(key);
-   if (hit && Date.now() - hit.at < FORECAST_CACHE_MS) return hit.json;
+var FORECAST_VARS = 'wind_speed_10m,wind_speed_80m,wind_speed_120m,wind_speed_180m,wind_direction_10m,wind_direction_80m,wind_direction_120m,wind_direction_180m,wind_gusts_10m,visibility,precipitation_probability,precipitation,temperature_2m';
 
-   const apiUrl = 'https://api.open-meteo.com/v1/forecast?latitude='+lat1+'&longitude='+lng1+'&hourly=wind_speed_10m,wind_speed_80m,wind_speed_120m,wind_speed_180m,wind_direction_10m,wind_direction_80m,wind_direction_120m,wind_direction_180m,wind_gusts_10m,visibility,precipitation_probability,precipitation,temperature_2m&forecast_days=3&timezone=GMT';
-   const response = await fetch(apiUrl);
-   if (!response.ok) throw new Error('Forecast HTTP ' + response.status);
-   const json = await response.json();
-   forecastCache.set(key, { at: Date.now(), json: json });
-   return json;
+function cacheKey(lat, lng){ return lat.toFixed(3) + ',' + lng.toFixed(3); }
+function cached(lat, lng){
+  var hit = forecastCache.get(cacheKey(lat, lng));
+  return hit && Date.now() - hit.at < FORECAST_CACHE_MS ? hit.json : null;
+}
+
+// Forecasts for several places in one request (Open-Meteo answers a
+// list of coordinates with a list of forecasts), each one cached.
+export async function getForecasts(points){
+  var missing = points.filter(function(p){ return !cached(p.lat, p.lng); });
+  if (missing.length){
+    var apiUrl = 'https://api.open-meteo.com/v1/forecast?latitude=' + missing.map(function(p){ return p.lat; }).join(',') +
+      '&longitude=' + missing.map(function(p){ return p.lng; }).join(',') + '&hourly=' + FORECAST_VARS + '&forecast_days=3&timezone=GMT';
+    var response = await fetch(apiUrl);
+    if (!response.ok) throw new Error('Forecast HTTP ' + response.status);
+    var json = await response.json();
+    var list = Array.isArray(json) ? json : [json];
+    if (list.length !== missing.length) throw new Error('Forecast: ' + list.length + ' answers for ' + missing.length + ' places');
+    missing.forEach(function(p, k){ forecastCache.set(cacheKey(p.lat, p.lng), { at: Date.now(), json: list[k] }); });
+  }
+  return points.map(function(p){ return cached(p.lat, p.lng); });
+}
+
+export async function getJSON() {
+  return (await getForecasts([{ lat: lat1, lng: lng1 }]))[0];
+}
+
+// The places along a route the forecast is read at: the start, and on
+// a route longer than ROUTE_FORECAST_SPACING_M a few more along the
+// straight line to the destination (up to ROUTE_FORECAST_MAX_POINTS),
+// since the forecast's cells are a few kilometres wide.
+export var ROUTE_FORECAST_SPACING_M = 3000;
+export var ROUTE_FORECAST_MAX_POINTS = 5;
+export function routeForecastPoints(lat1, lng1, lat2, lng2, distM){
+  var n = Math.min(ROUTE_FORECAST_MAX_POINTS - 1, Math.floor(distM / ROUTE_FORECAST_SPACING_M));
+  var pts = [];
+  for (var k = 0; k <= n; k++){
+    var f = n ? k / n : 0;
+    pts.push({ lat: lat1 + (lat2 - lat1) * f, lng: lng1 + (lng2 - lng1) * f });
+  }
+  return pts;
 }
 
 // ---------------------------------------------------------------

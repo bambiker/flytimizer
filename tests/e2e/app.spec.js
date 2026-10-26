@@ -105,26 +105,24 @@ test('the DJI flight plan downloads as a valid WPML archive', async ({ page }) =
   expect(waylines).toContain('wpml:executeHeight');
 });
 
-test('into the wind a plan may fly in Sport mode; the download stays at the mission speed, and fastest is never slower than least battery', async ({ page }) => {
+test('into the wind every plan stays a waypoint mission: no Sport mode, the download at the mission speed, and fastest never slower than least battery', async ({ page }) => {
   const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
   await page.clock.setFixedTime(noon);
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=air3');
   await waitForResult(page);
   await expect(page.locator('#cruise')).toHaveValue('12');
   await expect(page.locator('#hor')).toHaveValue('21');
-  // Into the wind, the fastest plan flies the leg in Sport mode too.
-  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
-  await expect(page.locator('#sportNote')).toContainText('faster than a mission');
-
-  await page.locator('#planEcoBtn').click();
-  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
-  await expect(page.locator('#sportNote')).toContainText('faster than a mission');
+  await expect(page.locator('#styleFore')).not.toContainText('Sport');
   const missionSpeed = await page.evaluate(() => 12 * 0.72 / (0.72 + (parseFloat(document.getElementById('payloadKg').value) || 0)));
   const kmz = await downloadMission(page);
-  expect(kmz.name).toBe('flytimizer-least-battery-outbound.kmz');
+  expect(kmz.name).toBe('flytimizer-outbound.kmz');
   const waylines = await kmz.zip.file('wpmz/waylines.wpml').async('string');
   const speed = parseFloat(waylines.match(/<wpml:autoFlightSpeed>([\d.]+)</)[1]);
   expect(speed).toBeCloseTo(missionSpeed, 1);
+
+  await page.locator('#planEcoBtn').click();
+  await expect(page.locator('#styleFore')).not.toContainText('Sport');
+  await expect(page.locator('#styleBack')).not.toContainText('Sport');
 
   // The fastest plan is never slower than least battery.
   const seconds = async id => {
@@ -136,18 +134,16 @@ test('into the wind a plan may fly in Sport mode; the download stays at the miss
   expect(fast).toBeLessThanOrEqual(await seconds('planEcoBtn'));
 });
 
-test('when the wind is too strong for the mission speed, the fastest plan flies that leg in Sport mode', async ({ page }) => {
+test('when the wind is too strong for the mission speed, that leg has no safe height rather than a Sport-mode leg', async ({ page }) => {
   // At this hour the fake forecast's wind is more than the Neo 2 carrying its own weight can handle at its
-  // mission speed (8 m/s, halved), but not at its Sport speed.
+  // mission speed (8 m/s, halved), though not at its Sport speed.
   const morning = new Date(); morning.setUTCHours(8, 32, 0, 0);
   await page.clock.setFixedTime(morning);
   await openSite(page, HAIFA, null, 'payloadKg=0.151');
   await page.locator('#calcBtn').click();
   await waitForResult(page);
-  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
-  await expect(page.locator('#styleFore')).toContainText('(Sport mode, by hand)');
-  await expect(page.locator('#flyWarning')).toBeHidden();
-  await expect(page.locator('#sportNote')).toContainText('too strong for a mission');
+  await expect(page.locator('#readoutFore')).toHaveClass(/unsafe/);
+  await expect(page.locator('#styleFore')).not.toContainText('Sport');
 });
 
 test('wind stronger than the drone can handle gives a clear no-fly warning', async ({ page }) => {
@@ -673,6 +669,23 @@ test('Start over during a calculation cancels it', async ({ page }) => {
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(0);
 });
 
+test('a long route reads the forecast at several places along it, and a windier stretch shows in the times', async ({ page }) => {
+  const far = [HAIFA[0] + 0.06, HAIFA[1] + 0.03];   // ~7 km
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);   // the fake forecast varies by hour
+  const lats = [];
+  page.on('request', r => { if (/open-meteo\.com\/v1\/forecast/.test(r.url())) lats.push(new URL(r.url()).searchParams.get('latitude')); });
+  await openSite(page, HAIFA, far, 'drone=mavic3classic', { hazards: [], flatGround: true });
+  await waitForResult(page);
+  expect(lats.some(l => l.split(',').length >= 3)).toBe(true);
+  const calm = await page.locator('#planFastBtn .plan-detail').textContent();
+
+  await openSite(page, HAIFA, far, 'drone=mavic3classic', { hazards: [], flatGround: true, windMulAlong: 1.3 });
+  await waitForResult(page);
+  await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+  expect(await page.locator('#planFastBtn .plan-detail').textContent()).not.toBe(calm);
+});
+
 test('number fields open a numeric keypad on phones', async ({ page }) => {
   await openSite(page, HAIFA, null, 'drone=mini4pro');
   const fields = ['dwell', 'cruise', 'hor', 'asc', 'des', 'windres', 'batt', 'ftime', 'mass', 'mtow', 'health', 'drag', 'payloadKg', 'payloadBackKg'];
@@ -949,6 +962,12 @@ test('buildings along the route slow the wind used for the times, and the settin
   await expect(info).toHaveCSS('display', 'block');
   await expect(info).toContainText('Buildings along the route: the wind is about 50% weaker than over open ground at 30 m');
   await expect(info).toContainText('the gust and crosswind checks keep the forecast wind');
+  // Takeoff and landing among the buildings: half the forecast wind there too, shown up front.
+  const ground = page.locator('#groundWindInfo');
+  await expect(ground).toBeVisible();
+  await expect(ground).toContainText('sheltered by the buildings');
+  await expect(ground).toContainText('at the start');
+  await expect(ground).toContainText('at the destination');
   const ws30 = async () => Number((await page.locator('#ws30').textContent()).match(/[\d.]+/)[0]);
   const slowed = await ws30();
 
@@ -960,6 +979,17 @@ test('buildings along the route slow the wind used for the times, and the settin
   const ratio = slowed / await ws30();
   expect(ratio).toBeGreaterThan(0.42);
   expect(ratio).toBeLessThan(0.58);
+});
+
+test('gusts among the buildings at takeoff over the drone\'s rating give a takeoff and landing warning', async ({ page }) => {
+  // A model that funnels the wind to 2.5 times the open wind where it's built up.
+  const urbanModel = { init: Math.log(2.5), lr: 0.1, w_full: 0.25, trees: [] };
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { ghsl: 20, builtS: 0.4, urbanModel, hazards: [], flatGround: true });
+  await waitForResult(page);
+  await expect(page.locator('#groundWindInfo')).toContainText('funnelled by the buildings');
+  await expect(page.locator('#groundWindWarning')).toContainText('Gusts low down at the start and the destination');
 });
 
 test('without the building data the forecast wind is used as it is', async ({ page }) => {

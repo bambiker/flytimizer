@@ -644,7 +644,6 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
 }
 
 .wpml-buttons{ display: contents; }
-.wpml-note{ flex-basis: 100%; font-size: 0.85rem; color: var(--muted); }
 
 /* ---------- 48-hour outlook ---------- */
 
@@ -1312,6 +1311,8 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
     <div class="fly-warning" id="rainWarning" style="display:none"></div>
     <div class="fly-warning" id="batteryWarning" style="display:none"></div>
     <div class="fly-warning" id="weightWarning" hidden></div>
+    <div class="fly-warning" id="groundWindWarning" hidden></div>
+    <p class="hint" id="groundWindInfo" hidden></p>
 
     <div class="forecast">
       <div class="forecast-head">
@@ -1395,6 +1396,22 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
   <details class="panel" id="whatsNew">
     <summary>What's new</summary>
     <div class="disclosure-body">
+      <p class="changelog-date">26 Oct 2026</p>
+      <ul>
+        <li><b>Wind stretch by stretch</b>: every ~30 m of the route gets
+        its own wind &mdash; the forecast at the nearest of up to 5 places
+        along a long route, the building effect at that spot, and the
+        stretch's own heading on a detour &mdash; for the times and
+        battery.</li>
+        <li><b>Takeoff and landing wind</b>: the wind 10&ndash;30 m up
+        at the start and the destination, among the buildings there
+        (funnelled or sheltered), with a warning when its gusts may be
+        too much for the drone.</li>
+        <li><b>Every plan is a waypoint mission</b>: plans now stay at the
+        mission speed (Normal mode) or slower, never Sport mode, so every
+        plan can be downloaded as a DJI flight plan and flown as it is. A
+        leg too windy for the mission speed shows as not safe.</li>
+      </ul>
       <p class="changelog-date">25 Oct 2026</p>
       <ul>
         <li><b>Buildings slow the wind</b> (beta): along a route through
@@ -1632,8 +1649,8 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
   <!-- Bump data-updated (and the What's new list) on every release.
        If the GitHub repo is reachable, the latest commit date
        replaces it automatically when it's newer. -->
-  <p class="updated" id="lastUpdated" data-updated="2026-10-21">
-    Updated <time id="lastUpdatedDate" datetime="2026-10-21">21 Oct 2026</time>
+  <p class="updated" id="lastUpdated" data-updated="2026-10-26">
+    Updated <time id="lastUpdatedDate" datetime="2026-10-26">26 Oct 2026</time>
   </p>
 
   <script>

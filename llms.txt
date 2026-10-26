@@ -7,13 +7,14 @@ Flytimizer is for drone pilots planning delivery, inspection or photo flights wh
 What it does:
 - Checks every height from 30 m to 120 m above ground, in 10 m steps, up to the local legal limit, and picks the best one for each leg (the outbound and return legs face opposite winds).
 - Uses the hourly wind forecast (Open-Meteo) at 10, 80 and 120 m, estimates gusts at each height, and rules out heights where gusts exceed the drone's rated wind resistance or the crosswind is too strong.
+- Works out the wind stretch by stretch along each leg (every ~30 m): the forecast at the nearest of up to 5 places along a long route, the slow-down from buildings at that spot, and the stretch's own heading.
 - Follows the terrain (Copernicus GLO-90 elevation), so heights stay above ground level along the whole route.
 - Detours around schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites (OpenStreetMap), and clears or avoids buildings (heights from OpenStreetMap, or where it has none, the EU Global Human Settlement Layer's average building height).
 - Applies country rules (height limit, keep-out distances) for Israel and the United States; elsewhere it applies Israel's rules as a cautious default.
 - Models both ways a drone flies in wind: holding a set ground speed (DJI waypoint missions, most multirotors; a tailwind saves battery, not time) or holding its airspeed (fixed-wing, or flying flat out; a tailwind makes it faster).
 - Estimates battery use per leg (payload, climbs, wind, airspeed, cold, battery health) and warns below a 20% reserve.
-- Offers up to three plans, each with its own heights, battery and downloads: fastest, least battery (it also picks a speed per leg: slower, or into a strong headwind the Sport-mode top speed, flown by hand) and fewer people (a modest detour over far fewer residents, from the EU GHS-POP population grid).
-- Uses two speeds per drone: the mission speed (Normal mode, the most a waypoint mission flies) for the plans and the downloads, and the Sport-mode top speed when the wind is too strong for the mission speed.
+- Offers up to three plans, each with its own heights, battery and downloads: fastest, least battery (it may also fly a leg slower) and fewer people (a modest detour over far fewer residents, from the EU GHS-POP population grid).
+- Uses two speeds per drone: the mission speed (Normal mode, the most a waypoint mission flies) for the plans and the downloads (no plan flies in Sport mode, so every plan can be flown as a waypoint mission), and the Sport-mode top speed for the battery model.
 - Counts roughly how many people live under the route (50 m either side) and how crowded its busiest stretch is.
 - "Conditions here" button for any spot, without planning a route: predicted navigation satellites overhead (GPS, Galileo, GLONASS, BeiDou), the Kp geomagnetic index, the highest height today's wind allows for the drone, and its round-trip range.
 - GPS spoofing check: warns when the device's position is in another country than its internet connection and time zone say (e.g. the fake position at Beirut airport seen in the Middle East).

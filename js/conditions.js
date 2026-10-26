@@ -28,8 +28,9 @@ import { getJSON } from './weather.js';
 export function windCeiling(heights, wx, inp, legalCapM){
   var w = windByHeight(heights, wx, 0, inp);
   var dragF = parseFloat(inp.drag) || 1;
-  // Headway at full (Sport-mode) speed, if the drone has one.
-  var speed = Math.min(inp.topSpeed || inp.speedhorizontal, inp.topSpeedBack || inp.speedhorizontalback);
+  // Headway at the mission speed (Normal mode), the most a waypoint
+  // mission flies.
+  var speed = Math.min(inp.speedhorizontal, inp.speedhorizontalback);
   var ceiling = null;
   for (var i = 0; i < heights.length; i++){
     var limit = heights[i] > legalCapM + 0.01 ? 'legal'

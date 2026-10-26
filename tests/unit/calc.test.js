@@ -166,20 +166,13 @@ test('legsAtSpeed: a slower leg takes longer, and holding ground speed with a ta
   assert.equal(half.out.climbRun, full.out.climbRun);
 });
 
-test('ecoSpeedFactors: slower shares, plus steps up to the top speed when it is faster than the mission speed', () => {
-  assert.deepEqual(site.ecoSpeedFactors({ speedhorizontal: 10, speedhorizontalback: 10 }), site.ECO_SPEED_FACTORS);
-  assert.deepEqual(site.ecoSpeedFactors({ speedhorizontal: 10, speedhorizontalback: 10, topSpeed: 10, topSpeedBack: 10 }), site.ECO_SPEED_FACTORS);
-  const f = site.ecoSpeedFactors({ speedhorizontal: 12, speedhorizontalback: 12, topSpeed: 21, topSpeedBack: 21 });
-  assert.equal(f.length, site.ECO_SPEED_FACTORS.length + 3);
-  assert.ok(Math.abs(f[f.length - 1] * 12 - 21) < 1e-9);
-});
-
-test('into a strong headwind, a leg at the top speed uses less battery than at the mission speed', () => {
+test('every plan stays at the mission speed or slower (a waypoint mission, never Sport mode), even into the wind', () => {
+  assert.ok(site.ECO_SPEED_FACTORS.every(f => f < 1));
   const heightsL = [30, 60];
   const samples = [{ s: 0, g: 0, lat: 0, lng: 0 }, { s: 1000, g: 0, lat: 0, lng: 0.009 }];
   const back = site.reverseSamples(samples);
   const inp = { speedup: 5, speeddown: 5, speedhorizontal: 10, speedupback: 5, speeddownback: 5, speedhorizontalback: 10,
-    topSpeed: 20, topSpeedBack: 20, drag: '1', windResistance: 20, speedMode: 'air', dwellS: 0 };
+    drag: '1', windResistance: 20, speedMode: 'air', dwellS: 0 };
   const route = { samples, back, reqOut: [-Infinity, -Infinity], reqBack: [-Infinity, -Infinity], distance: 1000, buildingOk: [true, true],
     pOut: site.legProfiles(heightsL, samples, [-Infinity, -Infinity], 10, 5, 5), pBack: site.legProfiles(heightsL, back, [-Infinity, -Infinity], 10, 5, 5) };
   const model = { wh: 77, usableFraction: 1, massKg: 0.9, vmax: 20, hoverW: 100 };
@@ -187,50 +180,19 @@ test('into a strong headwind, a leg at the top speed uses less battery than at t
   const ctx = { heights: heightsL, wx: site.forecastAt(hourly({ wind_direction_10m: [90], wind_direction_80m: [90], wind_direction_120m: [90] }), 0),
     dronedegrees: 270, inp, legalOk: [true, true], battModel: model, temperatureC: 20, payloadOut: 1, payloadBack: 1, timingOptsOut: {}, timingOptsBack: {} };
   const legs = site.legsAtSpeed(ctx, route, 1);
-  const factors = site.ecoSpeedFactors(inp);
-  const plans = site.buildPlans({ heights: heightsL, legs, speedLegs: factors.map(f => site.legsAtSpeed(ctx, route, f)), w: legs.w,
-    legalOk: [true, true], buildingOk: [true, true], terrainAvailable: false, battModel: model, temperatureC: 20, mission: 'delivery',
-    dwellS: 0, payloadOut: 1, payloadBack: 1, speedupback: 5, speeddownback: 5 }).plans;
-  assert.equal(plans.eco.out.speedFactor, 2);
-  assert.equal(plans.eco.out.speed, 20);
-  const missionOut = site.legsAtSpeed(ctx, route, 1).out.batt[plans.eco.out.i];
-  assert.ok(plans.eco.out.batt < missionOut);
-  // The fastest plan is never slower than least battery: it speeds up into the wind too.
-  assert.equal(plans.fast.out.speedFactor, 2);
-  assert.ok(plans.fast.totalTime <= plans.eco.totalTime + 0.5);
-  // With the wind behind it, it doesn't speed up.
-  assert.ok(plans.eco.back.speedFactor <= 1);
-  // In a light breeze it isn't worth flying by hand.
-  const calmCtx = Object.assign({}, ctx, { wx: site.forecastAt(hourly({ wind_speed_10m: [2], wind_speed_80m: [3], wind_speed_120m: [3],
-    wind_direction_10m: [90], wind_direction_80m: [90], wind_direction_120m: [90] }), 0) });
-  const calmLegs = site.legsAtSpeed(calmCtx, route, 1);
-  const calm = site.buildPlans({ heights: heightsL, legs: calmLegs, speedLegs: factors.map(f => site.legsAtSpeed(calmCtx, route, f)), w: calmLegs.w,
-    legalOk: [true, true], buildingOk: [true, true], terrainAvailable: false, battModel: model, temperatureC: 20, mission: 'delivery',
-    dwellS: 0, payloadOut: 1, payloadBack: 1, speedupback: 5, speeddownback: 5 }).plans;
-  assert.ok(calm.eco.out.speedFactor <= 1);
-});
-
-test('a leg the mission speed cannot fly falls back to the top speed (Sport mode), in both plans', () => {
-  const heightsL = [30, 60];
-  const samples = [{ s: 0, g: 0, lat: 0, lng: 0 }, { s: 1000, g: 0, lat: 0, lng: 0.009 }];
-  const back = site.reverseSamples(samples);
-  // A 3 m/s mission speed into a ~7 m/s headwind makes no headway.
-  const inp = { speedup: 5, speeddown: 5, speedhorizontal: 3, speedupback: 5, speeddownback: 5, speedhorizontalback: 3,
-    topSpeed: 20, topSpeedBack: 20, drag: '1', windResistance: 20, speedMode: 'air', dwellS: 0 };
-  const route = { samples, back, reqOut: [-Infinity, -Infinity], reqBack: [-Infinity, -Infinity], distance: 1000, buildingOk: [true, true],
-    pOut: site.legProfiles(heightsL, samples, [-Infinity, -Infinity], 3, 5, 5), pBack: site.legProfiles(heightsL, back, [-Infinity, -Infinity], 3, 5, 5) };
-  const model = { wh: 77, usableFraction: 1, massKg: 0.9, vmax: 20, hoverW: 100 };
-  const ctx = { heights: heightsL, wx: site.forecastAt(hourly({ wind_direction_10m: [90], wind_direction_80m: [90], wind_direction_120m: [90] }), 0),
-    dronedegrees: 270, inp, legalOk: [true, true], battModel: model, temperatureC: 20, payloadOut: 1, payloadBack: 1, timingOptsOut: {}, timingOptsBack: {} };
-  const legs = site.legsAtSpeed(ctx, route, 1);
-  const f = site.topSpeedFactor(inp);
   const args = { heights: heightsL, legs, w: legs.w, legalOk: [true, true], buildingOk: [true, true], terrainAvailable: false,
-    battModel: model, temperatureC: 20, mission: 'delivery', dwellS: 0, payloadOut: 1, payloadBack: 1, speedupback: 5, speeddownback: 5 };
-  assert.equal(site.buildPlans(args).plans.fast.out, null);
-  const plans = site.buildPlans(Object.assign({}, args, { sportLegs: site.legsAtSpeed(ctx, route, f, true),
-    speedLegs: site.ecoSpeedFactors(inp).map(x => site.legsAtSpeed(ctx, route, x)) })).plans;
-  assert.equal(plans.fast.out.speed, 20);
-  assert.equal(plans.fast.out.sportNeeded, true);
-  assert.equal(plans.fast.back.speedFactor, 1);
-  assert.ok(plans.eco.out && plans.eco.out.speedFactor > 1);
+    battModel: model, temperatureC: 20, mission: 'delivery', dwellS: 0, payloadOut: 1, payloadBack: 1, speedupback: 5, speeddownback: 5,
+    speedLegs: site.ECO_SPEED_FACTORS.map(f => site.legsAtSpeed(ctx, route, f)) };
+  const plans = site.buildPlans(args).plans;
+  [plans.fast.out, plans.fast.back, plans.eco.out, plans.eco.back].forEach(leg => assert.ok(leg.speedFactor <= 1 && leg.speed <= 10));
+  assert.equal(plans.fast.out.speedFactor, 1);
+  // A mission speed that makes no headway into the wind: no safe outbound leg, not Sport mode.
+  const slowInp = Object.assign({}, inp, { speedhorizontal: 3, speedhorizontalback: 3 });
+  const slowRoute = Object.assign({}, route, { pOut: site.legProfiles(heightsL, samples, [-Infinity, -Infinity], 3, 5, 5),
+    pBack: site.legProfiles(heightsL, back, [-Infinity, -Infinity], 3, 5, 5) });
+  const slowCtx = Object.assign({}, ctx, { inp: slowInp });
+  const slowLegs = site.legsAtSpeed(slowCtx, slowRoute, 1);
+  const slow = site.buildPlans(Object.assign({}, args, { legs: slowLegs, w: slowLegs.w,
+    speedLegs: site.ECO_SPEED_FACTORS.map(f => site.legsAtSpeed(slowCtx, slowRoute, f)) })).plans;
+  assert.equal(slow.fast.out, null);
 });
