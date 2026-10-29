@@ -24,6 +24,7 @@ import { MAX_AGL_M, buildAltitudeProfile, buildingAltitudeRequirements, flatTerr
 import { chooseUnits, escapeHtml, fmtDist, fmtLen, fmtSpeed, unitsImperial } from './units.js';
 import { loadUrbanArea, routeUrbanFactors, urbanFactorFor } from './urbanwind.js';
 import { endpointWinds, legSegmentSpeeds, makeWindField, routeSegments } from './windfield.js';
+import { loadFineArea } from './urbanfine.js';
 import { renderCompassRose } from './visuals.js';
 import { forecastOffsetH, getForecasts, renderForecastStrip, routeForecastPoints } from './weather.js';
 
@@ -489,8 +490,8 @@ export function renderGroundWind(start, dest, windResistance){
     return (Math.abs(hi - lo) < 0.5 ? 'about ' + fmtSpeed(hi) : fmtSpeed(lo) + '–' + fmtSpeed(hi));
   }
   function effect(g){
-    var f = g[0].factor;
-    return f > 1.15 ? ', funnelled by the buildings' : f < 0.85 ? ', sheltered by the buildings' : '';
+    var f = g[0].factor, around = g[0].source === 'buildings' ? ' right there' : '';
+    return f > 1.15 ? ', funnelled by the buildings' + around : f < 0.85 ? ', sheltered by the buildings' + around : '';
   }
   function gust(g){ return Math.max.apply(null, g.map(function(x){ return x.gust; })); }
   var places = [{ name: 'the start', g: start }];
@@ -1043,6 +1044,15 @@ export async function calcHeight(gen) {
     const urbanPromise = urbanWindChecked()
         ? loadUrbanArea(avoidance.path).catch(function(err){ console.warn('Building wind lookup failed:', err); return null; })
         : Promise.resolve(null);
+    // The buildings right at the takeoff and landing points, for the
+    // wind among them (urbanfine.js; optional, like the above).
+    const landsAtDest = marker === 2 && currentMission() !== 'photo';
+    const finePromise = urbanWindChecked()
+        ? Promise.all([startlat, landsAtDest ? destlat : null].map(function(la, k){
+            if (la === null) return null;
+            return loadFineArea(la, k ? destlng : startlng).catch(function(err){ console.warn('Fine building wind unavailable:', err.message || err); return null; });
+          }))
+        : Promise.resolve([null, null]);
 
     const wind = await windPromise;
     if (stale()) return 'stale';
@@ -1198,8 +1208,10 @@ export async function calcHeight(gen) {
     const windField = makeWindField(forecastPoints, urbanArea, heights);
     // The wind where the drone takes off and lands (a photo mission
     // turns round in the air at the destination).
-    renderGroundWind(endpointWinds(forecastPoints, urbanArea, startlat, startlng),
-      marker === 2 && mission !== 'photo' ? endpointWinds(forecastPoints, urbanArea, destlat, destlng) : null, inp.windResistance);
+    const fineAreas = await finePromise;
+    if (stale()) return 'stale';
+    renderGroundWind(endpointWinds(forecastPoints, urbanArea, startlat, startlng, null, fineAreas[0]),
+      landsAtDest ? endpointWinds(forecastPoints, urbanArea, destlat, destlng, null, fineAreas[1]) : null, inp.windResistance);
     const segOut = routeSegments(terrainSamples, heights, windField, inp.windResistance);
     const segBack = routeSegments(terrainBack, heights, windField, inp.windResistance);
     const lwOut = legWind(w, segOut, speedhorizontal, inp, 'Out', heights);

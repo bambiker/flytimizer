@@ -248,7 +248,14 @@ in Tel Aviv and Tokyo.
 
 The same model gives the wind low down where the drone takes off and
 lands (10–30 m, at the start and, for a delivery, the destination):
-funnelled between buildings or sheltered by them. The result shows it,
+funnelled between buildings or sheltered by them. When the fine model
+(`data/urban_fine_model.json`) is present, the takeoff and landing points
+use it instead: it reads the OpenStreetMap footprints within 150 m,
+rasterised to 2 m (distance to the nearest building and its height,
+built-up share within 20, 50 and 150 m, buildings upwind), and gives the
+U-Net's value at the point itself, so a sheltered street comes out
+sheltered (`js/urbanfine.js`; trained with `tools/train_urban_fine.py`).
+It isn't used on a roof, or where OSM lacks buildings that GHSL shows. The result shows it,
 and warns when the gusts there may reach the drone's wind rating (the
 check never takes the wind below the forecast). The factor changes the wind used for the flight
 times and battery; the gust and crosswind limits keep the forecast wind

@@ -992,6 +992,26 @@ test('gusts among the buildings at takeoff over the drone\'s rating give a takeo
   await expect(page.locator('#groundWindWarning')).toContainText('Gusts low down at the start and the destination');
 });
 
+test('taking off in a street between buildings mapped in OSM, the fine model shows the wind sheltered right there', async ({ page }) => {
+  // A street ~12 m wide between two long blocks, around each point; a model that keeps 40% of the wind within 15 m of a building.
+  const m = 1 / 111320;
+  const block = (lat, lng, eOff) => {
+    const mE = m / Math.cos(lat * Math.PI / 180);
+    return [[-120, eOff], [-120, eOff + 20], [120, eOff + 20], [120, eOff]].map(([n, e]) => ({ lat: lat + n * m, lon: lng + e * mE }));
+  };
+  const fineBuildings = (lat, lng) => [-26, 6].map((e, k) => ({ type: 'way', id: 900 + k, geometry: block(lat, lng, e), tags: { building: 'yes', height: '30' } }));
+  const fineModel = { init: 0, lr: 1, trees: [{ f: [7, -2, -2], t: [15, 0, 0], l: [1, -1, -1], r: [2, -1, -1], v: [0, Math.log(0.4), 0] }] };
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [], flatGround: true, fineModel, fineBuildings });
+  await waitForResult(page);
+  await expect(page.locator('#groundWindInfo')).toContainText('sheltered by the buildings right there');
+  // Switched off with the building-wind setting.
+  await page.evaluate(() => { document.getElementById('droneConfigPanel').open = true; });
+  await page.locator('#urbanWind').uncheck();
+  await expect(page.locator('#groundWindInfo')).not.toContainText('sheltered');
+});
+
 test('without the building data the forecast wind is used as it is', async ({ page }) => {
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { ghsl: 20, hazards: [], flatGround: true,
     urbanModel: { init: Math.log(0.5), lr: 0.1, w_full: 0.25, trees: [] } });

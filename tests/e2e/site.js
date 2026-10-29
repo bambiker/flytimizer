@@ -29,6 +29,10 @@
 //                 surface file (default: the file can't be downloaded)
 //   urbanModel    the building-wind model (data/urban_wind_model.json)
 //                 to serve (default: not found)
+//   fineModel     the fine building-wind model (data/urban_fine_model.json)
+//                 to serve (default: not found)
+//   fineBuildings (lat, lng) => OSM building ways (with geometry)
+//                 around a takeoff/landing point (default: none)
 //   country       ISO code Nominatim reports (default 'il')
 //   imperial      saved unit preference
 //   places        place-search results: { 'query text': [lat, lng] }
@@ -123,6 +127,8 @@ export async function openSite(page, from, to, query, sc = {}){
     if (sc.overpassDelayMs) await new Promise(res => setTimeout(res, sc.overpassDelayMs));
     if (sc.overpassFail) return r.fulfill({ status: 500, body: 'error' });
     const body = decodeURIComponent((r.request().postData() || r.request().url()).replace(/\+/g, ' '));
+    const around = body.match(/building"\]\(around:[\d.]+,([-\d.]+),([-\d.]+)\)/);
+    if (around) return json(r, { elements: sc.fineBuildings ? sc.fineBuildings(+around[1], +around[2]) : [] });
     if (/building/.test(body) && !/amenity/.test(body)){
       const kind = sc.buildings || 'nearby';
       buildingQueries++;
@@ -195,6 +201,7 @@ export async function openSite(page, from, to, query, sc = {}){
   });
 
   await ctx.route(SITE + '/data/urban_wind_model.json', r => sc.urbanModel ? json(r, sc.urbanModel) : r.fulfill({ status: 404 }));
+  await ctx.route(SITE + '/data/urban_fine_model.json', r => sc.fineModel ? json(r, sc.fineModel) : r.fulfill({ status: 404 }));
 
   const q = 'from=' + from.join(',') + (to ? '&to=' + to.join(',') : '') + (query ? '&' + query : '');
   await page.goto(SITE + '/index.html?' + q);
