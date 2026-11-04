@@ -286,6 +286,10 @@ def load_flight(path, battery_map):
         "lat": num(raw, "OSD.latitude"),
         "lon": num(raw, "OSD.longitude"),
         "air": ~ground.isin(["true", "1", "yes"]),
+        # DJI's flight mode: GPS_SPORT in Sport mode, GPS_ATTI / GPS_NORMAL
+        # etc. otherwise (nan when the log has no OSD.flycState)
+        "sport": (raw["OSD.flycState"].astype(str).str.upper().str.contains("SPORT")
+                  .astype(float) if "OSD.flycState" in raw.columns else np.nan),
     })
     d = d.dropna(subset=["t", "vn", "ve", "vz", "h", "P"])
     d = d.sort_values("t").drop_duplicates("t")
@@ -314,6 +318,7 @@ def load_flight(path, battery_map):
         vz=("vz", "mean"), h=("h", "mean"), P=("P", "mean"),
         soc=("soc", "mean"), lat=("lat", "mean"), lon=("lon", "mean"),
         ys=("ys", "mean"), yc=("yc", "mean"), air=("airf", "mean"),
+        sport=("sport", "mean"),
         dur=("dur", "sum"), eJ=("eJ", "sum"),
     )
     b = b[b["dur"] > 0].reset_index(drop=True)
@@ -444,6 +449,12 @@ def load_all(path, battery_map):
         f.lon0 = float(np.median(lon[ok])) if ok.any() else np.nan
         f.mean_h = float(np.average(b["h"], weights=b["dur"])) if len(b) else np.nan
         f.meteo = None
+        sp = b["sport"].to_numpy()
+        f.sport_share = (float(np.average(sp, weights=b["dur"])) if len(b) and np.isfinite(sp).any()
+                         else np.nan)
+        gs = np.hypot(b["vn"], b["ve"]).to_numpy()
+        f.mean_gs = float(np.average(gs, weights=b["dur"])) if len(b) else np.nan
+        f.max_gs = float(np.max(gs)) if len(b) else np.nan
 
     # Each battery's flights in time order: 0 = its first logged flight.
     for bat in {f.battery for f in flights}:
@@ -611,6 +622,9 @@ def _spec_hover(spec):
     return spec.wh * 60.0 / spec.minutes / _airspeed_factor(spec.test_speed, spec)
 
 
+SITE_FIT_MODE = "all"   # samples fit_site uses: "all", "normal" or "sport"
+
+
 def fit_site(flights, base=None, degree=1):
     """The site's own battery formula (js/battery.js) fitted directly to
     the logs: hover power, speed curve 1 + a*x + b*x^3 (x = ground speed /
@@ -626,6 +640,11 @@ def fit_site(flights, base=None, degree=1):
     rows, ys, ws = [], [], []
     for f in flights:
         b = f.bins
+        if SITE_FIT_MODE != "all" and b["sport"].notna().any():
+            keep = (b["sport"] >= 0.5) if SITE_FIT_MODE == "sport" else (b["sport"] < 0.5)
+            b = b[keep.to_numpy()]
+            if len(b) == 0:
+                continue
         x = np.clip(np.hypot(b["vn"], b["ve"]).to_numpy() / base.vmax, 0, 1.2)
         up = b["up"].to_numpy()
         climb, desc = up > 0.3, up < -0.3
@@ -915,6 +934,7 @@ def leave_one_out(flights, group, degree, long_min):
         results.append(res)
 
     _print_loo(results, long_min)
+    _print_modes(results)
     return results
 
 
@@ -951,6 +971,39 @@ def _print_summary(results, title, legend=False):
         print(f"  {m:10s} {flights_r2:6.3f} {np.mean(np.abs(err)):7.2f} "
               f"{np.sqrt(np.mean(err ** 2)):7.2f} {np.mean(err):+7.2f} "
               f"{100 * np.mean(rel):7.1f}% {np.nanmean(np.abs(end_err)):6.1f} m")
+
+
+SPORT_FLIGHT_SHARE = 0.2   # a flight counts as "Sport" with this share of its time in Sport mode
+
+
+def _print_modes(results):
+    """Leave-one-out misses split by flight mode (DJI Normal vs Sport)."""
+    if not any(np.isfinite(r.flight.sport_share) for r in results):
+        return
+    print()
+    print("=" * 78)
+    print("FLIGHT MODE (Normal vs Sport) - leave-one-out misses, predicted minus actual")
+    print("=" * 78)
+    print(f"  {'flight':38s} {'sport':>6s} {'mean v':>6s} {'max v':>6s} {'actual':>6s} "
+          f"{'site new':>9s} {'site fit':>9s} {'same day':>9s}")
+    for r in results:
+        f = r.flight
+        sh = f"{100 * f.sport_share:5.0f}%" if np.isfinite(f.sport_share) else f"{'-':>6s}"
+        print(f"  {f.name[:38]:38s} {sh} {f.mean_gs:6.1f} {f.max_gs:6.1f} {f.soc_drop:6.0f} "
+              + " ".join(f"{r.drop[m] - f.soc_drop:+9.1f}" for m in ("site new", "site fit", "same day")))
+    print()
+    print(f"  ('Sport' flights: at least {100 * SPORT_FLIGHT_SHARE:.0f}% of the time in Sport mode)")
+    print(f"  {'group':8s} {'flights':>7s} " + " ".join(f"{m + ' bias/MAE':>19s}" for m in ("site new", "site fit", "same day")))
+    for label, pick in (("Normal", lambda r: r.flight.sport_share < SPORT_FLIGHT_SHARE),
+                        ("Sport", lambda r: r.flight.sport_share >= SPORT_FLIGHT_SHARE)):
+        rr = [r for r in results if np.isfinite(r.flight.sport_share) and pick(r)]
+        if not rr:
+            continue
+        cells = []
+        for m in ("site new", "site fit", "same day"):
+            err = np.array([r.drop[m] - r.flight.soc_drop for r in rr])
+            cells.append(f"{np.mean(err):+8.2f} / {np.mean(np.abs(err)):5.2f}")
+        print(f"  {label:8s} {len(rr):7d}    " + "     ".join(cells))
 
 
 def _print_loo(results, long_min):
@@ -1012,7 +1065,8 @@ def report_full_model(flights, model, degree):
 
     fit = fit_site(flights, degree=degree)
     print()
-    print("site preset fitted to all these flights (the site's own formula):")
+    print("site preset fitted to all these flights (the site's own formula"
+          + ("" if SITE_FIT_MODE == "all" else f", {SITE_FIT_MODE} mode samples only") + "):")
     print(f"  hover {fit.hover:.1f} W   curve a={fit.curve_a:.3f} b={fit.curve_b:.3f}   "
           f"climb efficiency {fit.climb_eff:.2f}   battery {fit.wh:.2f} Wh, "
           f"socSlope {fit.soc_slope:.4f}")
@@ -1787,6 +1841,9 @@ def parse_args():
     p.add_argument("--wind-source", choices=["estimate", "meteo"], default="estimate",
                    help="wind used in the wind-effect sections: estimated from the "
                         "power (default) or Open-Meteo's")
+    p.add_argument("--site-fit-mode", choices=["all", "normal", "sport"], default="all",
+                   help="which samples 'site fit' and the printed preset use: all (default), "
+                        "only Normal mode or only Sport mode")
     p.add_argument("--speed-terms", type=int, choices=[2, 3], default=SPEED_TERMS,
                    help="power vs airspeed: 2 = 1 + a*x + b*x^3, b >= 0 (default, "
                         "stable); 3 = free cubic (the old fit)")
@@ -1804,8 +1861,9 @@ def parse_args():
 
 
 def main():
-    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS, WIND_SOURCE
+    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS, WIND_SOURCE, SITE_FIT_MODE
     args = parse_args()
+    SITE_FIT_MODE = args.site_fit_mode
     WIND_SOURCE = args.wind_source
     SPEED_TERMS = args.speed_terms
     HALF_LIFE_FLIGHTS = args.half_life
