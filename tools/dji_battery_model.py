@@ -294,6 +294,9 @@ def load_flight(path, battery_map):
         # etc. otherwise (nan when the log has no OSD.flycState)
         "sport": (raw["OSD.flycState"].astype(str).str.upper().str.contains("SPORT")
                   .astype(float) if "OSD.flycState" in raw.columns else np.nan),
+        # ActiveTrack / subject tracking (camera and vision working harder)
+        "track": (raw["OSD.flycState"].astype(str).str.upper().str.contains("TRACK")
+                  .astype(float) if "OSD.flycState" in raw.columns else np.nan),
     })
     d = d.dropna(subset=["t", "vn", "ve", "vz", "h", "P"])
     d = d.sort_values("t").drop_duplicates("t")
@@ -340,6 +343,7 @@ def load_flight(path, battery_map):
     soc = soc[soc > 0]
     soc_start = float(soc.iloc[0]) if len(soc) else np.nan
     soc_end = float(soc.iloc[-1]) if len(soc) else np.nan
+    partial = soc_partials(d)
 
     return SimpleNamespace(
         name=name,
@@ -350,7 +354,10 @@ def load_flight(path, battery_map):
         axis_check=_gps_axis_check(b),
         soc_start=soc_start,
         soc_end=soc_end,
+        partial=partial,
         steps=soc_steps(d),
+        temp_start=(float(d["temp"].dropna().iloc[0]) if d["temp"].notna().any() else np.nan),
+        track_share=float(d.loc[d["air"], "track"].mean()) if d["track"].notna().any() else np.nan,
         start=flight_start(raw, name)[0],
         start_utc=flight_start(raw, name)[1],
         full_cap=_battery_column_median(raw, "fullcap", "fullchargecap")[0],
@@ -360,6 +367,27 @@ def load_flight(path, battery_map):
         temp=float(d["temp"].mean()) if d["temp"].notna().any() else np.nan,
         serial_cols=battery_serial_columns(raw.columns),
     )
+
+
+def soc_partials(d):
+    """The gauge shows whole percents, so a flight that reads 99 -> 20 used
+    anywhere from 78 to 80 %. The moments the reading changes are exact,
+    though: before its first change the drone used the part of the first
+    percent that was left at take-off, and after its last change part of
+    the last percent. Returns the energy (Wh) of those two stretches and
+    the whole percents between the first and last change, or None when the
+    reading changed fewer than twice."""
+    soc = d["soc"].where(d["soc"] > 0).ffill().to_numpy()
+    ce = np.concatenate([[0.0], np.cumsum(d["eJ"].to_numpy())])
+    ok = np.isfinite(soc)
+    change = np.where(ok[1:] & ok[:-1] & (soc[1:] < soc[:-1]))[0] + 1
+    if len(change) < 2:
+        return None
+    a, z = change[0], change[-1]
+    return SimpleNamespace(
+        first=float(soc[a - 1]), last=float(soc[z]),
+        whole=float(soc[a] - soc[z]),          # percents from the first change to the last
+        pre_wh=float(ce[a] / 3600.0), post_wh=float((ce[-1] - ce[z]) / 3600.0))
 
 
 def soc_steps(d):
@@ -447,6 +475,7 @@ def load_all(path, battery_map):
         f.duration_s = float(b["dur"].sum())
         f.energy_wh = float(b["eJ"].sum() / 3600.0)
         f.soc_drop = f.soc_start - f.soc_end
+        f.soc_start_int, f.soc_end_int = f.soc_start, f.soc_end
         lat, lon = b["lat"].to_numpy(), b["lon"].to_numpy()
         ok = np.isfinite(lat) & np.isfinite(lon) & (np.abs(lat) > 1e-3)
         f.lat0 = float(np.median(lat[ok])) if ok.any() else np.nan
@@ -459,6 +488,9 @@ def load_all(path, battery_map):
         gs = np.hypot(b["vn"], b["ve"]).to_numpy()
         f.mean_gs = float(np.average(gs, weights=b["dur"])) if len(b) else np.nan
         f.max_gs = float(np.max(gs)) if len(b) else np.nan
+
+    if FINE_SOC:
+        refine_soc(flights)
 
     # Each battery's flights in time order: 0 = its first logged flight.
     for bat in {f.battery for f in flights}:
@@ -481,6 +513,36 @@ def load_all(path, battery_map):
         print("no battery serial column in the logs - all flights count as one "
               "battery (use --battery-map to tell them apart)")
     return flights
+
+
+FINE_SOC = True   # measure the partial first and last percent (see soc_partials)
+
+
+def refine_soc(flights):
+    """Battery % at take-off and landing to a fraction of a percent: the
+    whole percents between the gauge's first and last change, plus the
+    energy before the first change and after the last, each divided by
+    the Wh in one percent (the flight's own 1% steps, or all flights')."""
+    allsteps = [f.steps for f in flights if len(f.steps)]
+    pooled = (float(np.median(pd.concat(allsteps)["wh"] / pd.concat(allsteps)["drop"]))
+              if allsteps else np.nan)
+    done = 0
+    for f in flights:
+        p = f.partial
+        if p is None or not np.isfinite(pooled):
+            continue
+        own = (f.steps["wh"] / f.steps["drop"]) if len(f.steps) >= 3 else None
+        whp = float(np.median(own)) if own is not None else pooled
+        pre = float(np.clip(p.pre_wh / whp, 0.0, 1.0))
+        post = float(np.clip(p.post_wh / whp, 0.0, 1.0))
+        # the gauge shows L while the charge is above L-1: it drops to
+        # first-1 at the first change and to last at the last one
+        f.soc_start = (p.first - 1.0) + pre
+        f.soc_end = p.last - post
+        f.soc_drop = f.soc_start - f.soc_end
+        done += 1
+    print(f"battery %: take-off and landing measured to a fraction of a percent "
+          f"for {done}/{len(flights)} flight(s) (the rest keep whole percents)")
 
 
 def read_battery_map(path):
@@ -976,6 +1038,7 @@ def leave_one_out(flights, group, degree, long_min):
 
     _print_loo(results, long_min)
     _print_modes(results)
+    _print_residual_drivers(results)
     return results
 
 
@@ -1045,6 +1108,57 @@ def _print_modes(results):
             err = np.array([r.drop[m] - r.flight.soc_drop for r in rr])
             cells.append(f"{np.mean(err):+8.2f} / {np.mean(np.abs(err)):5.2f}")
         print(f"  {label:8s} {len(rr):7d}    " + "     ".join(cells))
+
+
+def _print_residual_drivers(results):
+    """What the misses that remain go with: each candidate cause against
+    the model's miss and against the battery-side (energy -> %) miss."""
+    def meteo(f, k):
+        return getattr(f.meteo, k) if getattr(f, "meteo", None) is not None else np.nan
+    feats = [
+        ("battery temp, mean C", lambda f: f.temp),
+        ("battery temp, take-off C", lambda f: f.temp_start),
+        ("air temperature C", lambda f: meteo(f, "air_temp")),
+        ("air density kg/m3", lambda f: meteo(f, "density")),
+        ("wind gusts m/s", lambda f: meteo(f, "gust")),
+        ("forecast wind m/s", lambda f: meteo(f, "speed")),
+        ("ActiveTrack share", lambda f: f.track_share),
+        ("Sport share", lambda f: f.sport_share),
+        ("mean height m", lambda f: f.mean_h),
+        ("mean ground speed m/s", lambda f: f.mean_gs),
+        ("battery % at take-off", lambda f: f.soc_start),
+    ]
+    model = np.array([r.drop["same day"] - r.flight.soc_drop for r in results])
+    conv = np.array([r.drop["E/% curve"] - r.flight.soc_drop for r in results])
+    print()
+    print("=" * 78)
+    print("WHAT THE REMAINING MISSES GO WITH")
+    print("=" * 78)
+    print("Correlation (r) of each flight's miss (predicted - actual, % of battery)")
+    print("with each candidate cause, and the miss per unit of it. 'model' = the full")
+    print("model (same-day wind), 'battery' = the energy -> % conversion alone")
+    print(f"(E/% curve). With {len(results)} flights, |r| above "
+          f"{2 / np.sqrt(max(len(results), 4)):.2f} is unlikely to be chance (*).")
+    print()
+    print(f"  {'cause':26s} {'n':>3s} {'model r':>8s} {'per unit':>9s} "
+          f"{'battery r':>9s} {'per unit':>9s}")
+    limit = 2 / np.sqrt(max(len(results), 4))
+    for name, fn in feats:
+        x = np.array([fn(r.flight) for r in results], float)
+        ok = np.isfinite(x)
+        if ok.sum() < 6 or np.std(x[ok]) < 1e-9:
+            continue
+        cells = []
+        for y in (model, conv):
+            rr = _corr(x[ok], y[ok])
+            slope = np.polyfit(x[ok], y[ok], 1)[0] if np.isfinite(rr) else np.nan
+            star = "*" if np.isfinite(rr) and abs(rr) > limit else " "
+            cells.append(f"{rr:+7.2f}{star} {slope:+9.3f}")
+        print(f"  {name:26s} {ok.sum():3d} {cells[0]} {cells[1]}")
+    print()
+    print("  A cause marked * is worth adding to the model; a correlation is not")
+    print("  proof, and causes that move together (hot battery, low battery %,")
+    print("  back-to-back flights) can stand in for each other.")
 
 
 def _print_loo(results, long_min):
@@ -1462,7 +1576,8 @@ METEO_URLS = [
     "https://historical-forecast-api.open-meteo.com/v1/forecast",
     "https://api.open-meteo.com/v1/forecast",
 ]
-METEO_HOURLY = "wind_speed_10m,wind_direction_10m,wind_speed_80m,wind_direction_80m,wind_gusts_10m"
+METEO_HOURLY = ("wind_speed_10m,wind_direction_10m,wind_speed_80m,wind_direction_80m,"
+                "wind_gusts_10m,temperature_2m,surface_pressure")
 METEO_CACHE = os.path.expanduser("~/.cache/dji_battery_model")
 WIND_SOURCE = "estimate"   # what the wind sections use: "estimate" or "meteo"
 
@@ -1475,7 +1590,9 @@ def _meteo_day(lat, lon, day):
     if os.path.exists(path):
         try:
             with open(path) as fh:
-                return json.load(fh), None
+                cached = json.load(fh)
+            if all(k in cached.get("hourly", {}) for k in METEO_HOURLY.split(",")):
+                return cached, None
         except (OSError, ValueError):
             pass
     params = urllib.parse.urlencode({
@@ -1561,8 +1678,13 @@ def meteo_wind(f):
         wn, we = n10 * k, e10 * k
     speed = float(np.hypot(wn, we))
     from_deg = float((np.degrees(np.arctan2(we, wn)) + 180.0) % 360.0)
+    air_t = at("temperature_2m") if "temperature_2m" in h else np.nan
+    pressure = at("surface_pressure") if "surface_pressure" in h else np.nan
+    density = (pressure * 100.0 / (287.05 * (air_t + 273.15))
+               if np.isfinite(air_t) and np.isfinite(pressure) else np.nan)
     return SimpleNamespace(wind=(wn, we), speed=speed, from_deg=from_deg,
-                           gust=at("wind_gusts_10m"), height=height), None
+                           gust=at("wind_gusts_10m"), height=height,
+                           air_temp=air_t, pressure=pressure, density=density), None
 
 
 def attach_meteo(flights):
@@ -1901,6 +2023,9 @@ def parse_args():
     p.add_argument("--speed-terms", type=int, choices=[2, 3], default=SPEED_TERMS,
                    help="power vs airspeed: 2 = 1 + a*x + b*x^3, b >= 0 (default, "
                         "stable); 3 = free cubic (the old fit)")
+    p.add_argument("--whole-percent", action="store_true",
+                   help="keep the gauge's whole percents at take-off and landing "
+                        "(don't measure the partial first and last percent)")
     p.add_argument("--no-capacity", action="store_true",
                    help="ignore the battery-reported capacity (to compare)")
     p.add_argument("--long-min", type=float, default=25.0,
@@ -1915,8 +2040,9 @@ def parse_args():
 
 
 def main():
-    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS, WIND_SOURCE, SITE_WIND
+    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS, WIND_SOURCE, SITE_WIND, FINE_SOC
     args = parse_args()
+    FINE_SOC = not args.whole_percent
     SITE_WIND = not args.site_calm
     WIND_SOURCE = args.wind_source
     SPEED_TERMS = args.speed_terms
