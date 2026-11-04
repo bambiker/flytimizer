@@ -40,9 +40,12 @@ What it does
        site new  - the site's current Neo 2 preset (its formula fitted to
                    21 flights), with the gauge's last percents holding
                    less energy (socSlope), from the flight's start %
-       site fit  - the site's own formula with its hover power, speed
-                   curve and climb cost fitted to the OTHER flights' power
-                   (what a new preset from these logs would score)
+       site norm - the site's own formula fitted to the OTHER flights'
+                   Normal-mode samples (what a new Normal preset would score)
+       site both - the same, with a second fit for Sport-mode samples used
+                   wherever the flight was in Sport mode
+     The site methods use airspeed with the Open-Meteo forecast wind for
+     each flight, as the site uses its forecast (--site-calm: no wind).
        no wind   - this model, wind assumed zero
        same day  - this model, wind estimated from the OTHER flights of
                    the same day (what you would know before flying)
@@ -159,7 +162,7 @@ def site_gauge_used(spec, energy_pct, start_pct):
     left = (-b + np.sqrt(b * b + 4 * a * target)) / (2 * a)
     return start_pct - left
 
-METHODS = ["naive", "site old", "site 27", "site new", "site fit", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
+METHODS = ["naive", "site old", "site 27", "site new", "site norm", "site both", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
 
 MIN_STEPS_PER_BATTERY = 40    # 1% steps needed for a battery's own curve
 # Batteries age: a flight this many flights (of the same battery) away
@@ -622,16 +625,40 @@ def _spec_hover(spec):
     return spec.wh * 60.0 / spec.minutes / _airspeed_factor(spec.test_speed, spec)
 
 
-SITE_FIT_MODE = "all"   # samples fit_site uses: "all", "normal" or "sport"
+SITE_WIND = True   # site methods use the Open-Meteo wind, as the site uses its forecast
 
 
-def fit_site(flights, base=None, degree=1):
+def site_wind(f):
+    """The wind the site would have planned this flight with: Open-Meteo's
+    forecast for its place and hour (calm without one, or with --site-calm)."""
+    if SITE_WIND and getattr(f, "meteo", None) is not None:
+        return tuple(f.meteo.wind)
+    return (0.0, 0.0)
+
+
+def _site_speed(f):
+    """Airspeed the site's formula sees: ground velocity minus the wind."""
+    b = f.bins
+    wn, we = site_wind(f)
+    return np.hypot(b["vn"] - wn, b["ve"] - we).to_numpy()
+
+
+def _mode_mask(b, mode):
+    if mode == "all" or not b["sport"].notna().any():
+        return np.ones(len(b), bool)
+    sport = (b["sport"] >= 0.5).to_numpy()
+    return sport if mode == "sport" else ~sport
+
+
+def fit_site(flights, base=None, degree=1, mode="all"):
     """The site's own battery formula (js/battery.js) fitted directly to
     the logs: hover power, speed curve 1 + a*x + b*x^3 (x = ground speed /
     top speed; b >= 0) and climb cost from the power; descent stays the
     site's fixed 0.9 x hover. The battery energy (100% -> 0%) and the
     gauge slope (socSlope) come from the Wh-per-% curve. Returns a spec
-    like SPEC_NEW, with the flight time that gives that hover power."""
+    like SPEC_NEW, with the flight time that gives that hover power.
+    Speed is airspeed with the flight's forecast wind (site_wind); mode
+    "normal" or "sport" fits only the samples flown in that DJI mode."""
     base = SimpleNamespace(**vars(base or SPEC_NEW))
     curve = fit_wh_curve(flights, None, degree)
     base.wh = float(energy_between(curve, 100, 0))
@@ -639,13 +666,11 @@ def fit_site(flights, base=None, degree=1):
     base.soc_slope = float(curve.coef[-2] / mid) if len(curve.coef) == 2 and mid > 0 else 0.0
     rows, ys, ws = [], [], []
     for f in flights:
-        b = f.bins
-        if SITE_FIT_MODE != "all" and b["sport"].notna().any():
-            keep = (b["sport"] >= 0.5) if SITE_FIT_MODE == "sport" else (b["sport"] < 0.5)
-            b = b[keep.to_numpy()]
-            if len(b) == 0:
-                continue
-        x = np.clip(np.hypot(b["vn"], b["ve"]).to_numpy() / base.vmax, 0, 1.2)
+        keep = _mode_mask(f.bins, mode)
+        if not keep.any():
+            continue
+        b = f.bins[keep]
+        x = np.clip(_site_speed(f)[keep] / base.vmax, 0, 1.2)
         up = b["up"].to_numpy()
         climb, desc = up > 0.3, up < -0.3
         cruise = ~(climb | desc)
@@ -656,6 +681,8 @@ def fit_site(flights, base=None, degree=1):
         rows.append(X)
         ys.append(b["P"].to_numpy())
         ws.append(np.sqrt(b["dur"].to_numpy()))
+    if not rows or sum(len(r) for r in rows) < 60:
+        return None
     X, y, w = np.vstack(rows), np.concatenate(ys), np.concatenate(ws)
     cols = [0, 1, 2, 3]
     theta = np.zeros(4)
@@ -673,13 +700,21 @@ def fit_site(flights, base=None, degree=1):
     return spec
 
 
-def spec_power(f, spec=SPEC):
-    hover = _spec_hover(spec)
-    b = f.bins
-    cruise = hover * _airspeed_factor(np.hypot(b["vn"], b["ve"]), spec)
-    climb = hover + spec.mass * 9.81 * b["up"].clip(lower=0) / spec.climb_eff
-    return np.where(b["up"] > 0.3, climb,
-                    np.where(b["up"] < -0.3, hover * spec.descent_factor, cruise))
+def spec_power(f, spec=SPEC, sport_spec=None):
+    """The site's battery formula on one flight's samples, at airspeed with
+    the forecast wind. With sport_spec, samples flown in Sport mode use it."""
+    def one(sp):
+        hover = _spec_hover(sp)
+        b = f.bins
+        cruise = hover * _airspeed_factor(_site_speed(f), sp)
+        climb = hover + sp.mass * 9.81 * b["up"].clip(lower=0) / sp.climb_eff
+        return np.where(b["up"] > 0.3, climb,
+                        np.where(b["up"] < -0.3, hover * sp.descent_factor, cruise))
+    p = one(spec)
+    if sport_spec is not None:
+        sport = _mode_mask(f.bins, "sport") & f.bins["sport"].notna().to_numpy()
+        p = np.where(sport, one(sport_spec), p)
+    return p
 
 
 # ---------------------------------------------------------------------
@@ -886,7 +921,8 @@ def leave_one_out(flights, group, degree, long_min):
         if not train:
             continue
         model = fit_model(train)
-        site_fit = fit_site(train, degree=degree)
+        site_norm = fit_site(train, degree=degree, mode="normal") or fit_site(train, degree=degree)
+        site_sport = fit_site(train, degree=degree, mode="sport")
         whp, rate, whp_src = wh_per_pct(train, f.battery)
         if not np.isfinite(whp):
             continue
@@ -900,7 +936,8 @@ def leave_one_out(flights, group, degree, long_min):
             "site old": spec_power(f, SPEC),
             "site 27": spec_power(f, SPEC_27),
             "site new": spec_power(f, SPEC_NEW),
-            "site fit": spec_power(f, site_fit),
+            "site norm": spec_power(f, site_norm),
+            "site both": spec_power(f, site_norm, site_sport),
             "no wind": predict_power(model, f, (0.0, 0.0)),
             "same day": predict_power(model, f, same_day or (0.0, 0.0)),
             "own wind": predict_power(model, f, own),
@@ -912,8 +949,11 @@ def leave_one_out(flights, group, degree, long_min):
             "site new": site_gauge_used(
                 SPEC_NEW, np.sum(power["site new"] * dur) / 3600.0 / SPEC_NEW.wh * 100.0,
                 f.soc_start),
-            "site fit": site_gauge_used(
-                site_fit, np.sum(power["site fit"] * dur) / 3600.0 / site_fit.wh * 100.0,
+            "site norm": site_gauge_used(
+                site_norm, np.sum(power["site norm"] * dur) / 3600.0 / site_norm.wh * 100.0,
+                f.soc_start),
+            "site both": site_gauge_used(
+                site_norm, np.sum(power["site both"] * dur) / 3600.0 / site_norm.wh * 100.0,
                 f.soc_start),
             "E/% flat": f.energy_wh / whp,
             "E/% curve": f.soc_start - soc_after(curve, f.soc_start, f.energy_wh),
@@ -985,22 +1025,22 @@ def _print_modes(results):
     print("FLIGHT MODE (Normal vs Sport) - leave-one-out misses, predicted minus actual")
     print("=" * 78)
     print(f"  {'flight':38s} {'sport':>6s} {'mean v':>6s} {'max v':>6s} {'actual':>6s} "
-          f"{'site new':>9s} {'site fit':>9s} {'same day':>9s}")
+          f"{'site new':>9s} {'site norm':>9s} {'site both':>9s} {'same day':>9s}")
     for r in results:
         f = r.flight
         sh = f"{100 * f.sport_share:5.0f}%" if np.isfinite(f.sport_share) else f"{'-':>6s}"
         print(f"  {f.name[:38]:38s} {sh} {f.mean_gs:6.1f} {f.max_gs:6.1f} {f.soc_drop:6.0f} "
-              + " ".join(f"{r.drop[m] - f.soc_drop:+9.1f}" for m in ("site new", "site fit", "same day")))
+              + " ".join(f"{r.drop[m] - f.soc_drop:+9.1f}" for m in ("site new", "site norm", "site both", "same day")))
     print()
     print(f"  ('Sport' flights: at least {100 * SPORT_FLIGHT_SHARE:.0f}% of the time in Sport mode)")
-    print(f"  {'group':8s} {'flights':>7s} " + " ".join(f"{m + ' bias/MAE':>19s}" for m in ("site new", "site fit", "same day")))
+    print(f"  {'group':8s} {'flights':>7s} " + " ".join(f"{m + ' bias/MAE':>19s}" for m in ("site new", "site norm", "site both", "same day")))
     for label, pick in (("Normal", lambda r: r.flight.sport_share < SPORT_FLIGHT_SHARE),
                         ("Sport", lambda r: r.flight.sport_share >= SPORT_FLIGHT_SHARE)):
         rr = [r for r in results if np.isfinite(r.flight.sport_share) and pick(r)]
         if not rr:
             continue
         cells = []
-        for m in ("site new", "site fit", "same day"):
+        for m in ("site new", "site norm", "site both", "same day"):
             err = np.array([r.drop[m] - r.flight.soc_drop for r in rr])
             cells.append(f"{np.mean(err):+8.2f} / {np.mean(np.abs(err)):5.2f}")
         print(f"  {label:8s} {len(rr):7d}    " + "     ".join(cells))
@@ -1063,21 +1103,28 @@ def report_full_model(flights, model, degree):
         print(f"  {v:4.0f} m/s: {p[0]:6.1f} W / {po:6.1f} W / {pn:6.1f} W")
     print(f"  (highest airspeed in the data: {model['va_max']:.1f} m/s)")
 
-    fit = fit_site(flights, degree=degree)
     print()
-    print("site preset fitted to all these flights (the site's own formula"
-          + ("" if SITE_FIT_MODE == "all" else f", {SITE_FIT_MODE} mode samples only") + "):")
-    print(f"  hover {fit.hover:.1f} W   curve a={fit.curve_a:.3f} b={fit.curve_b:.3f}   "
-          f"climb efficiency {fit.climb_eff:.2f}   battery {fit.wh:.2f} Wh, "
-          f"socSlope {fit.soc_slope:.4f}")
-    print(f"  -> js/drone.js: batt: {fit.wh:.1f}, ftime: {fit.minutes:.1f}, "
-          f"power: {{ curve: {{ a: {fit.curve_a:.2f}, b: {fit.curve_b:.2f} }}, "
-          f"climbEff: {fit.climb_eff:.2f}, socSlope: {fit.soc_slope:.4f} }}")
-    print("  level flight power, this fit / current site preset:")
-    for v in (0, 3, 6, 9):
-        pf = _spec_hover(fit) * _airspeed_factor(v, fit)
-        pn = _spec_hover(SPEC_NEW) * _airspeed_factor(v, SPEC_NEW)
-        print(f"    {v:2d} m/s: {pf:5.1f} W / {pn:5.1f} W")
+    print("site presets fitted to all these flights (the site's own formula, at")
+    print("airspeed with the forecast wind" + ("" if SITE_WIND else " - here calm, --site-calm") + "):")
+    fits = {}
+    for mode in ("normal", "sport"):
+        fit = fit_site(flights, degree=degree, mode=mode)
+        if fit is None:
+            print(f"  {mode}: too few samples")
+            continue
+        fits[mode] = fit
+        print(f"  {mode:6s}: hover {fit.hover:.1f} W   curve a={fit.curve_a:.3f} b={fit.curve_b:.3f}   "
+              f"climb efficiency {fit.climb_eff:.2f}   battery {fit.wh:.2f} Wh, "
+              f"socSlope {fit.soc_slope:.4f}")
+        print(f"          -> js/drone.js: batt: {fit.wh:.1f}, ftime: {fit.minutes:.1f}, "
+              f"power: {{ curve: {{ a: {fit.curve_a:.2f}, b: {fit.curve_b:.2f} }}, "
+              f"climbEff: {fit.climb_eff:.2f}, socSlope: {fit.soc_slope:.4f} }}")
+    if fits:
+        print("  level flight power: " + " / ".join(fits) + " / current site preset")
+        for v in (0, 3, 6, 9, 12):
+            cells = [f"{_spec_hover(ft) * _airspeed_factor(v, ft):5.1f} W" for ft in fits.values()]
+            pn = _spec_hover(SPEC_NEW) * _airspeed_factor(v, SPEC_NEW)
+            print(f"    {v:2d} m/s: " + " / ".join(cells) + f" / {pn:5.1f} W")
 
     print()
     print("estimated wind per day (from the power data; check against a")
@@ -1516,6 +1563,19 @@ def meteo_wind(f):
 
 
 def attach_meteo(flights):
+    """Fetch the Open-Meteo wind for every flight (f.meteo); returns the
+    set of errors met. Done before fitting, as the site methods use it."""
+    print()
+    print("fetching the Open-Meteo wind for each flight ...")
+    errors = set()
+    for f in flights:
+        f.meteo, err = meteo_wind(f)
+        if err:
+            errors.add(err)
+    return errors
+
+
+def report_meteo(flights, model, errors):
     print()
     print("=" * 78)
     print("WIND FROM OPEN-METEO")
@@ -1526,15 +1586,6 @@ def attach_meteo(flights):
     print()
     print(f"  {'flight':38s} {'height':>6s} {'Open-Meteo':>22s} {'gust':>5s} "
           f"{'estimated (day)':>22s}")
-    errors = set()
-    for f in flights:
-        f.meteo, err = meteo_wind(f)
-        if err:
-            errors.add(err)
-    return errors
-
-
-def report_meteo(flights, model, errors):
     got = [f for f in flights if f.meteo]
     for f in flights:
         est = wind_from_text(model["winds"].get(f.session, (0.0, 0.0)))
@@ -1763,7 +1814,7 @@ def save_plots(out_dir, loo_results, route_curve, reserve, flights, curve):
     if loo_results:
         fig, ax = plt.subplots(figsize=(6.5, 6))
         actual = [r.flight.soc_drop for r in loo_results]
-        for m in ("naive", "site old", "site new", "site fit", "no wind"):
+        for m in ("naive", "site old", "site new", "site both", "no wind"):
             ax.scatter(actual, [r.drop[m] for r in loo_results], label=m, s=22)
         top = max(actual + [r.drop[m] for r in loo_results for m in METHODS]) * 1.05
         ax.plot([0, top], [0, top], color="black", linewidth=0.8)
@@ -1841,9 +1892,9 @@ def parse_args():
     p.add_argument("--wind-source", choices=["estimate", "meteo"], default="estimate",
                    help="wind used in the wind-effect sections: estimated from the "
                         "power (default) or Open-Meteo's")
-    p.add_argument("--site-fit-mode", choices=["all", "normal", "sport"], default="all",
-                   help="which samples 'site fit' and the printed preset use: all (default), "
-                        "only Normal mode or only Sport mode")
+    p.add_argument("--site-calm", action="store_true",
+                   help="score and fit the site's formula in calm air instead of "
+                        "with the Open-Meteo forecast wind")
     p.add_argument("--speed-terms", type=int, choices=[2, 3], default=SPEED_TERMS,
                    help="power vs airspeed: 2 = 1 + a*x + b*x^3, b >= 0 (default, "
                         "stable); 3 = free cubic (the old fit)")
@@ -1861,19 +1912,21 @@ def parse_args():
 
 
 def main():
-    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS, WIND_SOURCE, SITE_FIT_MODE
+    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS, WIND_SOURCE, SITE_WIND
     args = parse_args()
-    SITE_FIT_MODE = args.site_fit_mode
+    SITE_WIND = not args.site_calm
     WIND_SOURCE = args.wind_source
     SPEED_TERMS = args.speed_terms
     HALF_LIFE_FLIGHTS = args.half_life
     USE_CAPACITY = not args.no_capacity
     flights = load_all(args.path, read_battery_map(args.battery_map))
 
-    model = fit_model(flights)
-    report_full_model(flights, model, args.curve_degree)
+    errors = None
     if not args.no_weather:
         errors = attach_meteo(flights)
+    model = fit_model(flights)
+    report_full_model(flights, model, args.curve_degree)
+    if errors is not None:
         if report_meteo(flights, model, errors):
             METHODS.insert(METHODS.index("own wind"), "forecast")
     battery_health(flights, args.curve_degree, SPEC_NEW.wh)
