@@ -828,7 +828,8 @@ def flight_weights(pool, target=None):
     return out
 
 
-USE_TEMP = True   # Wh per % also depends on the battery's temperature
+USE_TEMP = False  # --temp: Wh per % also depends on the battery's temperature
+                  # (off by default: it made leave-one-out worse on real logs)
 T_REF = 50.0      # C: the temperature the printed curve is for
 
 
@@ -2099,8 +2100,9 @@ def parse_args():
     p.add_argument("--fine-percent", action="store_true",
                    help="measure the partial first and last percent at take-off and "
                         "landing instead of the gauge's whole percents")
-    p.add_argument("--no-temp", action="store_true",
-                   help="don't use the battery temperature in the Wh-per-%% curve")
+    p.add_argument("--temp", action="store_true",
+                   help="also use the battery temperature in the Wh-per-%% curve "
+                        "(off by default: it scored worse on real logs)")
     p.add_argument("--no-sport-term", action="store_true",
                    help="leave the Sport-mode term out of the power model")
     p.add_argument("--no-capacity", action="store_true",
@@ -2120,7 +2122,7 @@ def main():
     global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS, WIND_SOURCE, SITE_WIND, FINE_SOC
     global USE_TEMP, USE_SPORT_TERM
     args = parse_args()
-    USE_TEMP = not args.no_temp
+    USE_TEMP = args.temp
     USE_SPORT_TERM = not args.no_sport_term
     FINE_SOC = args.fine_percent
     SITE_WIND = not args.site_calm
