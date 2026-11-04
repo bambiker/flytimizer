@@ -132,7 +132,9 @@ NEEDED = [
 FEATURES = [
     "intercept (hover)", "airspeed", "airspeed^2", "airspeed^3",
     "climb m/s", "descent m/s", "|accel| m/s2", "|yaw rate| deg/s",
+    "Sport mode",
 ]
+USE_SPORT_TERM = True   # extra watts in DJI Sport mode (more aggressive control)
 
 # The site's DJI Neo 2 preset (js/drone.js) and battery model constants
 # (js/battery.js), used as the "spec" comparison.
@@ -408,8 +410,9 @@ def soc_steps(d):
         level, before, after = soc[a], soc[a - 1], soc[b]
         if not (before > level > after) or level - after > 2 or not air[a:b].all():
             continue
-        rows.append((level, (ce[b] - ce[a]) / 3600.0, level - after))
-    return pd.DataFrame(rows, columns=["level", "wh", "drop"])
+        temp = d["temp"].iloc[a:b].mean() if "temp" in d else np.nan
+        rows.append((level, (ce[b] - ce[a]) / 3600.0, level - after, temp))
+    return pd.DataFrame(rows, columns=["level", "wh", "drop", "temp"])
 
 
 def _corr(a, b):
@@ -515,7 +518,10 @@ def load_all(path, battery_map):
     return flights
 
 
-FINE_SOC = True   # measure the partial first and last percent (see soc_partials)
+# Measure the partial first and last percent (see soc_partials). Off by
+# default: on the real logs it scored slightly worse, since DJI's gauge
+# runs fast and stalls near take-off.
+FINE_SOC = False
 
 
 def refine_soc(flights):
@@ -558,22 +564,25 @@ def read_battery_map(path):
 # Power model
 # ---------------------------------------------------------------------
 
-def design(vn, ve, up, acc, yawr, wind, va_max=None):
+def design(vn, ve, up, acc, yawr, wind, va_max=None, sport=None):
     va = np.hypot(np.asarray(vn) - wind[0], np.asarray(ve) - wind[1])
     if va_max is not None:
         va = np.minimum(va, va_max)
     x = va / SPEED_SCALE
     up = np.asarray(up, float)
+    sp = np.zeros_like(x) if sport is None else np.nan_to_num(np.asarray(sport, float))
     return np.column_stack([
         np.ones_like(x), x, x ** 2, x ** 3,
         np.clip(up, 0, None), np.clip(-up, 0, None),
         np.asarray(acc, float), np.abs(np.asarray(yawr, float)),
+        sp,
     ])
 
 
 def flight_design(f, wind, va_max=None):
     b = f.bins
-    return design(b["vn"], b["ve"], b["up"], b["acc"], b["yawr"], wind, va_max)
+    sport = b["sport"] if USE_SPORT_TERM else None
+    return design(b["vn"], b["ve"], b["up"], b["acc"], b["yawr"], wind, va_max, sport)
 
 
 def lstsq(X, y):
@@ -590,11 +599,13 @@ def fit_power(X, y):
     all of x, x^2, x^3 are free (the old behaviour)."""
     if SPEED_TERMS >= 3:
         return lstsq(X, y)
-    cols = [0, 1, 3, 4, 5, 6, 7]
+    cols = [0, 1, 3, 4, 5, 6, 7, 8]
+    if not np.any(X[:, 8]):
+        cols.remove(8)                    # no Sport samples: leave it out
     beta = np.zeros(X.shape[1])
     beta[cols] = lstsq(X[:, cols], y)
     if beta[3] < 0:
-        cols = [0, 1, 4, 5, 6, 7]
+        cols = [c for c in cols if c != 3]
         beta = np.zeros(X.shape[1])
         beta[cols] = lstsq(X[:, cols], y)
     return beta
@@ -627,7 +638,7 @@ def estimate_wind(beta, flights):
     ve = np.concatenate([f.bins["ve"].to_numpy() for f in flights])
     X = np.vstack([flight_design(f, (0.0, 0.0)) for f in flights])
     y = np.concatenate([f.bins["P"].to_numpy() for f in flights])
-    rest = X[:, [0, 4, 5, 6, 7]] @ beta[[0, 4, 5, 6, 7]]
+    rest = X[:, [0, 4, 5, 6, 7, 8]] @ beta[[0, 4, 5, 6, 7, 8]]
 
     _, wn, we = _wind_search(beta, vn, ve, rest, y, WIND_SPEEDS, WIND_DIRS)
     s0 = np.hypot(wn, we)
@@ -817,6 +828,44 @@ def flight_weights(pool, target=None):
     return out
 
 
+USE_TEMP = True   # Wh per % also depends on the battery's temperature
+T_REF = 50.0      # C: the temperature the printed curve is for
+
+
+def _poly_cols(x, degree):
+    return np.column_stack([x ** k for k in range(degree, -1, -1)])   # polyfit order
+
+
+def at_temp(curve, temp):
+    """The curve at a battery temperature: its constant term moved by the
+    fitted temperature slope (no change for a curve without one)."""
+    tc = getattr(curve, "temp_coef", 0.0)
+    if not tc or not np.isfinite(temp):
+        return curve
+    out = SimpleNamespace(**vars(curve))
+    out.coef = np.array(curve.coef, float).copy()
+    out.coef[-1] += tc * (temp - curve.t_ref)
+    out.temp = float(temp)
+    return out
+
+
+def heating_rate(flights):
+    """How fast the battery warms in flight: median C per minute, from the
+    take-off temperature to the flight's mean temperature, x 2 (the mean
+    is reached half way)."""
+    r = [2.0 * (f.temp - f.temp_start) / (f.duration_s / 60.0) for f in flights
+         if np.isfinite(f.temp) and np.isfinite(f.temp_start) and f.duration_s >= 60]
+    return float(np.median(r)) if r else 0.0
+
+
+def predicted_temp(flights, f):
+    """Battery temperature a flight is expected to average, from what is known
+    before it: its take-off temperature, its length, the pool's heating rate."""
+    if not np.isfinite(getattr(f, "temp_start", np.nan)):
+        return np.nan
+    return f.temp_start + heating_rate(flights) * (f.duration_s / 60.0) / 2.0
+
+
 def fit_wh_curve(flights, battery=None, degree=1, target=None):
     """Wh per 1% as a polynomial in the battery %, fitted to the 1% steps.
     Uses the battery's own steps when it has enough of them. Recent
@@ -839,22 +888,37 @@ def fit_wh_curve(flights, battery=None, degree=1, target=None):
     parts = []
     for f in pool:
         if len(f.steps):
-            parts.append(f.steps.assign(fw=weights[id(f)], cap=cap_of(f)))
+            parts.append(f.steps.assign(fw=weights[id(f)], cap=cap_of(f), bat=f.battery))
     st = pd.concat(parts, ignore_index=True)
 
     # Mid-point of each step: level L covers the charge from L down to L-1.
     x = st["level"].to_numpy() - 0.5 * st["drop"].to_numpy()
     y = (st["wh"] / st["drop"] / st["cap"]).to_numpy()
     w = (st["drop"] * st["fw"]).to_numpy()
+    t = st["temp"].to_numpy(float) if "temp" in st else np.full(len(x), np.nan)
+    use_t = USE_TEMP and np.isfinite(t).mean() >= 0.8 and np.nanstd(t) > 1.0
+    tt = np.where(np.isfinite(t), t, np.nanmean(t) if use_t else T_REF) - T_REF
+    X = _poly_cols(x, degree)
+    if use_t:
+        X = np.column_stack([X, tt])
+    # One offset per extra battery, so a battery that is both bigger and
+    # flown hotter doesn't pass for a temperature effect (the whole-flight
+    # scaling below sets the level afterwards).
+    bats = sorted(st["bat"].unique())
+    if len(bats) > 1:
+        X = np.column_stack([X] + [(st["bat"] == b).to_numpy(float) for b in bats[1:]])
     keep = np.ones(len(x), bool)
-    for _ in range(2):   # drop stalled-gauge outliers, then refit
-        coef = np.polyfit(x[keep], y[keep], degree, w=np.sqrt(w[keep]))
-        res = y - np.polyval(coef, x)
+    for _ in range(3):   # drop stalled-gauge outliers, then refit
+        sw = np.sqrt(w[keep])
+        theta = lstsq(X[keep] * sw[:, None], y[keep] * sw)
+        res = y - X @ theta
         mad = 1.4826 * np.median(np.abs(res[keep] - np.median(res[keep])))
         keep = np.abs(res) <= 3.5 * max(mad, 1e-4)
-    coef = np.polyfit(x[keep], y[keep], degree, w=np.sqrt(w[keep]))
+    coef = theta[:degree + 1]
+    tc = float(theta[degree + 1]) if use_t else 0.0
     curve = SimpleNamespace(coef=coef, lo=float(x.min()), hi=float(x.max()),
-                            n=int(keep.sum()), src=src, cap=np.nan)
+                            n=int(keep.sum()), src=src, cap=np.nan,
+                            temp_coef=tc, t_ref=T_REF, temp=T_REF)
 
     # The steps give the curve's shape, but not its level: dropping the
     # outliers removes the long steps where the gauge stalled and keeps
@@ -862,10 +926,11 @@ def fit_wh_curve(flights, battery=None, degree=1, target=None):
     # Scale the curve so it matches the energy of whole flights.
     whole = [f for f in pool if f.soc_drop >= MIN_SOC_DROP_FOR_WH]
     if whole:
-        predicted = sum(weights[id(f)] * energy_between(curve, f.soc_start, f.soc_end)
+        predicted = sum(weights[id(f)] * energy_between(at_temp(curve, f.temp), f.soc_start, f.soc_end)
                         for f in whole)
         actual = sum(weights[id(f)] * f.energy_wh / cap_of(f) for f in whole)
         curve.coef = coef * actual / predicted
+        curve.temp_coef = tc * actual / predicted
 
     if use_cap:
         if target is not None and np.isfinite(target.full_cap):
@@ -874,10 +939,18 @@ def fit_wh_curve(flights, battery=None, degree=1, target=None):
             ref = own if own else pool
             cap = max(ref, key=lambda f: (f.seq, f.name)).full_cap
         curve.coef = curve.coef * cap
+        curve.temp_coef = curve.temp_coef * cap
         curve.cap = cap
         curve.src += f", scaled to {cap:.0f} mAh capacity"
     if HALF_LIFE_FLIGHTS > 0:
         curve.src += f", recent flights weighted (half-life {HALF_LIFE_FLIGHTS:g})"
+    if curve.temp_coef:
+        mid = float(np.polyval(curve.coef, 50.0))
+        curve.src += (f", {100 * 10 * curve.temp_coef / mid:+.1f}% per +10 C battery "
+                      f"(curve at {T_REF:g} C)")
+        if target is not None:
+            # before the flight: take-off temperature and the usual warming
+            curve = at_temp(curve, predicted_temp(pool, target))
     return curve
 
 
@@ -2023,9 +2096,13 @@ def parse_args():
     p.add_argument("--speed-terms", type=int, choices=[2, 3], default=SPEED_TERMS,
                    help="power vs airspeed: 2 = 1 + a*x + b*x^3, b >= 0 (default, "
                         "stable); 3 = free cubic (the old fit)")
-    p.add_argument("--whole-percent", action="store_true",
-                   help="keep the gauge's whole percents at take-off and landing "
-                        "(don't measure the partial first and last percent)")
+    p.add_argument("--fine-percent", action="store_true",
+                   help="measure the partial first and last percent at take-off and "
+                        "landing instead of the gauge's whole percents")
+    p.add_argument("--no-temp", action="store_true",
+                   help="don't use the battery temperature in the Wh-per-%% curve")
+    p.add_argument("--no-sport-term", action="store_true",
+                   help="leave the Sport-mode term out of the power model")
     p.add_argument("--no-capacity", action="store_true",
                    help="ignore the battery-reported capacity (to compare)")
     p.add_argument("--long-min", type=float, default=25.0,
@@ -2041,8 +2118,11 @@ def parse_args():
 
 def main():
     global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS, WIND_SOURCE, SITE_WIND, FINE_SOC
+    global USE_TEMP, USE_SPORT_TERM
     args = parse_args()
-    FINE_SOC = not args.whole_percent
+    USE_TEMP = not args.no_temp
+    USE_SPORT_TERM = not args.no_sport_term
+    FINE_SOC = args.fine_percent
     SITE_WIND = not args.site_calm
     WIND_SOURCE = args.wind_source
     SPEED_TERMS = args.speed_terms
