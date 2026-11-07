@@ -2,45 +2,27 @@
 // with no point on the map yet, the person's current location) right
 // now, without planning a route - predicted navigation satellites and
 // the Kp index, the highest height today's wind allows for this drone,
-// and the round-trip range in every direction.
+// and the round-trip range in every direction. The engine works them
+// out (engine-client.js); this draws the card.
 
 import { track } from './analytics.js';
-import { BATTERY_RESERVE_PCT, readBatteryModel } from './battery.js';
-import { CANDIDATE_HEIGHTS_M, forecastAt, readFlightInputs, roundTripRange, windByHeight } from './calc.js';
-import { hourIndexNow, lat1, lng1, marker, useCurrentLocationAsStart } from './core.js';
-import { kpIndexNow, kpLabel, visibleSatellites } from './gnss.js';
+import { readBatteryFields } from './battery.js';
+import { readFlightInputs } from './calc.js';
+import { lat1, lng1, marker, useCurrentLocationAsStart } from './core.js';
+import { compute } from './engine-client.js';
+import { BATTERY_RESERVE_PCT } from './labels.js';
 import { checkGpsCountry, gpsCheckHtml } from './spoof.js';
 import { currentMission } from './mission.js';
 import { hideNotice, showNotice } from './notice.js';
-import { MAX_FLIGHT_ALTITUDE_M } from './osm.js';
-import { compassWord, drawRangeOutline, rangeExtremes } from './range.js';
-import { altitudePermitChecked, rulesForLocation } from './rules.js';
+import { compassWord, drawRangeOutline } from './range.js';
+import { altitudePermitChecked } from './rules.js';
 import { chooseUnits, escapeHtml, fmtDist, fmtLen, fmtSpeed } from './units.js';
-import { getJSON } from './weather.js';
 
-// The highest height (m above ground) the wind allows, climbing up
-// from the lowest: the estimated gust stays under the drone's rated
-// wind resistance and the wind is slower than the drone, so it can
-// still make headway in any direction. Also says what stops it going
-// higher. { ceilingM (null if even the lowest height is too windy),
-// limit: 'gust' | 'speed' | 'legal' | 'top', at: index of the first
-// height that fails, w }
-export function windCeiling(heights, wx, inp, legalCapM){
-  var w = windByHeight(heights, wx, 0, inp);
-  var dragF = parseFloat(inp.drag) || 1;
-  // Headway at the mission speed (Normal mode), the most a waypoint
-  // mission flies.
-  var speed = Math.min(inp.speedhorizontal, inp.speedhorizontalback);
-  var ceiling = null;
-  for (var i = 0; i < heights.length; i++){
-    var limit = heights[i] > legalCapM + 0.01 ? 'legal'
-      : !w.windResOk[i] ? 'gust'
-      : w.ws[i] * dragF >= speed ? 'speed'
-      : null;
-    if (limit) return { ceilingM: ceiling, limit: limit, at: i, w: w };
-    ceiling = heights[i];
-  }
-  return { ceilingM: ceiling, limit: 'top', at: -1, w: w };
+export function kpLabel(kp){
+  if (kp >= 7) return 'severe geomagnetic storm — GPS may be unreliable';
+  if (kp >= 5) return 'geomagnetic storm — GPS accuracy may be reduced';
+  if (kp >= 4) return 'active — mostly fine, watch the GPS signal';
+  return 'quiet — no effect on GPS expected';
 }
 
 function whereNow(){
@@ -80,16 +62,23 @@ export async function checkConditions(){
   btn.textContent = 'Checking…';
   try {
     var now = new Date();
+    var mission = currentMission();
+    var inp = readFlightInputs(mission);
     var results = await Promise.all([
-      getJSON().catch(function(err){ console.warn('Forecast lookup failed:', err); return null; }),
-      rulesForLocation(place.lat, place.lng),
-      visibleSatellites(place.lat, place.lng, now).catch(function(){ return null; }),
-      kpIndexNow(),
+      compute('conditions', { place: { lat: place.lat, lng: place.lng }, mission: mission, inp: inp, battery: readBatteryFields(),
+                              altPermit: altitudePermitChecked(), now: now.getTime() }),
       place.mine ? checkGpsCountry(place.lat, place.lng).catch(function(){ return null; }) : null
     ]);
-    var json = results[0], rules = results[1], sats = results[2], kp = results[3], gpsCheck = results[4];
-    chooseUnits(rules);
-    var legalCapM = altitudePermitChecked() ? MAX_FLIGHT_ALTITUDE_M : Math.min(MAX_FLIGHT_ALTITUDE_M, rules.profile.maxAglM);
+    var C = results[0], gpsCheck = results[1];
+    if (C.error){
+      track('conditions_check', { result: C.error === 'busy' ? 'engine_busy' : 'engine_error' });
+      showNotice('searchNotice', C.error === 'busy'
+        ? 'Too many calculations from your connection in the last few minutes. Please wait a little and try again.'
+        : 'Couldn’t reach Flytimizer’s calculation server. It may be starting up - trying again in a minute usually works.');
+      return;
+    }
+    var sats = C.sats, kp = C.kp;
+    chooseUnits(C.rules);
     var html = '';
     if (gpsCheck){
       html += row('GPS position check', gpsCheckHtml(gpsCheck, place.accuracy) +
@@ -105,12 +94,10 @@ export async function checkConditions(){
       : 'Couldn’t load the satellite orbits right now.');
     if (kp !== null) html += row('GPS space weather', 'Kp <strong>' + kp.toFixed(0) + '</strong>: ' + kpLabel(kp));
 
-    var mission = currentMission();
-    var inp = readFlightInputs(mission);
-    var heights = CANDIDATE_HEIGHTS_M.slice();
-    if (json){
-      var wx = forecastAt(json, Math.min(hourIndexNow(json.hourly.time), json.hourly.time.length - 1));
-      var c = windCeiling(heights, wx, inp, legalCapM);
+    var heights = C.heights;
+    if (C.forecast){
+      var c = C.ceiling;
+      c.w = { ws: c.ws, estgust: c.estgust };
       var top;
       if (c.ceilingM === null){
         top = '<strong>Too windy to fly</strong> even at ' + fmtLen(heights[0]) + ': ' +
@@ -126,15 +113,9 @@ export async function checkConditions(){
       }
       html += row('Highest height in this wind', top);
 
-      var battModel = readBatteryModel();
-      var payloadOut = inp.payloadOutCoef;
-      var ranges = roundTripRange({
-        heights: heights, legalOk: heights.map(function(h){ return h <= legalCapM + 0.01; }), wx: wx, inp: inp, battModel: battModel,
-        payloadOut: payloadOut, payloadBack: inp.payloadBackCoef, temperatureC: wx.temperatureC, mission: mission
-      });
-      var ext = rangeExtremes(ranges);
-      drawRangeOutline(place.lat, place.lng, ranges, true);
-      html += row('Farthest round trip', !battModel ? 'Enter the drone’s battery figures to see its range.'
+      var ext = C.rangeExt;
+      drawRangeOutline(place.lat, place.lng, C.ranges, true);
+      html += row('Farthest round trip', !C.battery ? 'Enter the drone’s battery figures to see its range.'
         : !ext ? 'Not enough battery for a round trip in any direction right now.'
         : 'Up to <strong>' + fmtDist(ext.far.distM) + '</strong> toward the ' + compassWord(ext.far.bearing) +
           (ext.far.distM - ext.near.distM > 0.05 * ext.far.distM ? ', ' + fmtDist(ext.near.distM) + ' toward the ' + compassWord(ext.near.bearing) : ' in every direction') +
@@ -148,7 +129,7 @@ export async function checkConditions(){
       ', ' + escapeHtml(when) + ' — ' + escapeHtml(document.getElementById('droneModel').selectedOptions[0].textContent) + '</p>' +
       '<dl>' + html + '</dl>';
     card.hidden = false;
-    track('conditions_check', { result: json ? 'ok' : 'no_forecast', satellites: sats ? sats.total : -1, kp: kp === null ? -1 : kp });
+    track('conditions_check', { result: C.forecast ? 'ok' : 'no_forecast', satellites: sats ? sats.total : -1, kp: kp === null ? -1 : kp });
   } finally {
     btn.disabled = false;
     btn.textContent = label;

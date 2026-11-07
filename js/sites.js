@@ -10,7 +10,7 @@
 // avoided. Kept in the hidden #skipSites field as a comma list, so it's
 // remembered and shared like the other settings.
 
-import { HAZARD_TYPE_LABEL } from './osm.js';
+import { HAZARD_TYPE_LABEL } from './labels.js';
 
 export var OPTIONAL_SITE_TYPES = ['school', 'kindergarten', 'playground', 'hospital', 'nursing_home', 'university', 'power', 'heliport', 'embassy'];
 

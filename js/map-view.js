@@ -1,7 +1,7 @@
 // The Leaflet map and its layers (restricted areas, buildings, route).
 
 import { addMarker } from './core.js';
-import { HAZARD_TYPE_LABEL } from './osm.js';
+import { HAZARD_TYPE_LABEL } from './labels.js';
 import { escapeHtml, fmtDist, fmtLen } from './units.js';
 
 // Set by initMap(), which app.js calls once at start-up.

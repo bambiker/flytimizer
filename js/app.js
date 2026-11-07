@@ -12,9 +12,7 @@ import { checkConditions, hideConditions } from './conditions.js';
 import { clearMarkers, getLocation, searchLocation, setOnDestinationPlaced } from './core.js';
 import { clearRouteLayers, initMap } from './map-view.js';
 import { onMissionChange } from './mission.js';
-import { osmHooks } from './osm.js';
 import { wakeEngine } from './engine-client.js';
-import { Progress } from './progress.js';
 import { addToHomeScreen, initInstall } from './install.js';
 import { hideNotice } from './notice.js';
 import { clearPlans, selectPlan } from './plans.js';
@@ -24,8 +22,6 @@ import { initSiteSettings } from './sites.js';
 import { resetForecastOffset, setForecastOffset } from './weather.js';
 import { downloadWPML } from './wpml.js';
 
-// A busy map server's retry note goes in the progress bar.
-osmHooks.retrying = function(msg){ Progress.retrying(msg); };
 // Wake the calculation server now, so it's up when it's needed.
 wakeEngine();
 

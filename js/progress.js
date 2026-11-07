@@ -1,7 +1,6 @@
 // Progress bar for the route calculation.
 
 import { getDistanceFromLatLon } from './core.js';
-import { BUILDING_CORRIDOR_DISTANCE_FRACTION, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_CORRIDOR_MAX_HALF_WIDTH_M, HAZARD_CORRIDOR_DISTANCE_FRACTION, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_CORRIDOR_MAX_HALF_WIDTH_M, bboxAreaKm2, corridorHalfWidth, polygonBBox, routeCorridorPolygon } from './osm.js';
 
 // ---------------------------------------------------------------
 // Progress bar
@@ -28,18 +27,17 @@ export function saveTimingFactors(f){
   try { localStorage.setItem(PROGRESS_FACTORS_KEY, JSON.stringify(f)); } catch (e){}
 }
 
-// Rough first guess, in seconds, before any learning: restricted areas
-// scale with the area of the box we query, buildings with the area of
-// the corridor around the route (buildings are far more numerous).
-export function estimateLookupSeconds(lat1, lng1, lat2, lng2, bearingDeg){
+// Rough first guess, in seconds, before any learning: the lookups grow
+// with the area searched around the route, which grows with its length.
+export function estimateLookupSeconds(lat1, lng1, lat2, lng2){
   var distM = getDistanceFromLatLon(lat1, lng1, lat2, lng2);
-  var hazHalf = corridorHalfWidth(distM, HAZARD_CORRIDOR_HALF_WIDTH_M, HAZARD_CORRIDOR_MAX_HALF_WIDTH_M, HAZARD_CORRIDOR_DISTANCE_FRACTION);
-  var hazAreaKm2 = bboxAreaKm2(polygonBBox(routeCorridorPolygon(lat1, lng1, lat2, lng2, bearingDeg, hazHalf)));
-  var bldHalf = corridorHalfWidth(distM, BUILDING_CORRIDOR_HALF_WIDTH_M, BUILDING_CORRIDOR_MAX_HALF_WIDTH_M, BUILDING_CORRIDOR_DISTANCE_FRACTION);
-  var bldAreaKm2 = (2 * bldHalf * Math.max(distM, 2 * bldHalf)) / 1e6;
+  function areaKm2(minHalf, maxHalf, perM){
+    var half = Math.min(maxHalf, Math.max(minHalf, perM * distM));
+    return 2 * half * (distM + 2 * half) / 1e6;
+  }
   return {
-    hazards: Math.min(45, 1.5 + 0.6 * hazAreaKm2),
-    buildings: Math.min(60, 1.5 + 3 * bldAreaKm2)
+    hazards: Math.min(45, 1.5 + 0.6 * areaKm2(220, 700, 0.06)),
+    buildings: Math.min(60, 1.5 + 3 * areaKm2(100, 500, 0.05))
   };
 }
 
