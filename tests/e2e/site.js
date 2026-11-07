@@ -36,6 +36,10 @@
 //   country       ISO code Nominatim reports (default 'il')
 //   imperial      saved unit preference
 //   places        place-search results: { 'query text': [lat, lng] }
+//   engine        the calculation runs on the engine server (faked: the
+//                 engine itself, answering in the server's format):
+//                 'ok', 'down' (unreachable) or 'busy' (HTTP 429);
+//                 default: in the page
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeGhslTiff, rangeOf } from '../ghsl-fixture.js';
@@ -43,6 +47,7 @@ import { makeGhslTiff, rangeOf } from '../ghsl-fixture.js';
 const ROOT = path.join(import.meta.dirname, '..', '..');
 const MODULES = path.join(ROOT, 'node_modules');
 const SITE = 'https://flytimizer.test';
+const ENGINE = 'https://engine.flytimizer.test';
 const TYPES = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.xml': 'application/xml' };
 
 const json = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
@@ -202,6 +207,30 @@ export async function openSite(page, from, to, query, sc = {}){
 
   await ctx.route(SITE + '/data/urban_wind_model.json', r => sc.urbanModel ? json(r, sc.urbanModel) : r.fulfill({ status: 404 }));
   await ctx.route(SITE + '/data/urban_fine_model.json', r => sc.fineModel ? json(r, sc.fineModel) : r.fulfill({ status: 404 }));
+
+  if (sc.engine){
+    await ctx.addInitScript(url => { window.FLYTIMIZER_ENGINE_URL = url; }, ENGINE);
+    await ctx.route(ENGINE + '/**', async r => {
+      const url = new URL(r.request().url());
+      if (sc.engine === 'down') return r.abort();
+      if (url.pathname === '/health') return r.fulfill({ status: 200, body: 'ok', headers: { 'Access-Control-Allow-Origin': '*' } });
+      if (sc.engine === 'busy') return r.fulfill({ status: 429, body: 'Too many', headers: { 'Access-Control-Allow-Origin': '*' } });
+      // The engine answers in the server's format (one JSON line per message).
+      const lines = await page.evaluate(async body => {
+        const engine = await import('/js/engine.js');
+        const out = [];
+        const send = m => out.push(engine.encodeResult(m));
+        let finish;
+        const finished = new Promise(res => { finish = res; });
+        const req = engine.decodeResult(body);
+        const res = await engine.computePlan(req, { stage: key => send({ t: 'stage', key }), onPeople: u => send({ t: 'people', u }), done: x => finish(x) });
+        send({ t: 'result', r: res });
+        send({ t: 'done', r: (res.error || req.points !== 2) ? null : await finished });
+        return out.join('\n') + '\n';
+      }, r.request().postData());
+      r.fulfill({ status: 200, body: lines, headers: { 'Content-Type': 'application/x-ndjson', 'Access-Control-Allow-Origin': '*' } });
+    });
+  }
 
   const q = 'from=' + from.join(',') + (to ? '&to=' + to.join(',') : '') + (query ? '&' + query : '');
   await page.goto(SITE + '/index.html?' + q);

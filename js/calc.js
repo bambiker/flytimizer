@@ -6,7 +6,8 @@
 
 import { track } from './analytics.js';
 import { BATTERY_RESERVE_PCT, DESCENT_POWER_FACTOR, SPEC_FLIGHT_TIME_FACTOR, batteryPct, climbEfficiency, coldCapacityFactor, energyPctAbove, gaugeUsedPct, fmtPct, legEnergyFromTiming, profileTiming, readBatteryFields } from './battery.js';
-import { computePlan, decodeResult, encodeResult } from './engine.js';
+import { ENGINE_URL, remoteComputePlan } from './engine-client.js';
+import { decodeResult, encodeResult } from './engine-codec.js';
 import { MIN_GROUND_SPEED_MS, airspeedFor, formatDuration, getDistanceFromLatLon, groundSpeed, interpDir, lat1, lat2, lng1, lng2, marker, trueBearing } from './core.js';
 import { markUnsafe, payloadCheck, payloadFactors } from './drone.js';
 import { renderHazardsAndRoute } from './map-view.js';
@@ -1014,16 +1015,29 @@ export async function calcHeight(gen) {
     // until the result is drawn they wait here.
     let resolveCalcDone;
     const calcDone = new Promise(function(resolve){ resolveCalcDone = resolve; });
-    const raw = await computePlan(req, {
+    const hooks = {
       stage: function(key){ if (!stale()) Progress.stage(key); },
+      retrying: function(msg){ if (!stale()) Progress.retrying(msg); },
       stale: stale,
       onPeople: function(u){ calcDone.then(function(done){ if (done) done.onPeople(u); }); },
       done: function(r){ if (r) track('people_under_route', { people: Math.round(r.people) }); }
-    });
-    if (stale() || raw.stale){ resolveCalcDone(null); return 'stale'; }
-    // What a server would send: JSON, so nothing the page draws depends
+    };
+    // On the engine server, or (with no ENGINE_URL: tests, local work)
+    // here, through JSON all the same, so nothing the page draws depends
     // on objects that can't travel.
-    const R = decodeResult(encodeResult(raw));
+    const R = ENGINE_URL ? await remoteComputePlan(req, hooks)
+      : decodeResult(encodeResult(await (await import('./engine.js')).computePlan(req, hooks)));
+    if (stale() || R.stale){ resolveCalcDone(null); return 'stale'; }
+    if (R.error === 'engine' || R.error === 'busy'){
+      resolveCalcDone(null);
+      showNotice('calcNotice', R.error === 'busy'
+        ? 'Too many calculations from your connection in the last few minutes. Please wait a little and try again.'
+        : 'Couldn’t reach Flytimizer’s calculation server. It may be starting up - trying again in a minute usually works.',
+        { action: { label: 'Try again', name: 'calculate' } });
+      Progress.finish(false);
+      track('calculate', { result: R.error === 'busy' ? 'engine_busy' : 'engine_error' });
+      return false;
+    }
     if (R.error === 'forecast'){
       resolveCalcDone(null);
       showNotice('calcNotice', "Couldn't load the wind forecast from Open-Meteo, so no heights can be worked out right now. The weather service may be busy - trying again in a minute usually works.",

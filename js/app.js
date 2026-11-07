@@ -13,6 +13,7 @@ import { clearMarkers, getLocation, searchLocation, setOnDestinationPlaced } fro
 import { clearRouteLayers, initMap } from './map-view.js';
 import { onMissionChange } from './mission.js';
 import { osmHooks } from './osm.js';
+import { wakeEngine } from './engine-client.js';
 import { Progress } from './progress.js';
 import { addToHomeScreen, initInstall } from './install.js';
 import { hideNotice } from './notice.js';
@@ -25,6 +26,8 @@ import { downloadWPML } from './wpml.js';
 
 // A busy map server's retry note goes in the progress bar.
 osmHooks.retrying = function(msg){ Progress.retrying(msg); };
+// Wake the calculation server now, so it's up when it's needed.
+wakeEngine();
 
 // "Start over": clears the points, the route drawn on the map and the
 // result, and the route from the address bar. Drone settings stay.

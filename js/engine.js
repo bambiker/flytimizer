@@ -341,16 +341,5 @@ export async function computePlan(req, hooks){
   return result;
 }
 
-// JSON can't carry Infinity or NaN, which the plans use for "can't".
-export function encodeResult(x){
-  return JSON.stringify(x, function(k, v){
-    if (typeof v === 'number' && !isFinite(v)) return { $n: String(v) };
-    return v;
-  });
-}
-export function decodeResult(s){
-  return JSON.parse(s, function(k, v){
-    if (v && typeof v === 'object' && typeof v.$n === 'string' && Object.keys(v).length === 1) return Number(v.$n);
-    return v;
-  });
-}
+// How results travel as JSON (also used by the page).
+export { decodeResult, encodeResult } from './engine-codec.js';

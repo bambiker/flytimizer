@@ -829,6 +829,34 @@ test('Start over is only offered once there is a point on the map', async ({ pag
   await expect(page.getByRole('button', { name: 'Start over' })).toBeHidden();
 });
 
+test('on the engine server: the result, the people under the route and the route over fewer people, as in the page', async ({ page }) => {
+  const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
+  const population = (lat, lng) => Math.abs(lat - mid[0]) < 0.003 && Math.abs(lng - mid[1]) < 0.003 ? 1500 : 1;
+  const plans = {};
+  for (const engine of [undefined, 'ok']){
+    await page.context().clearCookies();
+    await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [], population, flatGround: true, engine });
+    await waitForResult(page);
+    await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+    await expect(page.locator('#peopleInfo')).toContainText('A route over fewer people');
+    await expect(page.locator('#planPeopleBtn')).toContainText(/Fewer people.*%/);
+    plans[engine || 'page'] = await page.locator('#planTabs').textContent();
+    await page.context().unrouteAll({ behavior: 'ignoreErrors' });
+  }
+  expect(plans.ok).toBe(plans.page);
+});
+
+test('when the engine server can\'t be reached, or is refusing calculations for now, the page says so with Try again', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { engine: 'down' });
+  const notice = page.locator('#calcNotice');
+  await expect(notice).toContainText('Couldn’t reach Flytimizer’s calculation server', { timeout: 45000 });
+  await expect(notice.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(page.locator('#result')).toBeHidden();
+  await page.context().unrouteAll({ behavior: 'ignoreErrors' });
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { engine: 'busy' });
+  await expect(notice).toContainText('Too many calculations from your connection', { timeout: 45000 });
+});
+
 test('a failed wind forecast is reported, with Try again', async ({ page }) => {
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { forecastFail: true });
   const notice = page.locator('#calcNotice');
