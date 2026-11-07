@@ -40,12 +40,17 @@ What it does
        site new  - the site's current Neo 2 preset (its formula fitted to
                    21 flights), with the gauge's last percents holding
                    less energy (socSlope), from the flight's start %
-       site fit  - the site's own formula with its hover power, speed
-                   curve and climb cost fitted to the OTHER flights' power
-                   (what a new preset from these logs would score)
+       site norm - the site's own formula fitted to the OTHER flights'
+                   Normal-mode samples (what a new Normal preset would score)
+       site both - the same, with a second fit for Sport-mode samples used
+                   wherever the flight was in Sport mode
+     The site methods use airspeed with the Open-Meteo forecast wind for
+     each flight, as the site uses its forecast (--site-calm: no wind).
        no wind   - this model, wind assumed zero
        same day  - this model, wind estimated from the OTHER flights of
                    the same day (what you would know before flying)
+       forecast  - this model, with the Open-Meteo forecast wind at the
+                   flight's place, hour and height (calm if none)
        own wind  - this model, wind fitted on the test flight itself
                    (an upper bound: not available before the flight)
        E/% flat  - the TRUE energy of the flight converted with one fixed
@@ -58,9 +63,10 @@ What it does
 7. Wind effects: for each flight, how much battery the (estimated) wind
    cost compared with calm air and its worst 10 seconds, and how far the
    drone drifted, by GPS, while it was hovering. Then the same summed
-   over each whole flight (battery, and how far the wind would have
-   carried the drone - sideways, head-on and while hovering), the flight
-   where each is largest, and cumulative plots with --plot-dir.
+   over each whole flight: battery, and the distance flown over the
+   ground against the distance flown through the air (the wind's extra
+   flying - not drift: the drone held its track), the flight where each
+   is largest, and cumulative plots with --plot-dir.
 
 Usage
 -----
@@ -89,6 +95,9 @@ import json
 import os
 import re
 import sys
+import urllib.parse
+import urllib.request
+from datetime import date as _date
 from types import SimpleNamespace
 
 import numpy as np
@@ -123,7 +132,9 @@ NEEDED = [
 FEATURES = [
     "intercept (hover)", "airspeed", "airspeed^2", "airspeed^3",
     "climb m/s", "descent m/s", "|accel| m/s2", "|yaw rate| deg/s",
+    "Sport mode",
 ]
+USE_SPORT_TERM = True   # extra watts in DJI Sport mode (more aggressive control)
 
 # The site's DJI Neo 2 preset (js/drone.js) and battery model constants
 # (js/battery.js), used as the "spec" comparison.
@@ -154,7 +165,7 @@ def site_gauge_used(spec, energy_pct, start_pct):
     left = (-b + np.sqrt(b * b + 4 * a * target)) / (2 * a)
     return start_pct - left
 
-METHODS = ["naive", "site old", "site 27", "site new", "site fit", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
+METHODS = ["naive", "site old", "site 27", "site new", "site norm", "site both", "no wind", "same day", "own wind", "E/% flat", "E/% curve"]
 
 MIN_STEPS_PER_BATTERY = 40    # 1% steps needed for a battery's own curve
 # Batteries age: a flight this many flights (of the same battery) away
@@ -213,14 +224,14 @@ def flight_start(raw, name):
     """When the flight started, from the file name (..._2026-10-14_[17-05-39])
     or the log's dateTime; used to put each battery's flights in order."""
     m = re.search(r"(\d{4}-\d{2}-\d{2})_\[(\d{2})-(\d{2})-(\d{2})\]", name)
-    if m:
-        return pd.Timestamp(f"{m.group(1)} {m.group(2)}:{m.group(3)}:{m.group(4)}")
+    if m:   # the phone's local time
+        return pd.Timestamp(f"{m.group(1)} {m.group(2)}:{m.group(3)}:{m.group(4)}"), False
     if DATETIME_COL in raw.columns:
-        parsed = pd.to_datetime(raw[DATETIME_COL], errors="coerce")
+        parsed = pd.to_datetime(raw[DATETIME_COL], errors="coerce", utc=True)
         parsed = parsed[parsed.dt.year > 2000]
-        if len(parsed):
-            return pd.Timestamp(parsed.iloc[0]).tz_localize(None)
-    return pd.NaT
+        if len(parsed):   # UTC
+            return pd.Timestamp(parsed.iloc[0]).tz_localize(None), True
+    return pd.NaT, False
 
 
 def _battery_column_median(raw, *needles):
@@ -281,6 +292,13 @@ def load_flight(path, battery_map):
         "lat": num(raw, "OSD.latitude"),
         "lon": num(raw, "OSD.longitude"),
         "air": ~ground.isin(["true", "1", "yes"]),
+        # DJI's flight mode: GPS_SPORT in Sport mode, GPS_ATTI / GPS_NORMAL
+        # etc. otherwise (nan when the log has no OSD.flycState)
+        "sport": (raw["OSD.flycState"].astype(str).str.upper().str.contains("SPORT")
+                  .astype(float) if "OSD.flycState" in raw.columns else np.nan),
+        # ActiveTrack / subject tracking (camera and vision working harder)
+        "track": (raw["OSD.flycState"].astype(str).str.upper().str.contains("TRACK")
+                  .astype(float) if "OSD.flycState" in raw.columns else np.nan),
     })
     d = d.dropna(subset=["t", "vn", "ve", "vz", "h", "P"])
     d = d.sort_values("t").drop_duplicates("t")
@@ -309,6 +327,7 @@ def load_flight(path, battery_map):
         vz=("vz", "mean"), h=("h", "mean"), P=("P", "mean"),
         soc=("soc", "mean"), lat=("lat", "mean"), lon=("lon", "mean"),
         ys=("ys", "mean"), yc=("yc", "mean"), air=("airf", "mean"),
+        sport=("sport", "mean"),
         dur=("dur", "sum"), eJ=("eJ", "sum"),
     )
     b = b[b["dur"] > 0].reset_index(drop=True)
@@ -326,6 +345,7 @@ def load_flight(path, battery_map):
     soc = soc[soc > 0]
     soc_start = float(soc.iloc[0]) if len(soc) else np.nan
     soc_end = float(soc.iloc[-1]) if len(soc) else np.nan
+    partial = soc_partials(d)
 
     return SimpleNamespace(
         name=name,
@@ -336,8 +356,12 @@ def load_flight(path, battery_map):
         axis_check=_gps_axis_check(b),
         soc_start=soc_start,
         soc_end=soc_end,
+        partial=partial,
         steps=soc_steps(d),
-        start=flight_start(raw, name),
+        temp_start=(float(d["temp"].dropna().iloc[0]) if d["temp"].notna().any() else np.nan),
+        track_share=float(d.loc[d["air"], "track"].mean()) if d["track"].notna().any() else np.nan,
+        start=flight_start(raw, name)[0],
+        start_utc=flight_start(raw, name)[1],
         full_cap=_battery_column_median(raw, "fullcap", "fullchargecap")[0],
         cycles=_battery_column_median(raw, "cycle", "loopnum")[0],
         cap_cols=[c for c in (_battery_column_median(raw, "fullcap", "fullchargecap")[1],
@@ -345,6 +369,27 @@ def load_flight(path, battery_map):
         temp=float(d["temp"].mean()) if d["temp"].notna().any() else np.nan,
         serial_cols=battery_serial_columns(raw.columns),
     )
+
+
+def soc_partials(d):
+    """The gauge shows whole percents, so a flight that reads 99 -> 20 used
+    anywhere from 78 to 80 %. The moments the reading changes are exact,
+    though: before its first change the drone used the part of the first
+    percent that was left at take-off, and after its last change part of
+    the last percent. Returns the energy (Wh) of those two stretches and
+    the whole percents between the first and last change, or None when the
+    reading changed fewer than twice."""
+    soc = d["soc"].where(d["soc"] > 0).ffill().to_numpy()
+    ce = np.concatenate([[0.0], np.cumsum(d["eJ"].to_numpy())])
+    ok = np.isfinite(soc)
+    change = np.where(ok[1:] & ok[:-1] & (soc[1:] < soc[:-1]))[0] + 1
+    if len(change) < 2:
+        return None
+    a, z = change[0], change[-1]
+    return SimpleNamespace(
+        first=float(soc[a - 1]), last=float(soc[z]),
+        whole=float(soc[a] - soc[z]),          # percents from the first change to the last
+        pre_wh=float(ce[a] / 3600.0), post_wh=float((ce[-1] - ce[z]) / 3600.0))
 
 
 def soc_steps(d):
@@ -365,8 +410,9 @@ def soc_steps(d):
         level, before, after = soc[a], soc[a - 1], soc[b]
         if not (before > level > after) or level - after > 2 or not air[a:b].all():
             continue
-        rows.append((level, (ce[b] - ce[a]) / 3600.0, level - after))
-    return pd.DataFrame(rows, columns=["level", "wh", "drop"])
+        temp = d["temp"].iloc[a:b].mean() if "temp" in d else np.nan
+        rows.append((level, (ce[b] - ce[a]) / 3600.0, level - after, temp))
+    return pd.DataFrame(rows, columns=["level", "wh", "drop", "temp"])
 
 
 def _corr(a, b):
@@ -432,6 +478,22 @@ def load_all(path, battery_map):
         f.duration_s = float(b["dur"].sum())
         f.energy_wh = float(b["eJ"].sum() / 3600.0)
         f.soc_drop = f.soc_start - f.soc_end
+        f.soc_start_int, f.soc_end_int = f.soc_start, f.soc_end
+        lat, lon = b["lat"].to_numpy(), b["lon"].to_numpy()
+        ok = np.isfinite(lat) & np.isfinite(lon) & (np.abs(lat) > 1e-3)
+        f.lat0 = float(np.median(lat[ok])) if ok.any() else np.nan
+        f.lon0 = float(np.median(lon[ok])) if ok.any() else np.nan
+        f.mean_h = float(np.average(b["h"], weights=b["dur"])) if len(b) else np.nan
+        f.meteo = None
+        sp = b["sport"].to_numpy()
+        f.sport_share = (float(np.average(sp, weights=b["dur"])) if len(b) and np.isfinite(sp).any()
+                         else np.nan)
+        gs = np.hypot(b["vn"], b["ve"]).to_numpy()
+        f.mean_gs = float(np.average(gs, weights=b["dur"])) if len(b) else np.nan
+        f.max_gs = float(np.max(gs)) if len(b) else np.nan
+
+    if FINE_SOC:
+        refine_soc(flights)
 
     # Each battery's flights in time order: 0 = its first logged flight.
     for bat in {f.battery for f in flights}:
@@ -456,6 +518,39 @@ def load_all(path, battery_map):
     return flights
 
 
+# Measure the partial first and last percent (see soc_partials). Off by
+# default: on the real logs it scored slightly worse, since DJI's gauge
+# runs fast and stalls near take-off.
+FINE_SOC = False
+
+
+def refine_soc(flights):
+    """Battery % at take-off and landing to a fraction of a percent: the
+    whole percents between the gauge's first and last change, plus the
+    energy before the first change and after the last, each divided by
+    the Wh in one percent (the flight's own 1% steps, or all flights')."""
+    allsteps = [f.steps for f in flights if len(f.steps)]
+    pooled = (float(np.median(pd.concat(allsteps)["wh"] / pd.concat(allsteps)["drop"]))
+              if allsteps else np.nan)
+    done = 0
+    for f in flights:
+        p = f.partial
+        if p is None or not np.isfinite(pooled):
+            continue
+        own = (f.steps["wh"] / f.steps["drop"]) if len(f.steps) >= 3 else None
+        whp = float(np.median(own)) if own is not None else pooled
+        pre = float(np.clip(p.pre_wh / whp, 0.0, 1.0))
+        post = float(np.clip(p.post_wh / whp, 0.0, 1.0))
+        # the gauge shows L while the charge is above L-1: it drops to
+        # first-1 at the first change and to last at the last one
+        f.soc_start = (p.first - 1.0) + pre
+        f.soc_end = p.last - post
+        f.soc_drop = f.soc_start - f.soc_end
+        done += 1
+    print(f"battery %: take-off and landing measured to a fraction of a percent "
+          f"for {done}/{len(flights)} flight(s) (the rest keep whole percents)")
+
+
 def read_battery_map(path):
     if not path:
         return {}
@@ -469,22 +564,25 @@ def read_battery_map(path):
 # Power model
 # ---------------------------------------------------------------------
 
-def design(vn, ve, up, acc, yawr, wind, va_max=None):
+def design(vn, ve, up, acc, yawr, wind, va_max=None, sport=None):
     va = np.hypot(np.asarray(vn) - wind[0], np.asarray(ve) - wind[1])
     if va_max is not None:
         va = np.minimum(va, va_max)
     x = va / SPEED_SCALE
     up = np.asarray(up, float)
+    sp = np.zeros_like(x) if sport is None else np.nan_to_num(np.asarray(sport, float))
     return np.column_stack([
         np.ones_like(x), x, x ** 2, x ** 3,
         np.clip(up, 0, None), np.clip(-up, 0, None),
         np.asarray(acc, float), np.abs(np.asarray(yawr, float)),
+        sp,
     ])
 
 
 def flight_design(f, wind, va_max=None):
     b = f.bins
-    return design(b["vn"], b["ve"], b["up"], b["acc"], b["yawr"], wind, va_max)
+    sport = b["sport"] if USE_SPORT_TERM else None
+    return design(b["vn"], b["ve"], b["up"], b["acc"], b["yawr"], wind, va_max, sport)
 
 
 def lstsq(X, y):
@@ -501,11 +599,13 @@ def fit_power(X, y):
     all of x, x^2, x^3 are free (the old behaviour)."""
     if SPEED_TERMS >= 3:
         return lstsq(X, y)
-    cols = [0, 1, 3, 4, 5, 6, 7]
+    cols = [0, 1, 3, 4, 5, 6, 7, 8]
+    if not np.any(X[:, 8]):
+        cols.remove(8)                    # no Sport samples: leave it out
     beta = np.zeros(X.shape[1])
     beta[cols] = lstsq(X[:, cols], y)
     if beta[3] < 0:
-        cols = [0, 1, 4, 5, 6, 7]
+        cols = [c for c in cols if c != 3]
         beta = np.zeros(X.shape[1])
         beta[cols] = lstsq(X[:, cols], y)
     return beta
@@ -538,7 +638,7 @@ def estimate_wind(beta, flights):
     ve = np.concatenate([f.bins["ve"].to_numpy() for f in flights])
     X = np.vstack([flight_design(f, (0.0, 0.0)) for f in flights])
     y = np.concatenate([f.bins["P"].to_numpy() for f in flights])
-    rest = X[:, [0, 4, 5, 6, 7]] @ beta[[0, 4, 5, 6, 7]]
+    rest = X[:, [0, 4, 5, 6, 7, 8]] @ beta[[0, 4, 5, 6, 7, 8]]
 
     _, wn, we = _wind_search(beta, vn, ve, rest, y, WIND_SPEEDS, WIND_DIRS)
     s0 = np.hypot(wn, we)
@@ -599,13 +699,40 @@ def _spec_hover(spec):
     return spec.wh * 60.0 / spec.minutes / _airspeed_factor(spec.test_speed, spec)
 
 
-def fit_site(flights, base=None, degree=1):
+SITE_WIND = True   # site methods use the Open-Meteo wind, as the site uses its forecast
+
+
+def site_wind(f):
+    """The wind the site would have planned this flight with: Open-Meteo's
+    forecast for its place and hour (calm without one, or with --site-calm)."""
+    if SITE_WIND and getattr(f, "meteo", None) is not None:
+        return tuple(f.meteo.wind)
+    return (0.0, 0.0)
+
+
+def _site_speed(f):
+    """Airspeed the site's formula sees: ground velocity minus the wind."""
+    b = f.bins
+    wn, we = site_wind(f)
+    return np.hypot(b["vn"] - wn, b["ve"] - we).to_numpy()
+
+
+def _mode_mask(b, mode):
+    if mode == "all" or not b["sport"].notna().any():
+        return np.ones(len(b), bool)
+    sport = (b["sport"] >= 0.5).to_numpy()
+    return sport if mode == "sport" else ~sport
+
+
+def fit_site(flights, base=None, degree=1, mode="all"):
     """The site's own battery formula (js/battery.js) fitted directly to
     the logs: hover power, speed curve 1 + a*x + b*x^3 (x = ground speed /
     top speed; b >= 0) and climb cost from the power; descent stays the
     site's fixed 0.9 x hover. The battery energy (100% -> 0%) and the
     gauge slope (socSlope) come from the Wh-per-% curve. Returns a spec
-    like SPEC_NEW, with the flight time that gives that hover power."""
+    like SPEC_NEW, with the flight time that gives that hover power.
+    Speed is airspeed with the flight's forecast wind (site_wind); mode
+    "normal" or "sport" fits only the samples flown in that DJI mode."""
     base = SimpleNamespace(**vars(base or SPEC_NEW))
     curve = fit_wh_curve(flights, None, degree)
     base.wh = float(energy_between(curve, 100, 0))
@@ -613,8 +740,11 @@ def fit_site(flights, base=None, degree=1):
     base.soc_slope = float(curve.coef[-2] / mid) if len(curve.coef) == 2 and mid > 0 else 0.0
     rows, ys, ws = [], [], []
     for f in flights:
-        b = f.bins
-        x = np.clip(np.hypot(b["vn"], b["ve"]).to_numpy() / base.vmax, 0, 1.2)
+        keep = _mode_mask(f.bins, mode)
+        if not keep.any():
+            continue
+        b = f.bins[keep]
+        x = np.clip(_site_speed(f)[keep] / base.vmax, 0, 1.2)
         up = b["up"].to_numpy()
         climb, desc = up > 0.3, up < -0.3
         cruise = ~(climb | desc)
@@ -625,6 +755,8 @@ def fit_site(flights, base=None, degree=1):
         rows.append(X)
         ys.append(b["P"].to_numpy())
         ws.append(np.sqrt(b["dur"].to_numpy()))
+    if not rows or sum(len(r) for r in rows) < 60:
+        return None
     X, y, w = np.vstack(rows), np.concatenate(ys), np.concatenate(ws)
     cols = [0, 1, 2, 3]
     theta = np.zeros(4)
@@ -642,13 +774,21 @@ def fit_site(flights, base=None, degree=1):
     return spec
 
 
-def spec_power(f, spec=SPEC):
-    hover = _spec_hover(spec)
-    b = f.bins
-    cruise = hover * _airspeed_factor(np.hypot(b["vn"], b["ve"]), spec)
-    climb = hover + spec.mass * 9.81 * b["up"].clip(lower=0) / spec.climb_eff
-    return np.where(b["up"] > 0.3, climb,
-                    np.where(b["up"] < -0.3, hover * spec.descent_factor, cruise))
+def spec_power(f, spec=SPEC, sport_spec=None):
+    """The site's battery formula on one flight's samples, at airspeed with
+    the forecast wind. With sport_spec, samples flown in Sport mode use it."""
+    def one(sp):
+        hover = _spec_hover(sp)
+        b = f.bins
+        cruise = hover * _airspeed_factor(_site_speed(f), sp)
+        climb = hover + sp.mass * 9.81 * b["up"].clip(lower=0) / sp.climb_eff
+        return np.where(b["up"] > 0.3, climb,
+                        np.where(b["up"] < -0.3, hover * sp.descent_factor, cruise))
+    p = one(spec)
+    if sport_spec is not None:
+        sport = _mode_mask(f.bins, "sport") & f.bins["sport"].notna().to_numpy()
+        p = np.where(sport, one(sport_spec), p)
+    return p
 
 
 # ---------------------------------------------------------------------
@@ -688,6 +828,45 @@ def flight_weights(pool, target=None):
     return out
 
 
+USE_TEMP = False  # --temp: Wh per % also depends on the battery's temperature
+                  # (off by default: it made leave-one-out worse on real logs)
+T_REF = 50.0      # C: the temperature the printed curve is for
+
+
+def _poly_cols(x, degree):
+    return np.column_stack([x ** k for k in range(degree, -1, -1)])   # polyfit order
+
+
+def at_temp(curve, temp):
+    """The curve at a battery temperature: its constant term moved by the
+    fitted temperature slope (no change for a curve without one)."""
+    tc = getattr(curve, "temp_coef", 0.0)
+    if not tc or not np.isfinite(temp):
+        return curve
+    out = SimpleNamespace(**vars(curve))
+    out.coef = np.array(curve.coef, float).copy()
+    out.coef[-1] += tc * (temp - curve.t_ref)
+    out.temp = float(temp)
+    return out
+
+
+def heating_rate(flights):
+    """How fast the battery warms in flight: median C per minute, from the
+    take-off temperature to the flight's mean temperature, x 2 (the mean
+    is reached half way)."""
+    r = [2.0 * (f.temp - f.temp_start) / (f.duration_s / 60.0) for f in flights
+         if np.isfinite(f.temp) and np.isfinite(f.temp_start) and f.duration_s >= 60]
+    return float(np.median(r)) if r else 0.0
+
+
+def predicted_temp(flights, f):
+    """Battery temperature a flight is expected to average, from what is known
+    before it: its take-off temperature, its length, the pool's heating rate."""
+    if not np.isfinite(getattr(f, "temp_start", np.nan)):
+        return np.nan
+    return f.temp_start + heating_rate(flights) * (f.duration_s / 60.0) / 2.0
+
+
 def fit_wh_curve(flights, battery=None, degree=1, target=None):
     """Wh per 1% as a polynomial in the battery %, fitted to the 1% steps.
     Uses the battery's own steps when it has enough of them. Recent
@@ -710,22 +889,37 @@ def fit_wh_curve(flights, battery=None, degree=1, target=None):
     parts = []
     for f in pool:
         if len(f.steps):
-            parts.append(f.steps.assign(fw=weights[id(f)], cap=cap_of(f)))
+            parts.append(f.steps.assign(fw=weights[id(f)], cap=cap_of(f), bat=f.battery))
     st = pd.concat(parts, ignore_index=True)
 
     # Mid-point of each step: level L covers the charge from L down to L-1.
     x = st["level"].to_numpy() - 0.5 * st["drop"].to_numpy()
     y = (st["wh"] / st["drop"] / st["cap"]).to_numpy()
     w = (st["drop"] * st["fw"]).to_numpy()
+    t = st["temp"].to_numpy(float) if "temp" in st else np.full(len(x), np.nan)
+    use_t = USE_TEMP and np.isfinite(t).mean() >= 0.8 and np.nanstd(t) > 1.0
+    tt = np.where(np.isfinite(t), t, np.nanmean(t) if use_t else T_REF) - T_REF
+    X = _poly_cols(x, degree)
+    if use_t:
+        X = np.column_stack([X, tt])
+    # One offset per extra battery, so a battery that is both bigger and
+    # flown hotter doesn't pass for a temperature effect (the whole-flight
+    # scaling below sets the level afterwards).
+    bats = sorted(st["bat"].unique())
+    if len(bats) > 1:
+        X = np.column_stack([X] + [(st["bat"] == b).to_numpy(float) for b in bats[1:]])
     keep = np.ones(len(x), bool)
-    for _ in range(2):   # drop stalled-gauge outliers, then refit
-        coef = np.polyfit(x[keep], y[keep], degree, w=np.sqrt(w[keep]))
-        res = y - np.polyval(coef, x)
+    for _ in range(3):   # drop stalled-gauge outliers, then refit
+        sw = np.sqrt(w[keep])
+        theta = lstsq(X[keep] * sw[:, None], y[keep] * sw)
+        res = y - X @ theta
         mad = 1.4826 * np.median(np.abs(res[keep] - np.median(res[keep])))
         keep = np.abs(res) <= 3.5 * max(mad, 1e-4)
-    coef = np.polyfit(x[keep], y[keep], degree, w=np.sqrt(w[keep]))
+    coef = theta[:degree + 1]
+    tc = float(theta[degree + 1]) if use_t else 0.0
     curve = SimpleNamespace(coef=coef, lo=float(x.min()), hi=float(x.max()),
-                            n=int(keep.sum()), src=src, cap=np.nan)
+                            n=int(keep.sum()), src=src, cap=np.nan,
+                            temp_coef=tc, t_ref=T_REF, temp=T_REF)
 
     # The steps give the curve's shape, but not its level: dropping the
     # outliers removes the long steps where the gauge stalled and keeps
@@ -733,10 +927,11 @@ def fit_wh_curve(flights, battery=None, degree=1, target=None):
     # Scale the curve so it matches the energy of whole flights.
     whole = [f for f in pool if f.soc_drop >= MIN_SOC_DROP_FOR_WH]
     if whole:
-        predicted = sum(weights[id(f)] * energy_between(curve, f.soc_start, f.soc_end)
+        predicted = sum(weights[id(f)] * energy_between(at_temp(curve, f.temp), f.soc_start, f.soc_end)
                         for f in whole)
         actual = sum(weights[id(f)] * f.energy_wh / cap_of(f) for f in whole)
         curve.coef = coef * actual / predicted
+        curve.temp_coef = tc * actual / predicted
 
     if use_cap:
         if target is not None and np.isfinite(target.full_cap):
@@ -745,10 +940,18 @@ def fit_wh_curve(flights, battery=None, degree=1, target=None):
             ref = own if own else pool
             cap = max(ref, key=lambda f: (f.seq, f.name)).full_cap
         curve.coef = curve.coef * cap
+        curve.temp_coef = curve.temp_coef * cap
         curve.cap = cap
         curve.src += f", scaled to {cap:.0f} mAh capacity"
     if HALF_LIFE_FLIGHTS > 0:
         curve.src += f", recent flights weighted (half-life {HALF_LIFE_FLIGHTS:g})"
+    if curve.temp_coef:
+        mid = float(np.polyval(curve.coef, 50.0))
+        curve.src += (f", {100 * 10 * curve.temp_coef / mid:+.1f}% per +10 C battery "
+                      f"(curve at {T_REF:g} C)")
+        if target is not None:
+            # before the flight: take-off temperature and the usual warming
+            curve = at_temp(curve, predicted_temp(pool, target))
     return curve
 
 
@@ -855,7 +1058,8 @@ def leave_one_out(flights, group, degree, long_min):
         if not train:
             continue
         model = fit_model(train)
-        site_fit = fit_site(train, degree=degree)
+        site_norm = fit_site(train, degree=degree, mode="normal") or fit_site(train, degree=degree)
+        site_sport = fit_site(train, degree=degree, mode="sport")
         whp, rate, whp_src = wh_per_pct(train, f.battery)
         if not np.isfinite(whp):
             continue
@@ -865,10 +1069,12 @@ def leave_one_out(flights, group, degree, long_min):
         own = estimate_wind(model["beta"], [f])
 
         power = {
+            "forecast": predict_power(model, f, tuple(f.meteo.wind) if f.meteo else (0.0, 0.0)),
             "site old": spec_power(f, SPEC),
             "site 27": spec_power(f, SPEC_27),
             "site new": spec_power(f, SPEC_NEW),
-            "site fit": spec_power(f, site_fit),
+            "site norm": spec_power(f, site_norm),
+            "site both": spec_power(f, site_norm, site_sport),
             "no wind": predict_power(model, f, (0.0, 0.0)),
             "same day": predict_power(model, f, same_day or (0.0, 0.0)),
             "own wind": predict_power(model, f, own),
@@ -880,13 +1086,16 @@ def leave_one_out(flights, group, degree, long_min):
             "site new": site_gauge_used(
                 SPEC_NEW, np.sum(power["site new"] * dur) / 3600.0 / SPEC_NEW.wh * 100.0,
                 f.soc_start),
-            "site fit": site_gauge_used(
-                site_fit, np.sum(power["site fit"] * dur) / 3600.0 / site_fit.wh * 100.0,
+            "site norm": site_gauge_used(
+                site_norm, np.sum(power["site norm"] * dur) / 3600.0 / site_norm.wh * 100.0,
+                f.soc_start),
+            "site both": site_gauge_used(
+                site_norm, np.sum(power["site both"] * dur) / 3600.0 / site_norm.wh * 100.0,
                 f.soc_start),
             "E/% flat": f.energy_wh / whp,
             "E/% curve": f.soc_start - soc_after(curve, f.soc_start, f.energy_wh),
         }
-        for m in ("no wind", "same day", "own wind"):
+        for m in ("no wind", "same day", "own wind", "forecast"):
             e = np.sum(power[m] * dur) / 3600.0
             drop[m] = f.soc_start - soc_after(curve, f.soc_start, e)
 
@@ -902,6 +1111,8 @@ def leave_one_out(flights, group, degree, long_min):
         results.append(res)
 
     _print_loo(results, long_min)
+    _print_modes(results)
+    _print_residual_drivers(results)
     return results
 
 
@@ -938,6 +1149,90 @@ def _print_summary(results, title, legend=False):
         print(f"  {m:10s} {flights_r2:6.3f} {np.mean(np.abs(err)):7.2f} "
               f"{np.sqrt(np.mean(err ** 2)):7.2f} {np.mean(err):+7.2f} "
               f"{100 * np.mean(rel):7.1f}% {np.nanmean(np.abs(end_err)):6.1f} m")
+
+
+SPORT_FLIGHT_SHARE = 0.2   # a flight counts as "Sport" with this share of its time in Sport mode
+
+
+def _print_modes(results):
+    """Leave-one-out misses split by flight mode (DJI Normal vs Sport)."""
+    if not any(np.isfinite(r.flight.sport_share) for r in results):
+        return
+    print()
+    print("=" * 78)
+    print("FLIGHT MODE (Normal vs Sport) - leave-one-out misses, predicted minus actual")
+    print("=" * 78)
+    print(f"  {'flight':38s} {'sport':>6s} {'mean v':>6s} {'max v':>6s} {'actual':>6s} "
+          f"{'site new':>9s} {'site norm':>9s} {'site both':>9s} {'same day':>9s}")
+    for r in results:
+        f = r.flight
+        sh = f"{100 * f.sport_share:5.0f}%" if np.isfinite(f.sport_share) else f"{'-':>6s}"
+        print(f"  {f.name[:38]:38s} {sh} {f.mean_gs:6.1f} {f.max_gs:6.1f} {f.soc_drop:6.0f} "
+              + " ".join(f"{r.drop[m] - f.soc_drop:+9.1f}" for m in ("site new", "site norm", "site both", "same day")))
+    print()
+    print(f"  ('Sport' flights: at least {100 * SPORT_FLIGHT_SHARE:.0f}% of the time in Sport mode)")
+    print(f"  {'group':8s} {'flights':>7s} " + " ".join(f"{m + ' bias/MAE':>19s}" for m in ("site new", "site norm", "site both", "same day")))
+    for label, pick in (("Normal", lambda r: r.flight.sport_share < SPORT_FLIGHT_SHARE),
+                        ("Sport", lambda r: r.flight.sport_share >= SPORT_FLIGHT_SHARE)):
+        rr = [r for r in results if np.isfinite(r.flight.sport_share) and pick(r)]
+        if not rr:
+            continue
+        cells = []
+        for m in ("site new", "site norm", "site both", "same day"):
+            err = np.array([r.drop[m] - r.flight.soc_drop for r in rr])
+            cells.append(f"{np.mean(err):+8.2f} / {np.mean(np.abs(err)):5.2f}")
+        print(f"  {label:8s} {len(rr):7d}    " + "     ".join(cells))
+
+
+def _print_residual_drivers(results):
+    """What the misses that remain go with: each candidate cause against
+    the model's miss and against the battery-side (energy -> %) miss."""
+    def meteo(f, k):
+        return getattr(f.meteo, k) if getattr(f, "meteo", None) is not None else np.nan
+    feats = [
+        ("battery temp, mean C", lambda f: f.temp),
+        ("battery temp, take-off C", lambda f: f.temp_start),
+        ("air temperature C", lambda f: meteo(f, "air_temp")),
+        ("air density kg/m3", lambda f: meteo(f, "density")),
+        ("wind gusts m/s", lambda f: meteo(f, "gust")),
+        ("forecast wind m/s", lambda f: meteo(f, "speed")),
+        ("ActiveTrack share", lambda f: f.track_share),
+        ("Sport share", lambda f: f.sport_share),
+        ("mean height m", lambda f: f.mean_h),
+        ("mean ground speed m/s", lambda f: f.mean_gs),
+        ("battery % at take-off", lambda f: f.soc_start),
+    ]
+    model = np.array([r.drop["same day"] - r.flight.soc_drop for r in results])
+    conv = np.array([r.drop["E/% curve"] - r.flight.soc_drop for r in results])
+    print()
+    print("=" * 78)
+    print("WHAT THE REMAINING MISSES GO WITH")
+    print("=" * 78)
+    print("Correlation (r) of each flight's miss (predicted - actual, % of battery)")
+    print("with each candidate cause, and the miss per unit of it. 'model' = the full")
+    print("model (same-day wind), 'battery' = the energy -> % conversion alone")
+    print(f"(E/% curve). With {len(results)} flights, |r| above "
+          f"{2 / np.sqrt(max(len(results), 4)):.2f} is unlikely to be chance (*).")
+    print()
+    print(f"  {'cause':26s} {'n':>3s} {'model r':>8s} {'per unit':>9s} "
+          f"{'battery r':>9s} {'per unit':>9s}")
+    limit = 2 / np.sqrt(max(len(results), 4))
+    for name, fn in feats:
+        x = np.array([fn(r.flight) for r in results], float)
+        ok = np.isfinite(x)
+        if ok.sum() < 6 or np.std(x[ok]) < 1e-9:
+            continue
+        cells = []
+        for y in (model, conv):
+            rr = _corr(x[ok], y[ok])
+            slope = np.polyfit(x[ok], y[ok], 1)[0] if np.isfinite(rr) else np.nan
+            star = "*" if np.isfinite(rr) and abs(rr) > limit else " "
+            cells.append(f"{rr:+7.2f}{star} {slope:+9.3f}")
+        print(f"  {name:26s} {ok.sum():3d} {cells[0]} {cells[1]}")
+    print()
+    print("  A cause marked * is worth adding to the model; a correlation is not")
+    print("  proof, and causes that move together (hot battery, low battery %,")
+    print("  back-to-back flights) can stand in for each other.")
 
 
 def _print_loo(results, long_min):
@@ -997,20 +1292,28 @@ def report_full_model(flights, model, degree):
         print(f"  {v:4.0f} m/s: {p[0]:6.1f} W / {po:6.1f} W / {pn:6.1f} W")
     print(f"  (highest airspeed in the data: {model['va_max']:.1f} m/s)")
 
-    fit = fit_site(flights, degree=degree)
     print()
-    print("site preset fitted to all these flights (the site's own formula):")
-    print(f"  hover {fit.hover:.1f} W   curve a={fit.curve_a:.3f} b={fit.curve_b:.3f}   "
-          f"climb efficiency {fit.climb_eff:.2f}   battery {fit.wh:.2f} Wh, "
-          f"socSlope {fit.soc_slope:.4f}")
-    print(f"  -> js/drone.js: batt: {fit.wh:.1f}, ftime: {fit.minutes:.1f}, "
-          f"power: {{ curve: {{ a: {fit.curve_a:.2f}, b: {fit.curve_b:.2f} }}, "
-          f"climbEff: {fit.climb_eff:.2f}, socSlope: {fit.soc_slope:.4f} }}")
-    print("  level flight power, this fit / current site preset:")
-    for v in (0, 3, 6, 9):
-        pf = _spec_hover(fit) * _airspeed_factor(v, fit)
-        pn = _spec_hover(SPEC_NEW) * _airspeed_factor(v, SPEC_NEW)
-        print(f"    {v:2d} m/s: {pf:5.1f} W / {pn:5.1f} W")
+    print("site presets fitted to all these flights (the site's own formula, at")
+    print("airspeed with the forecast wind" + ("" if SITE_WIND else " - here calm, --site-calm") + "):")
+    fits = {}
+    for mode in ("normal", "sport"):
+        fit = fit_site(flights, degree=degree, mode=mode)
+        if fit is None:
+            print(f"  {mode}: too few samples")
+            continue
+        fits[mode] = fit
+        print(f"  {mode:6s}: hover {fit.hover:.1f} W   curve a={fit.curve_a:.3f} b={fit.curve_b:.3f}   "
+              f"climb efficiency {fit.climb_eff:.2f}   battery {fit.wh:.2f} Wh, "
+              f"socSlope {fit.soc_slope:.4f}")
+        print(f"          -> js/drone.js: batt: {fit.wh:.1f}, ftime: {fit.minutes:.1f}, "
+              f"power: {{ curve: {{ a: {fit.curve_a:.2f}, b: {fit.curve_b:.2f} }}, "
+              f"climbEff: {fit.climb_eff:.2f}, socSlope: {fit.soc_slope:.4f} }}")
+    if fits:
+        print("  level flight power: " + " / ".join(fits) + " / current site preset")
+        for v in (0, 3, 6, 9, 12):
+            cells = [f"{_spec_hover(ft) * _airspeed_factor(v, ft):5.1f} W" for ft in fits.values()]
+            pn = _spec_hover(SPEC_NEW) * _airspeed_factor(v, SPEC_NEW)
+            print(f"    {v:2d} m/s: " + " / ".join(cells) + f" / {pn:5.1f} W")
 
     print()
     print("estimated wind per day (from the power data; check against a")
@@ -1127,6 +1430,8 @@ def wind_report(flights, model, degree):
     print("the wind estimated for that day, 'own' the wind fitted to that flight")
     print("alone (noisier). 'peak' is the worst 10 s: the most extra power the")
     print("wind demanded, and when.")
+    print(f"(wind source: {'Open-Meteo per flight' if WIND_SOURCE == 'meteo' else 'estimated per day'};"
+          " 'day' column = that wind)")
     print()
     print(f"  {'flight':38s} {'wind (day)':>22s} {'+% day':>7s} {'+% own':>7s} "
           f"{'+Wh':>6s} {'share':>6s} {'peak W':>7s} {'at min':>6s}")
@@ -1135,7 +1440,7 @@ def wind_report(flights, model, degree):
         dur = f.bins["dur"].to_numpy()
         if dur.sum() < 30:
             continue
-        w_day = model["winds"].get(f.session, (0.0, 0.0))
+        w_day = flight_wind(model, f)
         w_own = estimate_wind(model["beta"], [f])
         calm = predict_power(model, f, (0.0, 0.0))
         e_calm = np.sum(calm * dur) / 3600.0
@@ -1168,18 +1473,19 @@ def wind_report(flights, model, degree):
         print(f"  hardest moment: {peak.f.name} - {peak.peak:+.1f} W extra for 10 s")
 
     print()
-    print("drift: hover stretches (ground speed under 0.3 m/s for 5 s or more)")
-    print("and how far the drone moved from where each began, by GPS. GPS")
-    print("wanders 1-2 m on its own. 'air' is how far the day's wind carries")
-    print("the air in one minute - how far the drone would go if it stopped")
-    print("holding position.")
+    print("drift (measured): hover stretches (ground speed under 0.3 m/s for 5 s")
+    print("or more) and how far the drone actually moved from where each began,")
+    print("by GPS. GPS wanders 1-2 m on its own, and positions logged to 4")
+    print("decimals move in ~10 m steps. 'air m/min' is how much air the wind")
+    print("moves past in a minute - how far the drone would go if it stopped")
+    print("holding position, not how far it went.")
     print()
     print(f"  {'flight':38s} {'hovers':>6s} {'secs':>5s} {'median m':>9s} "
           f"{'max m':>6s} {'at min':>6s} {'air m/min':>9s}")
     drift_rows = []
     for f in flights:
         hv = hover_drift(f)
-        w = model["winds"].get(f.session, (0.0, 0.0))
+        w = flight_wind(model, f)
         air = np.hypot(*w) * 60.0
         if not hv:
             print(f"  {f.name[:38]:38s} {'-':>6s} {'':>5s} {'':>9s} {'':>6s} {'':>6s} {air:9.0f}")
@@ -1223,44 +1529,46 @@ def wind_integrals(flights, model, degree):
     time and as totals, and the flight where each total is largest.
 
     battery: extra % used versus the same ground track in calm air.
-    drift:   how far the wind would have carried the drone had it not
-             held its track - the integral of the wind over time (m),
-             split into the part across the track (sideways push), the
-             part along it (head- or tailwind), and the part while
-             hovering. The drone cancels all of it; that cancelling is
-             what costs the battery.
+    distance: how far the drone went over the ground, and how far it had
+             to fly through the air for that (|ground velocity - wind|).
+             The difference is extra flying the wind caused - not drift:
+             the drone held its track. The air distance is also split
+             into the crosswind it flew against (across its direction of
+             travel) and the air it flew through while holding position.
     """
     print()
     print("=" * 78)
     print("WIND EFFECTS OVER WHOLE FLIGHTS (integrals)")
     print("=" * 78)
     print("battery: extra % the wind cost, summed over the flight.")
-    print("drift: how far the wind would have carried the drone over the flight")
-    print("had it not fought back (m): 'total' = all of it, 'side' = across the")
-    print("direction of travel, 'head' = against it (minus = tailwind), 'hover'")
-    print("= while holding position. Uses the wind estimated for each day.")
+    print("ground m: distance flown over the ground.  air m: distance flown")
+    print("through the air to do that.  +air: how much more that is (the wind's")
+    print("extra flying; the drone held its track, it did NOT drift that far).")
+    print("cross m: air flown against the crosswind.  hover m: air flown while")
+    print("holding position (0 m over the ground).")
+    print("(wind source: " + ("Open-Meteo per flight" if WIND_SOURCE == "meteo"
+                              else "estimated per day") + ")")
     print()
-    print(f"  {'flight':38s} {'min':>5s} {'wind m/s':>8s} {'+bat %':>7s} "
-          f"{'total m':>8s} {'side m':>7s} {'head m':>7s} {'hover m':>7s}")
+    print(f"  {'flight':38s} {'min':>5s} {'wind':>5s} {'+bat %':>7s} "
+          f"{'ground m':>8s} {'air m':>7s} {'+air':>6s} {'cross m':>7s} {'hover m':>7s}")
     out = []
     for f in flights:
         b = f.bins
         dur = b["dur"].to_numpy()
         if dur.sum() < 30:
             continue
-        w = np.array(model["winds"].get(f.session, (0.0, 0.0)))
+        w = np.array(flight_wind(model, f))
         vn, ve = b["vn"].to_numpy(), b["ve"].to_numpy()
         gs = np.hypot(vn, ve)
         moving = gs >= MOVING_MIN_SPEED
         tn = np.where(moving, vn / np.maximum(gs, 1e-9), 0.0)
         te = np.where(moving, ve / np.maximum(gs, 1e-9), 0.0)
-        along = w[0] * tn + w[1] * te              # + = wind from behind
         side = np.abs(w[0] * te - w[1] * tn)
         ws = float(np.hypot(*w))
 
-        total_m = np.cumsum(ws * dur)
-        side_m = np.cumsum(np.where(moving, side, 0.0) * dur)
-        head_m = np.cumsum(np.where(moving, -along, 0.0) * dur)
+        ground_m = np.cumsum(gs * dur)
+        air_m = np.cumsum(np.hypot(vn - w[0], ve - w[1]) * dur)
+        cross_m = np.cumsum(np.where(moving, side, 0.0) * dur)
         hover_m = np.cumsum(np.where(moving, 0.0, ws) * dur)
 
         curve = fit_wh_curve(flights, f.battery, degree, target=f)
@@ -1268,34 +1576,36 @@ def wind_integrals(flights, model, degree):
         e_wind = np.cumsum(predict_power(model, f, tuple(w)) * dur) / 3600.0
         e_calm = np.cumsum(predict_power(model, f, (0.0, 0.0)) * dur) / 3600.0
         extra_pct = soc_after(curve, soc0, e_calm) - soc_after(curve, soc0, e_wind)
+        more = 100.0 * (air_m[-1] / ground_m[-1] - 1.0) if ground_m[-1] > 1 else np.nan
 
-        r = SimpleNamespace(f=f, t_min=np.cumsum(dur) / 60.0, wind=ws,
-                            bat=extra_pct, total=total_m, side=side_m,
-                            head=head_m, hover=hover_m)
+        r = SimpleNamespace(f=f, t_min=np.cumsum(dur) / 60.0, wind=ws, bat=extra_pct,
+                            ground=ground_m, air=air_m, more=more,
+                            cross=cross_m, hover=hover_m)
         out.append(r)
-        print(f"  {f.name[:38]:38s} {r.t_min[-1]:5.1f} {ws:8.1f} {extra_pct[-1]:+7.1f} "
-              f"{total_m[-1]:8.0f} {side_m[-1]:7.0f} {head_m[-1]:+7.0f} {hover_m[-1]:7.0f}")
+        more_txt = f"{more:+5.0f}%" if np.isfinite(more) else f"{'-':>6s}"
+        print(f"  {f.name[:38]:38s} {r.t_min[-1]:5.1f} {ws:5.1f} {extra_pct[-1]:+7.1f} "
+              f"{ground_m[-1]:8.0f} {air_m[-1]:7.0f} {more_txt} {cross_m[-1]:7.0f} {hover_m[-1]:7.0f}")
 
     if not out:
         return out
     print()
     print("largest over a whole flight:")
     for label, key, unit in (("battery lost to wind", "bat", "%"),
-                             ("total wind drift", "total", " m"),
-                             ("sideways push", "side", " m"),
-                             ("headwind", "head", " m")):
-        r = max(out, key=lambda x: getattr(x, key)[-1])
-        v = getattr(r, key)[-1]
+                             ("air flown, beyond ground", "extra", " m"),
+                             ("crosswind flown against", "cross", " m")):
+        val = (lambda x: x.air[-1] - x.ground[-1]) if key == "extra" else (lambda x, k=key: getattr(x, k)[-1])
+        r = max(out, key=val)
+        v = val(r)
         fmt = f"{v:+.1f}" if unit == "%" else f"{v:.0f}"
-        print(f"  {label:22s} {r.f.name}  {fmt}{unit}  "
+        print(f"  {label:25s} {r.f.name}  {fmt}{unit}  "
               f"({r.t_min[-1]:.1f} min, wind {r.wind:.1f} m/s)")
     longest = max(out, key=lambda x: x.t_min[-1])
-    print(f"  {'longest flight':22s} {longest.f.name}  {longest.t_min[-1]:.1f} min, "
-          f"wind cost {longest.bat[-1]:+.1f}%, drift {longest.total[-1]:.0f} m")
+    print(f"  {'longest flight':25s} {longest.f.name}  {longest.t_min[-1]:.1f} min, "
+          f"wind cost {longest.bat[-1]:+.1f}%, {longest.ground[-1]:.0f} m over the ground, "
+          f"{longest.air[-1]:.0f} m through the air")
     print()
-    print("  These drift distances are what the drone had to cancel, not how far")
-    print("  it actually moved: it held its track. The measured drift is in the")
-    print("  hover table above.")
+    print("  None of these is drift: the drone held its track the whole time.")
+    print("  How far it actually moved off position is the hover table above.")
     return out
 
 
@@ -1308,29 +1618,202 @@ def save_wind_plots(out_dir, integrals):
 
     os.makedirs(out_dir, exist_ok=True)
     top_bat = max(integrals, key=lambda r: r.bat[-1])
-    top_drift = max(integrals, key=lambda r: r.total[-1])
+    top_air = max(integrals, key=lambda r: r.air[-1] - r.ground[-1])
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
     for r in integrals:
         ax1.plot(r.t_min, r.bat, color="grey", alpha=0.35, linewidth=1)
-        ax2.plot(r.t_min, r.total, color="grey", alpha=0.35, linewidth=1)
     ax1.plot(top_bat.t_min, top_bat.bat, linewidth=2.2,
              label=f"most: {top_bat.f.name[-26:]}")
-    ax2.plot(top_drift.t_min, top_drift.total, linewidth=2.2,
-             label=f"most: {top_drift.f.name[-26:]} (total)")
-    ax2.plot(top_drift.t_min, top_drift.side, linewidth=1.5, linestyle="--",
-             label="same flight, sideways")
+    ax2.plot(top_air.t_min, top_air.ground, linewidth=2.2, label="over the ground")
+    ax2.plot(top_air.t_min, top_air.air, linewidth=2.2, label="through the air")
     ax1.axhline(0, color="black", linewidth=0.8)
     ax1.set_xlabel("minutes into the flight")
     ax1.set_ylabel("extra battery % from wind (cumulative)")
     ax1.set_title("Battery the wind cost, over each flight")
     ax2.set_xlabel("minutes into the flight")
-    ax2.set_ylabel("wind drift cancelled (m, cumulative)")
-    ax2.set_title("How far the wind would have carried the drone")
+    ax2.set_ylabel("distance flown (m, cumulative)")
+    ax2.set_title(f"Ground vs air distance: {top_air.f.name[-26:]}")
     ax1.legend(fontsize=8)
     ax2.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(os.path.join(out_dir, "wind_integrals.png"), dpi=120)
     plt.close(fig)
+
+
+# ---------------------------------------------------------------------
+# Wind from Open-Meteo (what the forecast said at the flight's place and hour)
+# ---------------------------------------------------------------------
+
+# Historical forecasts (the forecast as it was issued), then the regular
+# forecast API, which also serves the last ~3 months with start/end dates.
+METEO_URLS = [
+    "https://historical-forecast-api.open-meteo.com/v1/forecast",
+    "https://api.open-meteo.com/v1/forecast",
+]
+METEO_HOURLY = ("wind_speed_10m,wind_direction_10m,wind_speed_80m,wind_direction_80m,"
+                "wind_gusts_10m,temperature_2m,surface_pressure")
+METEO_CACHE = os.path.expanduser("~/.cache/dji_battery_model")
+WIND_SOURCE = "estimate"   # what the wind sections use: "estimate" or "meteo"
+
+
+def _meteo_day(lat, lon, day):
+    """Open-Meteo hourly wind for one place and local date, cached on disk.
+    Returns the JSON, or None (with the error) when it can't be had."""
+    key = f"{lat:.2f}_{lon:.2f}_{day}.json"
+    path = os.path.join(METEO_CACHE, key)
+    if os.path.exists(path):
+        try:
+            with open(path) as fh:
+                cached = json.load(fh)
+            if all(k in cached.get("hourly", {}) for k in METEO_HOURLY.split(",")):
+                return cached, None
+        except (OSError, ValueError):
+            pass
+    params = urllib.parse.urlencode({
+        "latitude": f"{lat:.4f}", "longitude": f"{lon:.4f}",
+        "start_date": day, "end_date": day, "hourly": METEO_HOURLY,
+        "wind_speed_unit": "ms", "timezone": "auto",
+    })
+    err = None
+    for url in METEO_URLS:
+        try:
+            with urllib.request.urlopen(url + "?" + params, timeout=20) as resp:
+                data = json.load(resp)
+            if "hourly" not in data:
+                err = data.get("reason", "no hourly data")
+                continue
+            if day < _date.today().isoformat():   # past days don't change
+                os.makedirs(METEO_CACHE, exist_ok=True)
+                with open(path, "w") as fh:
+                    json.dump(data, fh)
+            return data, None
+        except Exception as e:  # noqa: BLE001 - network or server trouble
+            err = e
+    return None, err
+
+
+def _uv(speed, from_deg):
+    """Wind 'from' direction and speed -> (north, east) motion of the air."""
+    return wind_vector(np.asarray(speed, float), np.asarray(from_deg, float))
+
+
+def meteo_wind(f):
+    """The Open-Meteo wind at the flight's place, middle of the flight and
+    mean height above take-off. Between 10 m and 80 m the wind vector is
+    interpolated on log height; below 10 m it is scaled down by the same
+    power law. Returns a namespace (wind=(north, east), speed, from_deg,
+    gust, height) or None, and an error text."""
+    if not (np.isfinite(f.lat0) and np.isfinite(f.lon0)) or pd.isna(f.start):
+        return None, "no GPS position or start time"
+    local_start = f.start
+    data, err = _meteo_day(round(f.lat0, 2), round(f.lon0, 2), local_start.date().isoformat())
+    if data is None:
+        return None, str(err)
+    if f.start_utc:
+        local_start = f.start + pd.Timedelta(seconds=data.get("utc_offset_seconds", 0))
+        if local_start.date().isoformat() != f.start.date().isoformat():
+            data, err = _meteo_day(round(f.lat0, 2), round(f.lon0, 2),
+                                   local_start.date().isoformat())
+            if data is None:
+                return None, str(err)
+    h = data["hourly"]
+    times = pd.to_datetime(h["time"])
+    mid = local_start + pd.Timedelta(seconds=f.duration_s / 2.0)
+    x = (mid - times[0]).total_seconds() / 3600.0
+    idx = np.arange(len(times), dtype=float)
+
+    def at(name):
+        v = np.array([np.nan if a is None else a for a in h[name]], float)
+        ok = np.isfinite(v)
+        return float(np.interp(x, idx[ok], v[ok])) if ok.any() else np.nan
+
+    def uv_at(level):
+        sp = np.array([np.nan if a is None else a for a in h[f"wind_speed_{level}m"]], float)
+        di = np.array([np.nan if a is None else a for a in h[f"wind_direction_{level}m"]], float)
+        n, e = _uv(sp, di)
+        ok = np.isfinite(n) & np.isfinite(e)
+        if not ok.any():
+            return np.nan, np.nan
+        return float(np.interp(x, idx[ok], n[ok])), float(np.interp(x, idx[ok], e[ok]))
+
+    n10, e10 = uv_at(10)
+    n80, e80 = uv_at(80)
+    if not np.isfinite(n10):
+        return None, "no 10 m wind for that hour"
+    height = float(np.clip(f.mean_h if np.isfinite(f.mean_h) else 10.0, 2.0, 120.0))
+    s10, s80 = np.hypot(n10, e10), np.hypot(n80, e80)
+    if height >= 10 and np.isfinite(n80):
+        t = min(np.log(height / 10.0) / np.log(8.0), 1.0)
+        wn, we = n10 + t * (n80 - n10), e10 + t * (e80 - e10)
+    else:
+        alpha = float(np.clip(np.log(s80 / s10) / np.log(8.0), 0.0, 0.5)) \
+            if np.isfinite(s80) and s10 > 0.1 and s80 > 0 else 0.14
+        k = (height / 10.0) ** alpha if height < 10 else 1.0
+        wn, we = n10 * k, e10 * k
+    speed = float(np.hypot(wn, we))
+    from_deg = float((np.degrees(np.arctan2(we, wn)) + 180.0) % 360.0)
+    air_t = at("temperature_2m") if "temperature_2m" in h else np.nan
+    pressure = at("surface_pressure") if "surface_pressure" in h else np.nan
+    density = (pressure * 100.0 / (287.05 * (air_t + 273.15))
+               if np.isfinite(air_t) and np.isfinite(pressure) else np.nan)
+    return SimpleNamespace(wind=(wn, we), speed=speed, from_deg=from_deg,
+                           gust=at("wind_gusts_10m"), height=height,
+                           air_temp=air_t, pressure=pressure, density=density), None
+
+
+def attach_meteo(flights):
+    """Fetch the Open-Meteo wind for every flight (f.meteo); returns the
+    set of errors met. Done before fitting, as the site methods use it."""
+    print()
+    print("fetching the Open-Meteo wind for each flight ...")
+    errors = set()
+    for f in flights:
+        f.meteo, err = meteo_wind(f)
+        if err:
+            errors.add(err)
+    return errors
+
+
+def report_meteo(flights, model, errors):
+    print()
+    print("=" * 78)
+    print("WIND FROM OPEN-METEO")
+    print("=" * 78)
+    print("The forecast wind at each flight's place and hour (Open-Meteo's")
+    print("stored historical forecasts), at the flight's mean height. Compared")
+    print("with the wind the power model estimated for that day.")
+    print()
+    print(f"  {'flight':38s} {'height':>6s} {'Open-Meteo':>22s} {'gust':>5s} "
+          f"{'estimated (day)':>22s}")
+    got = [f for f in flights if f.meteo]
+    for f in flights:
+        est = wind_from_text(model["winds"].get(f.session, (0.0, 0.0)))
+        if f.meteo:
+            m = f.meteo
+            met = wind_from_text(m.wind)
+            print(f"  {f.name[:38]:38s} {m.height:5.0f}m {met:>22s} {m.gust:5.1f} {est:>22s}")
+        else:
+            print(f"  {f.name[:38]:38s} {'':>6s} {'-':>22s} {'':>5s} {est:>22s}")
+    if errors:
+        print()
+        print("  could not get Open-Meteo wind for some flights: " + "; ".join(sorted(errors))[:300])
+        print("  (needs internet; answers are cached in ~/.cache/dji_battery_model)")
+    if got:
+        print()
+        print("by day (mean speed, m/s):")
+        print(f"  {'day':10s} {'Open-Meteo':>10s} {'estimated':>10s}")
+        for d in sorted({f.session for f in got}):
+            ff = [f for f in got if f.session == d]
+            est = np.hypot(*model["winds"].get(d, (0.0, 0.0)))
+            print(f"  {d:10s} {np.mean([f.meteo.speed for f in ff]):10.1f} {est:10.1f}")
+    return got
+
+
+def flight_wind(model, f):
+    """The wind used for one flight in the wind sections."""
+    if WIND_SOURCE == "meteo" and f.meteo is not None:
+        return tuple(f.meteo.wind)
+    return model["winds"].get(f.session, (0.0, 0.0))
 
 
 # ---------------------------------------------------------------------
@@ -1530,7 +2013,7 @@ def save_plots(out_dir, loo_results, route_curve, reserve, flights, curve):
     if loo_results:
         fig, ax = plt.subplots(figsize=(6.5, 6))
         actual = [r.flight.soc_drop for r in loo_results]
-        for m in ("naive", "site old", "site new", "site fit", "no wind"):
+        for m in ("naive", "site old", "site new", "site both", "no wind"):
             ax.scatter(actual, [r.drop[m] for r in loo_results], label=m, s=22)
         top = max(actual + [r.drop[m] for r in loo_results for m in METHODS]) * 1.05
         ax.plot([0, top], [0, top], color="black", linewidth=0.8)
@@ -1603,9 +2086,25 @@ def parse_args():
     p.add_argument("--half-life", type=float, default=HALF_LIFE_FLIGHTS,
                    help="battery ageing: a flight this many of the same battery's "
                         "flights away counts half (default 30; 0 = all equal)")
+    p.add_argument("--no-weather", action="store_true",
+                   help="don't fetch the Open-Meteo wind for each flight")
+    p.add_argument("--wind-source", choices=["estimate", "meteo"], default="estimate",
+                   help="wind used in the wind-effect sections: estimated from the "
+                        "power (default) or Open-Meteo's")
+    p.add_argument("--site-calm", action="store_true",
+                   help="score and fit the site's formula in calm air instead of "
+                        "with the Open-Meteo forecast wind")
     p.add_argument("--speed-terms", type=int, choices=[2, 3], default=SPEED_TERMS,
                    help="power vs airspeed: 2 = 1 + a*x + b*x^3, b >= 0 (default, "
                         "stable); 3 = free cubic (the old fit)")
+    p.add_argument("--fine-percent", action="store_true",
+                   help="measure the partial first and last percent at take-off and "
+                        "landing instead of the gauge's whole percents")
+    p.add_argument("--temp", action="store_true",
+                   help="also use the battery temperature in the Wh-per-%% curve "
+                        "(off by default: it scored worse on real logs)")
+    p.add_argument("--no-sport-term", action="store_true",
+                   help="leave the Sport-mode term out of the power model")
     p.add_argument("--no-capacity", action="store_true",
                    help="ignore the battery-reported capacity (to compare)")
     p.add_argument("--long-min", type=float, default=25.0,
@@ -1620,15 +2119,27 @@ def parse_args():
 
 
 def main():
-    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS
+    global HALF_LIFE_FLIGHTS, USE_CAPACITY, SPEED_TERMS, WIND_SOURCE, SITE_WIND, FINE_SOC
+    global USE_TEMP, USE_SPORT_TERM
     args = parse_args()
+    USE_TEMP = args.temp
+    USE_SPORT_TERM = not args.no_sport_term
+    FINE_SOC = args.fine_percent
+    SITE_WIND = not args.site_calm
+    WIND_SOURCE = args.wind_source
     SPEED_TERMS = args.speed_terms
     HALF_LIFE_FLIGHTS = args.half_life
     USE_CAPACITY = not args.no_capacity
     flights = load_all(args.path, read_battery_map(args.battery_map))
 
+    errors = None
+    if not args.no_weather:
+        errors = attach_meteo(flights)
     model = fit_model(flights)
     report_full_model(flights, model, args.curve_degree)
+    if errors is not None:
+        if report_meteo(flights, model, errors):
+            METHODS.insert(METHODS.index("own wind"), "forecast")
     battery_health(flights, args.curve_degree, SPEC_NEW.wh)
     if not args.no_wind_report:
         wind_report(flights, model, args.curve_degree)
