@@ -8,7 +8,8 @@
 // computePlan(req, hooks) resolves to the main result. The route over
 // fewer people comes later, through hooks.onPeople (people.js's updates,
 // plus { type: 'plan', plan, altPath } when it has a plan of its own);
-// hooks.done is called once that's finished too.
+// hooks.done is called once that's finished too (only for a route:
+// with points 1 nothing comes after the result).
 //
 // req: { start: {lat, lng}, dest: {lat, lng}, points (1: hover at the
 //        start, 2: a route), mission, inp (readFlightInputs), battery
@@ -76,6 +77,10 @@ export async function computePlan(req, hooks){
   // MAX_FLIGHT_ALTITUDE_M, even with a permit).
   var legalCapM = req.altPermit ? MAX_FLIGHT_ALTITUDE_M : Math.min(MAX_FLIGHT_ALTITUDE_M, rules.profile.maxAglM);
   setMaxAglM(legalCapM);
+  // The height limit is the terrain module's setting: on a server other
+  // calculations may have changed it while this one waited, so it's put
+  // back every time this one carries on.
+  function resumeStale(){ setMaxAglM(legalCapM); return stale(); }
   // Site types the person chose not to avoid are left out of the
   // routing (a country's no-fly sites never are), but still drawn.
   var siteSplit = splitHazards(hazardData ? hazardData.hazards : [], req.skippedSites || []);
@@ -111,14 +116,14 @@ export async function computePlan(req, hooks){
       : Promise.resolve([null, null]);
 
   var wind = await windPromise;
-  if (stale()) return { stale: true };
+  if (resumeStale()) return { stale: true };
   if (wind.error){
     console.warn('Forecast lookup failed:', wind.error);
     return { error: 'forecast' };
   }
   var json = wind.json;
   var buildingData = await buildingPromise;
-  if (stale()) return { stale: true };
+  if (resumeStale()) return { stale: true };
   var buildings = buildingData ? buildingData.buildings : null;
   var buildingList = buildings ? buildings.list : [];
   var buildingHalfWidthUsed = buildingData ? buildingData.buildingHalfWidthUsed : BUILDING_CORRIDOR_HALF_WIDTH_M;
@@ -135,7 +140,7 @@ export async function computePlan(req, hooks){
   var speedupback = inp.speedupback, speeddownback = inp.speeddownback, speedhorizontalback = inp.speedhorizontalback;
   var heights = CANDIDATE_HEIGHTS_M.slice();
   var urbanArea = await urbanPromise;
-  if (stale()) return { stale: true };
+  if (resumeStale()) return { stale: true };
   if (urbanArea){
     var wdH = windByHeight(heights, wx, dronedegrees, inp).wd;
     wx.urban = routeUrbanFactors(urbanArea, heights, wdH, wx.wd10);
@@ -161,7 +166,7 @@ export async function computePlan(req, hooks){
     terrainSamples = await getTerrainProfile(avoidance.path)
         .catch(function(err){ console.warn('Terrain lookup failed:', err); return null; });
   }
-  if (stale()) return { stale: true };
+  if (resumeStale()) return { stale: true };
   var terrainAvailable = terrainSamples !== null;
   if (!terrainAvailable) terrainSamples = flatTerrainProfile(avoidance.path);
 
@@ -193,7 +198,7 @@ export async function computePlan(req, hooks){
   // The wind where the drone takes off and lands (a photo mission turns
   // round in the air at the destination).
   var fineAreas = await finePromise;
-  if (stale()) return { stale: true };
+  if (resumeStale()) return { stale: true };
   var groundWind = {
     start: endpointWinds(forecastPoints, urbanArea, startlat, startlng, null, fineAreas[0]),
     dest: landsAtDest ? endpointWinds(forecastPoints, urbanArea, destlat, destlng, null, fineAreas[1]) : null
@@ -247,7 +252,7 @@ export async function computePlan(req, hooks){
     heights: heights, wx: wx, dronedegrees: dronedegrees, inp: inp, legalOk: legalOk, battModel: battModel,
     temperatureC: temperatureC, payloadOut: payloadOut, payloadBack: payloadBack, mission: mission,
     timingOptsOut: timingOptsOut, timingOptsBack: timingOptsBack, effectiveCeilingM: effectiveCeilingM,
-    straightDistM: straightDistM, w: w, terrainAvailable: terrainAvailable, windField: windField
+    straightDistM: straightDistM, w: w, terrainAvailable: terrainAvailable, windField: windField, legalCapM: legalCapM
   };
   var mainRoute = { samples: terrainSamples, back: terrainBack, reqOut: reqOut, reqBack: reqBack, pOut: pOut, pBack: pBack,
                     buildingOk: buildingOk, distance: routeDist, segOut: segOut, segBack: segBack };
@@ -314,7 +319,7 @@ export async function computePlan(req, hooks){
       var avoid = [];
       for (var round = 0; ; round++){
         var res = await planAlongPath(planCtx, alt.path);
-        if (stale()) return null;
+        if (resumeStale()) return null;
         var plan = res.plans.fast;
         if (res.tooTall.length === 0 && plan.out && plan.back){
           onPeople({ type: 'plan', plan: Object.assign({}, plan, { route: res.route, people: alt.people }), altPath: alt.path });
@@ -329,8 +334,10 @@ export async function computePlan(req, hooks){
       }
     }
   }, function(u){ if (!stale()) onPeople(u); }) : Promise.resolve(null);
-  people.then(function(r){ if (!stale()) finished(r ? { people: r.people } : null); },
-              function(err){ console.warn('People under the route failed:', err); if (!stale()) finished(null); });
+  if (req.points === 2){
+    people.then(function(r){ if (!stale()) finished(r ? { people: r.people } : null); },
+                function(err){ console.warn('People under the route failed:', err); if (!stale()) finished(null); });
+  }
   return result;
 }
 

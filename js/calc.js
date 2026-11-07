@@ -941,6 +941,9 @@ export async function planAlongPath(planCtx, path){
     getTerrainProfile(path).catch(function(err){ console.warn('Terrain lookup failed:', err); return null; }),
     getBuildingsNearPath(path, c.straightDistM).catch(function(err){ console.warn('Building lookup failed:', err); return null; })
   ]);
+  // The height limit may have been changed by another calculation
+  // while this one waited (a server runs several at once).
+  if (c.legalCapM !== undefined) setMaxAglM(c.legalCapM);
   var samples = results[0];
   var terrainAvailable = samples !== null;
   if (!terrainAvailable) samples = flatTerrainProfile(path);
