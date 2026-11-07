@@ -43,24 +43,29 @@ async function fetchRange(start, length, url){
 
 export var ghslIO = { fetchRange: fetchRange };
 
-// The parts of a little-endian BigTIFF header we need. Throws if the
+// The parts of a little-endian TIFF header we need - BigTIFF (building
+// height, population) or classic TIFF (built-up surface). Throws if the
 // file isn't laid out the way this reader expects (tiled, one band of
 // 32- or 64-bit floats or 8-, 16- or 32-bit integers, deflate or no
 // compression, no predictor).
 export function parseGhslHeader(buf){
   var dv = new DataView(buf);
-  if (dv.getUint16(0, true) !== 0x4949 || dv.getUint16(2, true) !== 43) throw new Error('GHSL: not a little-endian BigTIFF');
-  var ifd = Number(dv.getBigUint64(8, true));
-  var n = Number(dv.getBigUint64(ifd, true));
+  var version = dv.getUint16(2, true);
+  if (dv.getUint16(0, true) !== 0x4949 || (version !== 43 && version !== 42)) throw new Error('GHSL: not a little-endian TIFF');
+  // BigTIFF: 8-byte offsets and counts, 20-byte entries; classic: 4 and 12.
+  var big = version === 43;
+  var ifd = big ? Number(dv.getBigUint64(8, true)) : dv.getUint32(4, true);
+  var n = big ? Number(dv.getBigUint64(ifd, true)) : dv.getUint16(ifd, true);
   var SIZE = { 3: 2, 4: 4, 12: 8, 16: 8 };
   var tags = {};
   for (var i = 0; i < n; i++){
-    var e = ifd + 8 + i * 20;
+    var e = big ? ifd + 8 + i * 20 : ifd + 2 + i * 12;
     var tag = dv.getUint16(e, true), type = dv.getUint16(e + 2, true);
-    var count = Number(dv.getBigUint64(e + 4, true));
+    var count = big ? Number(dv.getBigUint64(e + 4, true)) : dv.getUint32(e + 4, true);
     var size = SIZE[type];
     if (!size) continue;
-    var at = size * count <= 8 ? e + 12 : Number(dv.getBigUint64(e + 12, true));
+    var inline = big ? 8 : 4, valueAt = big ? e + 12 : e + 8;
+    var at = size * count <= inline ? valueAt : (big ? Number(dv.getBigUint64(valueAt, true)) : dv.getUint32(valueAt, true));
     tags[tag] = { type: type, count: count, at: at };
   }
   function values(tag){
@@ -83,12 +88,12 @@ export function parseGhslHeader(buf){
   if (compression !== 1 && compression !== 8 && compression !== 32946) throw new Error('GHSL: unsupported compression ' + compression);
   if (tags[317] && values(317)[0] !== 1) throw new Error('GHSL: predictors not supported');
   var scale = values(33550), tie = values(33922);
-  var counts = tags[325];
+  var offsets = tags[324], counts = tags[325];
   return {
     width: values(256)[0], height: values(257)[0],
     tileW: values(322)[0], tileH: values(323)[0],
     deflate: compression !== 1, bits: bits, sample: sample,
-    offsetsAt: tags[324].at,
+    offsetsAt: offsets.at, offsetsSize: offsets.type === 16 ? 8 : 4,
     countsAt: counts.at, countsSize: counts.type === 16 ? 8 : 4,
     // Top-left corner of the top-left pixel, and pixel size, in degrees.
     x0: tie[3] - tie[0] * scale[0], y0: tie[4] + tie[1] * scale[1], dx: scale[0], dy: scale[1]
@@ -122,8 +127,8 @@ async function getTile(url, h, tileRow, tileCol){
   var key = url + '|' + tileRow + ',' + tileCol;
   if (tileCache.has(key)) return tileCache.get(key);
   var idx = tileRow * Math.ceil(h.width / h.tileW) + tileCol;
-  var where = await Promise.all([ghslIO.fetchRange(h.offsetsAt + idx * 8, 8, url), ghslIO.fetchRange(h.countsAt + idx * h.countsSize, h.countsSize, url)]);
-  var offset = Number(new DataView(where[0]).getBigUint64(0, true));
+  var where = await Promise.all([ghslIO.fetchRange(h.offsetsAt + idx * h.offsetsSize, h.offsetsSize, url), ghslIO.fetchRange(h.countsAt + idx * h.countsSize, h.countsSize, url)]);
+  var offset = h.offsetsSize === 8 ? Number(new DataView(where[0]).getBigUint64(0, true)) : new DataView(where[0]).getUint32(0, true);
   var length = h.countsSize === 8 ? Number(new DataView(where[1]).getBigUint64(0, true)) : new DataView(where[1]).getUint32(0, true);
   var data = null;   // an empty tile (open sea) is stored with length 0
   if (length > 0){

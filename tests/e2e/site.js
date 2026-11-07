@@ -29,9 +29,17 @@
 //                 surface file (default: the file can't be downloaded)
 //   urbanModel    the building-wind model (data/urban_wind_model.json)
 //                 to serve (default: not found)
+//   fineModel     the fine building-wind model (data/urban_fine_model.json)
+//                 to serve (default: not found)
+//   fineBuildings (lat, lng) => OSM building ways (with geometry)
+//                 around a takeoff/landing point (default: none)
 //   country       ISO code Nominatim reports (default 'il')
 //   imperial      saved unit preference
 //   places        place-search results: { 'query text': [lat, lng] }
+//   engine        the calculation runs on the engine server (faked: the
+//                 engine itself, answering in the server's format):
+//                 'ok', 'down' (unreachable) or 'busy' (HTTP 429);
+//                 default: in the page
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeGhslTiff, rangeOf } from '../ghsl-fixture.js';
@@ -39,6 +47,7 @@ import { makeGhslTiff, rangeOf } from '../ghsl-fixture.js';
 const ROOT = path.join(import.meta.dirname, '..', '..');
 const MODULES = path.join(ROOT, 'node_modules');
 const SITE = 'https://flytimizer.test';
+const ENGINE = 'https://engine.flytimizer.test';
 const TYPES = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.xml': 'application/xml' };
 
 const json = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
@@ -123,6 +132,8 @@ export async function openSite(page, from, to, query, sc = {}){
     if (sc.overpassDelayMs) await new Promise(res => setTimeout(res, sc.overpassDelayMs));
     if (sc.overpassFail) return r.fulfill({ status: 500, body: 'error' });
     const body = decodeURIComponent((r.request().postData() || r.request().url()).replace(/\+/g, ' '));
+    const around = body.match(/building"\]\(around:[\d.]+,([-\d.]+),([-\d.]+)\)/);
+    if (around) return json(r, { elements: sc.fineBuildings ? sc.fineBuildings(+around[1], +around[2]) : [] });
     if (/building/.test(body) && !/amenity/.test(body)){
       const kind = sc.buildings || 'nearby';
       buildingQueries++;
@@ -184,7 +195,7 @@ export async function openSite(page, from, to, query, sc = {}){
   const popTiff = sc.population !== undefined ? makeGhslTiff(Object.assign({ value: popValue, bits: 64 }, ghslBox)) : null;
   // Built-up surface in m2 per cell, like the real file.
   const cellArea = lat => (ghslBox.dx * 111320) * (ghslBox.dx * 111320 * Math.cos(lat * Math.PI / 180));
-  const builtTiff = sc.builtS !== undefined ? makeGhslTiff(Object.assign({ value: lat => sc.builtS * cellArea(lat) }, ghslBox)) : null;
+  const builtTiff = sc.builtS !== undefined ? makeGhslTiff(Object.assign({ value: lat => sc.builtS * cellArea(lat), classic: true }, ghslBox)) : null;
   await ctx.route(/jrc-ghsl\.s3\./, r => {
     const url = r.request().url();
     const tiff = /ghs-pop/.test(url) ? popTiff : /ghs-built-s/.test(url) ? builtTiff : heightTiff;
@@ -195,6 +206,32 @@ export async function openSite(page, from, to, query, sc = {}){
   });
 
   await ctx.route(SITE + '/data/urban_wind_model.json', r => sc.urbanModel ? json(r, sc.urbanModel) : r.fulfill({ status: 404 }));
+  await ctx.route(SITE + '/data/urban_fine_model.json', r => sc.fineModel ? json(r, sc.fineModel) : r.fulfill({ status: 404 }));
+
+  // The engine runs in the page unless the test asks for the server.
+  await ctx.addInitScript(url => { window.FLYTIMIZER_ENGINE_URL = url; }, sc.engine ? ENGINE : '');
+  if (sc.engine){
+    await ctx.route(ENGINE + '/**', async r => {
+      const url = new URL(r.request().url());
+      if (sc.engine === 'down') return r.abort();
+      if (url.pathname === '/health') return r.fulfill({ status: 200, body: 'ok', headers: { 'Access-Control-Allow-Origin': '*' } });
+      if (sc.engine === 'busy') return r.fulfill({ status: 429, body: 'Too many', headers: { 'Access-Control-Allow-Origin': '*' } });
+      // The engine answers in the server's format (one JSON line per message).
+      const lines = await page.evaluate(async body => {
+        const engine = await import('/js/engine.js');
+        const out = [];
+        const send = m => out.push(engine.encodeResult(m));
+        let finish;
+        const finished = new Promise(res => { finish = res; });
+        const req = engine.decodeResult(body);
+        const res = await engine.computePlan(req, { stage: key => send({ t: 'stage', key }), onPeople: u => send({ t: 'people', u }), done: x => finish(x) });
+        send({ t: 'result', r: res });
+        send({ t: 'done', r: (res.error || req.points !== 2) ? null : await finished });
+        return out.join('\n') + '\n';
+      }, r.request().postData());
+      r.fulfill({ status: 200, body: lines, headers: { 'Content-Type': 'application/x-ndjson', 'Access-Control-Allow-Origin': '*' } });
+    });
+  }
 
   const q = 'from=' + from.join(',') + (to ? '&to=' + to.join(',') : '') + (query ? '&' + query : '');
   await page.goto(SITE + '/index.html?' + q);

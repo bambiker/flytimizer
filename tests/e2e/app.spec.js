@@ -829,6 +829,34 @@ test('Start over is only offered once there is a point on the map', async ({ pag
   await expect(page.getByRole('button', { name: 'Start over' })).toBeHidden();
 });
 
+test('on the engine server: the result, the people under the route and the route over fewer people, as in the page', async ({ page }) => {
+  const mid = [(HAIFA[0] + HAIFA_DEST[0]) / 2, (HAIFA[1] + HAIFA_DEST[1]) / 2];
+  const population = (lat, lng) => Math.abs(lat - mid[0]) < 0.003 && Math.abs(lng - mid[1]) < 0.003 ? 1500 : 1;
+  const plans = {};
+  for (const engine of [undefined, 'ok']){
+    await page.context().clearCookies();
+    await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [], population, flatGround: true, engine });
+    await waitForResult(page);
+    await expect(page.locator('#heightfore')).toHaveText(/^\d+$/);
+    await expect(page.locator('#peopleInfo')).toContainText('A route over fewer people');
+    await expect(page.locator('#planPeopleBtn')).toContainText(/Fewer people.*%/);
+    plans[engine || 'page'] = await page.locator('#planTabs').textContent();
+    await page.context().unrouteAll({ behavior: 'ignoreErrors' });
+  }
+  expect(plans.ok).toBe(plans.page);
+});
+
+test('when the engine server can\'t be reached, or is refusing calculations for now, the page says so with Try again', async ({ page }) => {
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { engine: 'down' });
+  const notice = page.locator('#calcNotice');
+  await expect(notice).toContainText('Couldn’t reach Flytimizer’s calculation server', { timeout: 45000 });
+  await expect(notice.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(page.locator('#result')).toBeHidden();
+  await page.context().unrouteAll({ behavior: 'ignoreErrors' });
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { engine: 'busy' });
+  await expect(notice).toContainText('Too many calculations from your connection', { timeout: 45000 });
+});
+
 test('a failed wind forecast is reported, with Try again', async ({ page }) => {
   await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { forecastFail: true });
   const notice = page.locator('#calcNotice');
@@ -990,6 +1018,26 @@ test('gusts among the buildings at takeoff over the drone\'s rating give a takeo
   await waitForResult(page);
   await expect(page.locator('#groundWindInfo')).toContainText('funnelled by the buildings');
   await expect(page.locator('#groundWindWarning')).toContainText('Gusts low down at the start and the destination');
+});
+
+test('taking off in a street between buildings mapped in OSM, the fine model shows the wind sheltered right there', async ({ page }) => {
+  // A street ~12 m wide between two long blocks, around each point; a model that keeps 40% of the wind within 15 m of a building.
+  const m = 1 / 111320;
+  const block = (lat, lng, eOff) => {
+    const mE = m / Math.cos(lat * Math.PI / 180);
+    return [[-120, eOff], [-120, eOff + 20], [120, eOff + 20], [120, eOff]].map(([n, e]) => ({ lat: lat + n * m, lon: lng + e * mE }));
+  };
+  const fineBuildings = (lat, lng) => [-26, 6].map((e, k) => ({ type: 'way', id: 900 + k, geometry: block(lat, lng, e), tags: { building: 'yes', height: '30' } }));
+  const fineModel = { init: 0, lr: 1, trees: [{ f: [7, -2, -2], t: [15, 0, 0], l: [1, -1, -1], r: [2, -1, -1], v: [0, Math.log(0.4), 0] }] };
+  const noon = new Date(); noon.setUTCHours(12, 30, 0, 0);
+  await page.clock.setFixedTime(noon);
+  await openSite(page, HAIFA, HAIFA_DEST, 'drone=mini4pro', { hazards: [], flatGround: true, fineModel, fineBuildings });
+  await waitForResult(page);
+  await expect(page.locator('#groundWindInfo')).toContainText('sheltered by the buildings right there');
+  // Switched off with the building-wind setting.
+  await page.evaluate(() => { document.getElementById('droneConfigPanel').open = true; });
+  await page.locator('#urbanWind').uncheck();
+  await expect(page.locator('#groundWindInfo')).not.toContainText('sheltered');
 });
 
 test('without the building data the forecast wind is used as it is', async ({ page }) => {

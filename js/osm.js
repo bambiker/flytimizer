@@ -3,7 +3,6 @@
 
 import { deg2rad, getDistanceFromLatLon } from './core.js';
 import { ghslHeights } from './ghsl.js';
-import { Progress } from './progress.js';
 import { minDistanceFromPath } from './routing.js';
 import { applyRulesToHazards } from './rules.js';
 
@@ -350,6 +349,9 @@ export var OVERPASS_FETCH_TIMEOUT_MS = (OVERPASS_QUERY_TIMEOUT_S + 10) * 1000;
 export var OVERPASS_RETRY_DELAY_MS = 2000;
 export var OVERPASS_CACHE_MAX = 20;
 export var overpassCache = new Map();
+// Told when a busy map server makes us retry, with a line to show (the
+// page shows it in the progress bar; a server passes it on).
+export var osmHooks = { retrying: function(){} };
 export var overpassPreferred = 0;
 
 export function sleep(ms){
@@ -396,7 +398,7 @@ export async function fetchOverpass(query){
     var url = OVERPASS_ENDPOINTS[idx];
     for (var attempt = 0; attempt < 2; attempt++){
       if (k > 0 || attempt > 0){
-        Progress.retrying('Map server busy — trying ' + (attempt > 0 ? 'again' : 'a backup server') + ' (' + overpassHost(url) + ')…');
+        osmHooks.retrying('Map server busy — trying ' + (attempt > 0 ? 'again' : 'a backup server') + ' (' + overpassHost(url) + ')…');
       }
       try {
         var data = await overpassAttempt(url, query);

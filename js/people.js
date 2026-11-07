@@ -68,84 +68,111 @@ function altText(alt, people, distance){
     Math.round((1 - alt.people / people) * 100) + '% fewer) \u2014 see the Fewer people plan.';
 }
 
-// Fills the "People under the route" line in the result, then looks for
-// a route over fewer people (lowpop.js) and offers it. Runs after the
-// rest of the result is shown, so a slow download doesn't hold it up.
-// opts: { from, to, distance, obstacles, onAlternative(alt, research) } -
-// onAlternative is called with a route over fewer people when there is
-// one, and a research(avoid) function to look for it again keeping
-// clear of more obstacles (calc.js plans it as the "Fewer people" tab);
-// it resolves to { ok, alt } or { ok: false, reason }.
-var renderSeq = 0;
-export async function renderPeopleInfo(path, opts){
-  var el = document.getElementById('peopleInfo');
-  if (!el) return null;
+// The people under the route, then a route over fewer people
+// (lowpop.js), as a series of updates for the screen (renderPeopleView):
+//   { type: 'count', people, peakPerKm2 } | { type: 'countError' }
+//   { type: 'alt', alt: { path, distance, people } } - found one
+//   { type: 'altResult', ok: true, alt } | { type: 'altResult', ok: false, reason }
+//   { type: 'noAlt' } - looked, found none worth offering
+//   { type: 'status', state, note } - why the Fewer people tab has no plan
+// opts: { from, to, distance, obstacles, planAlt(alt, research) } -
+// planAlt plans a route over fewer people (calc.js) and may look for it
+// again keeping clear of more obstacles with research(avoid); it
+// resolves to { ok, alt } or { ok: false, reason }.
+export async function peoplePhase(path, opts, emit){
   opts = opts || {};
-  var seq = ++renderSeq;   // a newer calculation wins over a slow older one
-  function status(state, note){ if (opts.onStatus) opts.onStatus({ state: state, note: note }); }
-  el.textContent = 'Counting the people who live under the route…';
-  el.style.display = 'block';
+  function status(state, note){ emit({ type: 'status', state: state, note: note }); }
   var r;
   try {
     r = await peopleUnderRoute(path);
   } catch (err){
     console.warn('Population data unavailable:', err);
-    if (seq === renderSeq){
-      el.style.display = 'none';
-      status('nodata', 'The population data couldn’t be loaded, so no route over fewer people could be looked for: this is the fastest route.');
-    }
+    emit({ type: 'countError' });
+    status('nodata', 'The population data couldn’t be loaded, so no route over fewer people could be looked for: this is the fastest route.');
     return null;
   }
-  if (seq !== renderSeq) return null;
-  var base = peopleText(roundPeople(r.people), r.peakPerKm2) +
-    '. That’s where people live (EU GHS-POP 2025): in the daytime schools, offices and streets can be busier.';
-  el.textContent = base;
+  emit({ type: 'count', people: r.people, peakPerKm2: r.peakPerKm2 });
   if (!opts.from || !opts.to) return r;
+  var alt;
   try {
-    var alt = await suggestFewerPeopleRoute(opts.from, opts.to, { distance: opts.distance, people: r.people }, opts.obstacles);
-    if (seq !== renderSeq) return r;
-    var note = document.createElement('span');
-    if (alt){
-      showAltRoute(alt.path);
-      note.textContent = altText(alt, r.people, opts.distance);
-      el.appendChild(note);
-      // The plan may look for the route again (round buildings too tall
-      // to fly over), or find it can't be flown: then it isn't offered.
-      var research = function(avoid){
-        return suggestFewerPeopleRoute(opts.from, opts.to, { distance: opts.distance, people: r.people }, (opts.obstacles || []).concat(avoid));
-      };
-      if (opts.onAlternative) opts.onAlternative(alt, research).then(function(res){
-        if (seq !== renderSeq || !res) return;
-        if (res.ok){
-          showAltRoute(res.alt.path);
-          note.textContent = altText(res.alt, r.people, opts.distance);
-          return;
-        }
-        showAltRoute(null);
-        note.textContent = ' A route over fewer people was found, but ' + res.reason + ', so it isn\u2019t offered.';
-        status('unflyable', 'A route over fewer people was found, but ' + res.reason + ': this is the fastest route.');
-      }, function(err){
-        console.warn('Planning the route over fewer people failed:', err);
-        if (seq !== renderSeq) return;
-        showAltRoute(null);
-        note.textContent = ' A route over fewer people was found, but it couldn\u2019t be planned.';
-        status('unflyable', 'A route over fewer people was found, but it couldn’t be planned: this is the fastest route.');
-      });
-    } else if (r.people >= LOWPOP_MIN_PEOPLE_SAVED){
-      note.textContent = ' No way round passes over clearly fewer people for a modest detour here.';
-      el.appendChild(note);
-    }
-    if (!alt){
-      status('same', r.people < LOWPOP_MIN_PEOPLE_SAVED
-        ? 'Hardly anyone lives under this route, so the fastest route is also the one over the fewest people.'
-        : opts.distance > LOWPOP_MAX_ROUTE_M
-          ? 'Routes over ' + fmtDist(LOWPOP_MAX_ROUTE_M) + ' aren’t searched for a way round people: this is the fastest route.'
-          : 'No way round passes over clearly fewer people for a modest detour, so this is the fastest route.');
-    }
-    r.alternative = alt;
+    alt = await suggestFewerPeopleRoute(opts.from, opts.to, { distance: opts.distance, people: r.people }, opts.obstacles);
   } catch (err){
     console.warn('Fewer-people route search failed:', err);
-    if (seq === renderSeq) status('nodata', 'The search for a route over fewer people failed: this is the fastest route.');
+    status('nodata', 'The search for a route over fewer people failed: this is the fastest route.');
+    return r;
+  }
+  r.alternative = alt;
+  if (!alt){
+    if (r.people >= LOWPOP_MIN_PEOPLE_SAVED) emit({ type: 'noAlt' });
+    status('same', r.people < LOWPOP_MIN_PEOPLE_SAVED
+      ? 'Hardly anyone lives under this route, so the fastest route is also the one over the fewest people.'
+      : opts.distance > LOWPOP_MAX_ROUTE_M
+        ? 'Routes over ' + fmtDist(LOWPOP_MAX_ROUTE_M) + ' aren’t searched for a way round people: this is the fastest route.'
+        : 'No way round passes over clearly fewer people for a modest detour, so this is the fastest route.');
+    return r;
+  }
+  emit({ type: 'alt', alt: { path: alt.path, distance: alt.distance, people: alt.people } });
+  if (!opts.planAlt) return r;
+  // The plan may look for the route again (round buildings too tall to
+  // fly over), or find it can't be flown: then it isn't offered.
+  var research = function(avoid){
+    return suggestFewerPeopleRoute(opts.from, opts.to, { distance: opts.distance, people: r.people }, (opts.obstacles || []).concat(avoid));
+  };
+  var res;
+  try {
+    res = await opts.planAlt(alt, research);
+  } catch (err){
+    console.warn('Planning the route over fewer people failed:', err);
+    emit({ type: 'altResult', ok: false, error: true });
+    status('unflyable', 'A route over fewer people was found, but it couldn’t be planned: this is the fastest route.');
+    return r;
+  }
+  if (!res) return r;
+  if (res.ok){
+    emit({ type: 'altResult', ok: true, alt: { path: res.alt.path, distance: res.alt.distance, people: res.alt.people } });
+  } else {
+    emit({ type: 'altResult', ok: false, reason: res.reason });
+    status('unflyable', 'A route over fewer people was found, but ' + res.reason + ': this is the fastest route.');
   }
   return r;
+}
+
+// The "People under the route" line, kept up to date from peoplePhase's
+// updates. Returns update(u); a newer view makes older ones do nothing.
+var viewSeq = 0;
+export function renderPeopleView(distance){
+  var el = document.getElementById('peopleInfo');
+  var seq = ++viewSeq, people = 0, note = null;
+  if (el){
+    el.textContent = 'Counting the people who live under the route…';
+    el.style.display = 'block';
+  }
+  return function update(u){
+    if (!el || seq !== viewSeq) return;
+    if (u.type === 'countError'){
+      el.style.display = 'none';
+    } else if (u.type === 'count'){
+      people = u.people;
+      el.textContent = peopleText(roundPeople(u.people), u.peakPerKm2) +
+        '. That’s where people live (EU GHS-POP 2025): in the daytime schools, offices and streets can be busier.';
+    } else if (u.type === 'noAlt'){
+      note = document.createElement('span');
+      note.textContent = ' No way round passes over clearly fewer people for a modest detour here.';
+      el.appendChild(note);
+    } else if (u.type === 'alt'){
+      showAltRoute(u.alt.path);
+      note = document.createElement('span');
+      note.textContent = altText(u.alt, people, distance);
+      el.appendChild(note);
+    } else if (u.type === 'altResult' && note){
+      if (u.ok){
+        showAltRoute(u.alt.path);
+        note.textContent = altText(u.alt, people, distance);
+      } else {
+        showAltRoute(null);
+        note.textContent = u.error ? ' A route over fewer people was found, but it couldn’t be planned.'
+          : ' A route over fewer people was found, but ' + u.reason + ', so it isn’t offered.';
+      }
+    }
+  };
 }

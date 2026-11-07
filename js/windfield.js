@@ -18,6 +18,7 @@
 
 import { airspeedFor, getDistanceFromLatLon, groundSpeed, interpDir, trueBearing } from './core.js';
 import { urbanFactorAt } from './urbanwind.js';
+import { FINE_MIN_LAM150, fineFactorAt } from './urbanfine.js';
 
 export var URBAN_SNAP_M = 100;
 var M_PER_DEG = 111320;
@@ -131,9 +132,12 @@ export function legSegmentSpeeds(seg, hs, inp){
 // street, or funnelled faster round a block. At a point (the start or
 // the destination), for each of `heights` (m): { h, ws (with the
 // buildings), wsForecast, factor, gust (estimate), gustCheck (never
-// below the forecast's, for the safety check) }.
+// below the forecast's, for the safety check), source }.
+// fineArea (urbanfine.js, the OSM buildings right there) is used when
+// there is one and OSM has the buildings GHSL says are there; else the
+// GHSL model (source 'area'), else the forecast (source null).
 export var GROUND_WIND_HEIGHTS = [10, 20, 30];
-export function endpointWinds(points, urbanArea, lat, lng, heights){
+export function endpointWinds(points, urbanArea, lat, lng, heights, fineArea){
   heights = heights || GROUND_WIND_HEIGHTS;
   var p = points[0], best = Infinity;
   points.forEach(function(q){
@@ -142,9 +146,14 @@ export function endpointWinds(points, urbanArea, lat, lng, heights){
   });
   return heights.map(function(h){
     var w = windAtHeight(p.wx, h);
-    var f = urbanArea ? urbanFactorAt(urbanArea.model, urbanArea.grid, lat, lng, w.wd, h).factor : 1;
+    var coarse = urbanArea ? urbanFactorAt(urbanArea.model, urbanArea.grid, lat, lng, w.wd, h) : null;
+    var fine = fineArea ? fineFactorAt(fineArea.model, fineArea.grid, h, w.wd) : null;
+    // Taking off from a roof (the point is in a footprint), or OSM
+    // missing the buildings there: the fine model doesn't apply.
+    if (fine && (fine.inBuilding || (fine.lam150 < FINE_MIN_LAM150 && coarse && coarse.w > 0.3))) fine = null;
+    var f = fine ? fine.factor : coarse ? coarse.factor : 1;
     return {
-      h: h, ws: w.ws * f, wsForecast: w.ws, factor: f,
+      h: h, ws: w.ws * f, wsForecast: w.ws, factor: f, source: fine ? 'buildings' : coarse ? 'area' : null,
       gust: w.ws * f * p.wx.gustFactor,
       gustCheck: Math.max(w.ws, w.ws * f) * p.wx.gustFactor
     };
