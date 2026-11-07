@@ -65,17 +65,25 @@ export function coldCapacityFactor(tempC){
 }
 
 export function readBatteryModel(){
-  var wh = parseFloat(document.getElementById('batt').value);
-  var minutes = parseFloat(document.getElementById('ftime').value);
-  var massKg = parseFloat(document.getElementById('mass').value);
-  var health = parseFloat(document.getElementById('health').value);
-  var vmax = parseFloat(document.getElementById('hor').value);
+  return batteryModelFrom(readBatteryFields());
+}
+
+// The drone's battery settings from the form.
+export function readBatteryFields(){
+  function num(id){ return parseFloat(document.getElementById(id).value); }
+  var picker = document.getElementById('droneModel');
+  return { wh: num('batt'), minutes: num('ftime'), massKg: num('mass'), health: num('health'), vmax: num('hor'),
+           droneModel: picker ? picker.value : '' };
+}
+
+// The battery model from those settings, or null if they're incomplete.
+// A preset is only selected while its fields are untouched (editing one
+// switches the picker to Custom), so its measured curve applies.
+export function batteryModelFrom(f){
+  var wh = f.wh, minutes = f.minutes, massKg = f.massKg, health = f.health, vmax = f.vmax;
   if (!(wh > 0) || !(minutes > 0) || !(massKg > 0) || !(vmax > 0)) return null;
   if (!(health > 0)) health = 100;
-  // A preset is only selected while its fields are untouched (editing
-  // one switches the picker to Custom), so its measured curve applies.
-  var picker = document.getElementById('droneModel');
-  var preset = picker && DRONE_PRESETS[picker.value];
+  var preset = f.droneModel && DRONE_PRESETS[f.droneModel];
   var power = (preset && preset.power) || {};
   var curve = power.curve || DEFAULT_POWER_CURVE;
   var testSpeed = (preset && preset.testSpeed) || SPEC_TEST_SPEED_MS;
