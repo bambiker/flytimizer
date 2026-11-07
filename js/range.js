@@ -2,7 +2,7 @@
 // fly from the start and still get back, direction by direction (see
 // roundTripRange in calc.js), plus a one-line summary in the result.
 
-import { BATTERY_RESERVE_PCT } from './battery.js';
+import { BATTERY_RESERVE_PCT } from './labels.js';
 import { deg2rad } from './core.js';
 import { map, rangeLayer } from './map-view.js';
 import { fmtDist } from './units.js';

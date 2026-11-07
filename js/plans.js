@@ -1,6 +1,6 @@
 // The plans (fastest / least battery / fewer people) and their result panel.
 
-import { BATTERY_RESERVE_PCT, fmtPct } from './battery.js';
+import { BATTERY_RESERVE_PCT, fmtPct } from './labels.js';
 import { formatDuration } from './core.js';
 import { roundTripWaypoints } from './mission.js';
 import { profileWaypoints, renderTerrainProfile } from './terrain.js';

@@ -159,7 +159,7 @@ A start or destination inside a keep-out zone doesn't send the route out to the 
 * **Elevation**: Copernicus GLO-90 via Open-Meteo.
 * **Map features**: OpenStreetMap (Overpass), with backup servers.
 * **Building heights and population**: the EU's Global Human Settlement Layer (GHS-BUILT-H 2018, GHS-BUILT-S 2020, GHS-POP 2025, CC BY 4.0), read straight from its public file in small pieces.
-* **Satellites**: CelesTrak orbit data, propagated in the browser to predict how many GPS, Galileo, GLONASS and BeiDou satellites are overhead. **Kp index**: NOAA SWPC.
+* **Satellites**: CelesTrak orbit data, propagated to predict how many GPS, Galileo, GLONASS and BeiDou satellites are overhead. **Kp index**: NOAA SWPC.
 * **Spoofing check**: the country of your internet connection (geojs.io) and your device's time zone.
 
 ---
@@ -209,58 +209,15 @@ Potential future development includes:
 
 ### Building-Scale Wind
 
-A first step is in the site: **Buildings and the wind** (beta, `js/urbanwind.js`).
-For every height and every point along the route, a factor scales the
-forecast wind:
-
-```text
-factor = (1 - w) + w × ratio
-```
-
-* `ratio` is how much of the open-ground wind is left among the buildings
-  there (the highest value within 40 m, so a sheltered courtyard doesn't
-  stand for a whole street). It comes from a small gradient-boosting
-  model (`data/urban_wind_model.json`, 200 trees) that imitates a U-Net
-  trained on OpenFOAM simulations of Tel Aviv; the model only reads GHSL
-  building height and built-up surface around the point (250 m around
-  it, and 600 m upwind), so it works anywhere. It is fitted to the 70th
-  percentile of the U-Net's values for similar surroundings rather than
-  their mean: weather stations, like drones, are mostly in the open part
-  of a block, not in its most sheltered corners.
-* `w` fades the correction out where little is built (full from 40% of
-  the ground covered by buildings in GHSL), so in open country the
-  forecast is used as it is.
-* Above 80 m (the highest level of the simulations) the 80 m value is used.
-
-Checked against 35 weather stations in Tel Aviv, Jerusalem, Tokyo and
-Singapore (2024, hourly), with the model trained on the other cities
-each time it imitates the U-Net in a city it hasn't seen (R² 0.35–0.56
-on the U-Net's values). Against the measurements, over all hours:
-
-| | RMSE (m/s) | bias (m/s) |
-|---|---|---|
-| Open-Meteo | 1.69 | +0.42 |
-| Open-Meteo × this model | 1.50 | −0.03 |
-| Open-Meteo × the full U-Net (needs detailed building maps) | 1.46 | −0.22 |
-
-It beats Open-Meteo in Jerusalem and Singapore and is about even with it
-in Tel Aviv and Tokyo.
-
-The same model gives the wind low down where the drone takes off and
-lands (10–30 m, at the start and, for a delivery, the destination):
-funnelled between buildings or sheltered by them. When the fine model
-(`data/urban_fine_model.json`) is present, the takeoff and landing points
-use it instead: it reads the OpenStreetMap footprints within 150 m,
-rasterised to 2 m (distance to the nearest building and its height,
-built-up share within 20, 50 and 150 m, buildings upwind), and gives the
-U-Net's value at the point itself, so a sheltered street comes out
-sheltered (`js/urbanfine.js`; trained with `tools/train_urban_fine.py`).
-It isn't used on a roof, or where OSM lacks buildings that GHSL shows. The result shows it,
-and warns when the gusts there may reach the drone's wind rating (the
-check never takes the wind below the forecast). The factor changes the wind used for the flight
-times and battery; the gust and crosswind limits keep the forecast wind
-(or the corrected one where that's stronger). It can be switched off in
-the drone settings.
+A first step is in the site: **Buildings and the wind** (beta). The
+forecast wind at every height along the route is adjusted for the
+buildings around it, with a model trained on CFD simulations of the
+wind among buildings and checked against weather stations in Tel Aviv,
+Jerusalem, Tokyo and Singapore, where it comes closer to the measured
+wind than the forecast alone. It also gives the wind low down where the
+drone takes off and lands, funnelled between buildings or sheltered by
+them, and warns when the gusts there may reach the drone's wind rating.
+The gust and crosswind checks never take the wind below the forecast.
 
 Future versions may incorporate local wind effects around buildings, terrain and urban structures.
 
@@ -287,7 +244,7 @@ Actual drone performance
 
 This could allow FLYTIMIZER to learn aircraft-specific performance and local wind biases over time.
 
-A first step is in [`tools/dji_battery_model.py`](tools/README.md): an offline script that fits a battery model to DJI flight-record CSVs, validates it flight by flight, and estimates wind effects. Its results already calibrate the site's Neo 2 preset.
+A first step: the DJI Neo 2 preset is already calibrated from real flight logs.
 
 ---
 
@@ -327,21 +284,14 @@ Potential areas for contribution include:
 
 ### Code layout
 
-The site is plain HTML, CSS and JavaScript with no build step. `index.html` loads a single ES module, `js/app.js`, which imports the rest of `js/` (one file per area: wind and routing math, OpenStreetMap lookups, terrain, battery, range, plans, the map, sharing, the DJI export, the GHSL readers for building heights and population, the route over fewer people, satellites, the spoofing check and the "Conditions here" card) and wires up the page. Offline scripts that aren't part of the site live in `tools/`.
+This repository holds the site's screen: plain HTML, CSS and JavaScript with no build step. `index.html` loads a single ES module, `js/app.js`, which wires up the map, the form, the result panels, the plans, sharing and the DJI export. The calculation runs on Flytimizer's calculation server (`js/engine-client.js` talks to it); its code isn't public.
 
-### Running the tests
-
-The site itself has no build step, but it has automated tests (run on every pull request by GitHub Actions):
+### Running the checks
 
 ```bash
 npm install
-npx playwright install chromium   # first time only
-npm test
+npm test        # ESLint and the unit tests in tests/unit/
 ```
-
-* `npm run lint` — ESLint (also part of `npm test`).
-* `tests/unit/` — the calculation and formatting functions, run directly in Node.
-* `tests/e2e/` — the real page in Chromium, with every outside service (weather, elevation, OpenStreetMap, GHSL, CelesTrak, NOAA, IP country) replaced by fixed test data, so the tests run offline and give the same result every time.
 
 ---
 

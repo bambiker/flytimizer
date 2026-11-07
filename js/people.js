@@ -1,16 +1,13 @@
-// How many people live under a route: the EU's GHS-POP population grid
-// (people per ~90 m cell, 2025 estimate) read along the route, turned
-// into a density and counted over a corridor either side of it.
+// The "People under the route" line: how many people live under the
+// route (from the EU's GHS-POP population grid, worked out by the
+// engine) and the route over fewer people.
 //
 // It's where people LIVE (homes), which is what a population census
 // counts - in the daytime schools, offices, shops and streets can be
 // busier than this, and homes emptier. Good for comparing routes and
 // for a first look at ground risk, not a head count.
 
-import { GHSL_POP_URL, ghslCells } from './ghsl.js';
-import { LOWPOP_MAX_ROUTE_M, LOWPOP_MIN_PEOPLE_SAVED, suggestFewerPeopleRoute } from './lowpop.js';
 import { showAltRoute } from './map-view.js';
-import { densifyPath } from './terrain.js';
 import { fmtDist } from './units.js';
 
 export var PEOPLE_CORRIDOR_HALF_WIDTH_M = 50;
@@ -22,31 +19,6 @@ export function densityLabel(perKm2){
   if (perKm2 < 5000) return 'suburban';
   if (perKm2 < 20000) return 'city';
   return 'dense city';
-}
-
-// samples: [{ s (m along the route), lat, lng }]; perCell: people in the
-// grid cell under each sample; dx/dy: cell size in degrees.
-// { people, peakPerKm2, lengthM, kmByLabel }
-export function countPeople(samples, perCell, dx, dy, halfWidthM){
-  var hw = halfWidthM === undefined ? PEOPLE_CORRIDOR_HALF_WIDTH_M : halfWidthM;
-  var people = 0, peak = 0;
-  for (var i = 0; i < samples.length; i++){
-    var p = samples[i];
-    var cellM2 = (dx * 111320 * Math.cos(p.lat * Math.PI / 180)) * (dy * 110574);
-    var density = (perCell[i] || 0) / cellM2;   // people per m2
-    peak = Math.max(peak, density);
-    // Each sample stands for half the stretch to its neighbours.
-    var before = i > 0 ? p.s - samples[i - 1].s : 0;
-    var after = i < samples.length - 1 ? samples[i + 1].s - p.s : 0;
-    people += density * (before + after) / 2 * 2 * hw;
-  }
-  return { people: people, peakPerKm2: peak * 1e6, lengthM: samples.length ? samples[samples.length - 1].s : 0 };
-}
-
-export async function peopleUnderRoute(path){
-  var samples = densifyPath(path);
-  var cells = await ghslCells(GHSL_POP_URL, samples, false);
-  return countPeople(samples, cells.values, cells.dx, cells.dy);
 }
 
 function roundPeople(n){
@@ -66,75 +38,6 @@ function altText(alt, people, distance){
   return ' A route over fewer people (dashed purple on the map): ' + fmtDist(alt.distance) + ' (+' +
     Math.round((alt.distance / distance - 1) * 100) + '%), about ' + roundPeople(alt.people).toLocaleString('en') + ' people under it (' +
     Math.round((1 - alt.people / people) * 100) + '% fewer) \u2014 see the Fewer people plan.';
-}
-
-// The people under the route, then a route over fewer people
-// (lowpop.js), as a series of updates for the screen (renderPeopleView):
-//   { type: 'count', people, peakPerKm2 } | { type: 'countError' }
-//   { type: 'alt', alt: { path, distance, people } } - found one
-//   { type: 'altResult', ok: true, alt } | { type: 'altResult', ok: false, reason }
-//   { type: 'noAlt' } - looked, found none worth offering
-//   { type: 'status', state, note } - why the Fewer people tab has no plan
-// opts: { from, to, distance, obstacles, planAlt(alt, research) } -
-// planAlt plans a route over fewer people (calc.js) and may look for it
-// again keeping clear of more obstacles with research(avoid); it
-// resolves to { ok, alt } or { ok: false, reason }.
-export async function peoplePhase(path, opts, emit){
-  opts = opts || {};
-  function status(state, note){ emit({ type: 'status', state: state, note: note }); }
-  var r;
-  try {
-    r = await peopleUnderRoute(path);
-  } catch (err){
-    console.warn('Population data unavailable:', err);
-    emit({ type: 'countError' });
-    status('nodata', 'The population data couldn’t be loaded, so no route over fewer people could be looked for: this is the fastest route.');
-    return null;
-  }
-  emit({ type: 'count', people: r.people, peakPerKm2: r.peakPerKm2 });
-  if (!opts.from || !opts.to) return r;
-  var alt;
-  try {
-    alt = await suggestFewerPeopleRoute(opts.from, opts.to, { distance: opts.distance, people: r.people }, opts.obstacles);
-  } catch (err){
-    console.warn('Fewer-people route search failed:', err);
-    status('nodata', 'The search for a route over fewer people failed: this is the fastest route.');
-    return r;
-  }
-  r.alternative = alt;
-  if (!alt){
-    if (r.people >= LOWPOP_MIN_PEOPLE_SAVED) emit({ type: 'noAlt' });
-    status('same', r.people < LOWPOP_MIN_PEOPLE_SAVED
-      ? 'Hardly anyone lives under this route, so the fastest route is also the one over the fewest people.'
-      : opts.distance > LOWPOP_MAX_ROUTE_M
-        ? 'Routes over ' + fmtDist(LOWPOP_MAX_ROUTE_M) + ' aren’t searched for a way round people: this is the fastest route.'
-        : 'No way round passes over clearly fewer people for a modest detour, so this is the fastest route.');
-    return r;
-  }
-  emit({ type: 'alt', alt: { path: alt.path, distance: alt.distance, people: alt.people } });
-  if (!opts.planAlt) return r;
-  // The plan may look for the route again (round buildings too tall to
-  // fly over), or find it can't be flown: then it isn't offered.
-  var research = function(avoid){
-    return suggestFewerPeopleRoute(opts.from, opts.to, { distance: opts.distance, people: r.people }, (opts.obstacles || []).concat(avoid));
-  };
-  var res;
-  try {
-    res = await opts.planAlt(alt, research);
-  } catch (err){
-    console.warn('Planning the route over fewer people failed:', err);
-    emit({ type: 'altResult', ok: false, error: true });
-    status('unflyable', 'A route over fewer people was found, but it couldn’t be planned: this is the fastest route.');
-    return r;
-  }
-  if (!res) return r;
-  if (res.ok){
-    emit({ type: 'altResult', ok: true, alt: { path: res.alt.path, distance: res.alt.distance, people: res.alt.people } });
-  } else {
-    emit({ type: 'altResult', ok: false, reason: res.reason });
-    status('unflyable', 'A route over fewer people was found, but ' + res.reason + ': this is the fastest route.');
-  }
-  return r;
 }
 
 // The "People under the route" line, kept up to date from peoplePhase's

@@ -1,6 +1,7 @@
-// The calculation on the engine server (see the flytimizer-engine
-// repository): the same computePlan(req, hooks) as engine.js, over
-// HTTP. ENGINE_URL empty means the engine runs here in the page.
+// The calculation on the engine server (the private flytimizer-engine
+// repository): compute('plan' | 'conditions', req, hooks). With
+// ENGINE_URL empty (tests, local work) the engine runs here in the page,
+// loaded from ENGINE_MODULE (a checkout of that repository).
 //
 // The server answers one JSON object per line as the calculation goes:
 // progress stages, a busy map server, the result, then the people
@@ -24,10 +25,27 @@ export function wakeEngine(){
   try { fetch(ENGINE_URL + '/health', { cache: 'no-store' }).catch(function(){}); } catch (e){}
 }
 
-// hooks: as computePlan's, plus retrying(msg). Resolves to the result,
-// or { error: 'engine' | 'busy' } when the server can't be reached or
-// is refusing calculations for now.
-export async function remoteComputePlan(req, hooks){
+// Where the engine is when it runs in the page.
+export var ENGINE_MODULE = (typeof window !== 'undefined' && window.FLYTIMIZER_ENGINE_MODULE) || '../engine/engine.js';
+
+// kind: 'plan' (req and hooks as the engine's computePlan: stage, stale,
+// onPeople, done, plus retrying(msg)) or 'conditions'. Resolves to the
+// result, or { error: 'engine' | 'busy' } when the server can't be
+// reached or is refusing calculations for now.
+export function compute(kind, req, hooks){
+  return ENGINE_URL ? remoteCompute(kind, req, hooks || {}) : localCompute(kind, req, hooks || {});
+}
+
+// In the page: through JSON all the same, so nothing drawn depends on
+// objects that can't travel.
+async function localCompute(kind, req, hooks){
+  var engine = await import(new URL(ENGINE_MODULE, import.meta.url).href);
+  engine.osmHooks.retrying = hooks.retrying || function(){};
+  var r = kind === 'plan' ? await engine.computePlan(req, hooks) : await engine.computeConditions(req);
+  return decodeResult(encodeResult(r));
+}
+
+async function remoteCompute(kind, req, hooks){
   var controller = new AbortController();
   // A newer calculation replaced this one: stop listening.
   var watch = setInterval(function(){ if (hooks.stale && hooks.stale()) controller.abort(); }, 300);
@@ -63,7 +81,7 @@ export async function remoteComputePlan(req, hooks){
   (async function(){
     var res;
     try {
-      res = await fetch(ENGINE_URL + '/plan', { method: 'POST', body: encodeResult(req), signal: controller.signal,
+      res = await fetch(ENGINE_URL + '/' + kind, { method: 'POST', body: encodeResult(req), signal: controller.signal,
         headers: { 'Content-Type': 'text/plain' } });
     } catch (err){
       resolveResult(controller.signal.aborted ? { stale: true } : { error: 'engine' });

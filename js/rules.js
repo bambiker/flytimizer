@@ -1,6 +1,5 @@
 // Country rules: per-country height limits, keep-out distances and notes.
 
-import { HAZARD_ROUTING_RADIUS_CAP_M } from './osm.js';
 import { escapeHtml, fmtDist, unitsImperial } from './units.js';
 
 // ---------------------------------------------------------------
@@ -107,7 +106,6 @@ export var REGULATION_PROFILES = {
   }
 };
 export var RULES_FALLBACK_CODE = 'IL';
-export var NO_FLY_WARNING_EXTRA_MARGIN_M = 100; // map-data imprecision margin on top of the keep-out distance
 export var countryCache = new Map();
 
 // Rough boxes used only if the reverse geocoder can't be reached.
@@ -151,34 +149,6 @@ export async function detectCountry(lat, lng){
   }
   countryCache.set(key, result);
   return result;
-}
-
-// {profile, detected:{code,name}, fallback:boolean}
-export async function rulesForLocation(lat, lng){
-  var detected = await detectCountry(lat, lng);
-  var profile = REGULATION_PROFILES[detected.code];
-  return {
-    profile: profile || REGULATION_PROFILES[RULES_FALLBACK_CODE],
-    detected: detected,
-    fallback: !profile
-  };
-}
-
-export function hazardBufferFor(profile, type){
-  return (profile.bufferM[type] !== undefined) ? profile.bufferM[type] : profile.defaultBufferM;
-}
-
-// Adds the rule-dependent fields to hazards found by
-// getHazardsNearRoute: buffer, routing clearance, whether it's a
-// no-fly type, and how far its warning reaches.
-export function applyRulesToHazards(hazards, profile){
-  hazards.forEach(function(h){
-    h.buffer = hazardBufferFor(profile, h.type);
-    h.clearance = Math.min(h.radius + h.buffer, HAZARD_ROUTING_RADIUS_CAP_M);
-    h.noFly = !!profile.noFlyTypes[h.type];
-    h.warnM = Math.max(h.buffer, profile.warnM[h.type] || 0) + NO_FLY_WARNING_EXTRA_MARGIN_M;
-  });
-  return hazards;
 }
 
 export function formatDistance(m){
