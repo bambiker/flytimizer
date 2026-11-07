@@ -11,7 +11,11 @@
 
 import { decodeResult, encodeResult } from './engine-codec.js';
 
-export var ENGINE_URL = (typeof window !== 'undefined' && window.FLYTIMIZER_ENGINE_URL) || '';
+// Tests and local work set window.FLYTIMIZER_ENGINE_URL ('' runs the
+// engine in the page).
+export var DEFAULT_ENGINE_URL = 'https://flytimizer-engine.onrender.com';
+export var ENGINE_URL = typeof window !== 'undefined' && typeof window.FLYTIMIZER_ENGINE_URL === 'string'
+  ? window.FLYTIMIZER_ENGINE_URL : DEFAULT_ENGINE_URL;
 
 // A sleeping free server takes up to a minute to start: ask it to wake
 // as soon as the page opens, so it's up by the time it's needed.

@@ -208,8 +208,9 @@ export async function openSite(page, from, to, query, sc = {}){
   await ctx.route(SITE + '/data/urban_wind_model.json', r => sc.urbanModel ? json(r, sc.urbanModel) : r.fulfill({ status: 404 }));
   await ctx.route(SITE + '/data/urban_fine_model.json', r => sc.fineModel ? json(r, sc.fineModel) : r.fulfill({ status: 404 }));
 
+  // The engine runs in the page unless the test asks for the server.
+  await ctx.addInitScript(url => { window.FLYTIMIZER_ENGINE_URL = url; }, sc.engine ? ENGINE : '');
   if (sc.engine){
-    await ctx.addInitScript(url => { window.FLYTIMIZER_ENGINE_URL = url; }, ENGINE);
     await ctx.route(ENGINE + '/**', async r => {
       const url = new URL(r.request().url());
       if (sc.engine === 'down') return r.abort();
