@@ -195,7 +195,7 @@ export async function openSite(page, from, to, query, sc = {}){
   const popTiff = sc.population !== undefined ? makeGhslTiff(Object.assign({ value: popValue, bits: 64 }, ghslBox)) : null;
   // Built-up surface in m2 per cell, like the real file.
   const cellArea = lat => (ghslBox.dx * 111320) * (ghslBox.dx * 111320 * Math.cos(lat * Math.PI / 180));
-  const builtTiff = sc.builtS !== undefined ? makeGhslTiff(Object.assign({ value: lat => sc.builtS * cellArea(lat) }, ghslBox)) : null;
+  const builtTiff = sc.builtS !== undefined ? makeGhslTiff(Object.assign({ value: lat => sc.builtS * cellArea(lat), classic: true }, ghslBox)) : null;
   await ctx.route(/jrc-ghsl\.s3\./, r => {
     const url = r.request().url();
     const tiff = /ghs-pop/.test(url) ? popTiff : /ghs-built-s/.test(url) ? builtTiff : heightTiff;

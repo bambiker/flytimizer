@@ -36,6 +36,17 @@ test('ghslHeights reads the cells under each point (highest of the cell and its 
   assert.equal(requests, before);
 });
 
+test('a classic TIFF (like the GHSL built-up surface file) reads the same as a BigTIFF', async () => {
+  const classic = makeGhslTiff({ x0: 34.7, y0: 32.32, dx: 0.01, width: 32, height: 32, tile: 16, classic: true,
+    value: (lat, lng) => lng < 34.75 ? 0 : lat > 32.2 ? 30 : 5 });
+  assert.equal(classic.readUInt16LE(2), 42);
+  const h = g.parseGhslHeader(classic.buffer.slice(classic.byteOffset, classic.byteOffset + 4096));
+  assert.equal(h.width, 32);
+  assert.equal(h.offsetsSize, 4);
+  serve(classic);
+  assert.deepEqual(await g.ghslHeights([{ lat: 32.25, lng: 34.9 }, { lat: 32.1, lng: 34.9 }, { lat: 32.1, lng: 34.72 }, { lat: 33, lng: 34.9 }]), [30, 5, 0, null]);
+});
+
 test('fillMissingBuildingHeights raises only buildings without an OSM height, never lowers', async () => {
   serve(tiff);
   const list = [
@@ -57,7 +68,7 @@ test('if the height data can\'t be read, buildings keep their guesses', async ()
   assert.deepEqual(r, { checked: 0, raised: 0, failed: true });
   assert.equal(list[0].height, 7);
   // A file in another layout is refused rather than misread.
-  assert.throws(() => g.parseGhslHeader(new ArrayBuffer(64)), /BigTIFF/);
+  assert.throws(() => g.parseGhslHeader(new ArrayBuffer(64)), /not a little-endian TIFF/);
 });
 
 test('buildingHeightTagged', () => {
