@@ -29,6 +29,7 @@ Instead of simply flying at a fixed altitude, FLYTIMIZER asks:
 * 📦 **Delivery** missions (different payload on the way back) or **photo / inspection** round trips
 * ⛰️ **Terrain following**: heights are above the ground, using Copernicus GLO-90 elevation
 * 🏙️ **Buildings slow the wind** (beta): along the route, the forecast wind at each height is scaled by how much the buildings around it shelter it, from a model trained on CFD simulations and checked against weather stations in four cities; used for the flight times and battery, never to loosen the gust and crosswind checks
+* 🗼 **Wind beside towers**: along the route the gust and crosswind checks allow for stronger wind beside tall buildings, and the route keeps further away when even that is too much for the drone
 * 🏢 Clearance above mapped buildings, or a detour around ones too tall to climb over; where OpenStreetMap has no height for a building, the average building height around it from the EU's Global Human Settlement Layer (GHS-BUILT-H, 2018) is used instead of a guess
 * 🏫 Detours around restricted and sensitive sites from OpenStreetMap: schools, kindergartens, hospitals, playgrounds, nursing homes, universities, power facilities, airports, heliports, prisons, embassies and military sites; sites that aren't no-fly zones under the local rules (schools, hospitals, playgrounds…) can be switched off in **Restricted areas**
 * ⚖️ **Country rules** (height limit, keep-out distances, no-fly sites) for Israel and the United States, with Israel's as the default elsewhere
