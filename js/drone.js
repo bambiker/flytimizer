@@ -68,8 +68,10 @@ function fieldKg(id){
 // Photo missions carry the same load both ways.
 export function payloadFactors(mission){
   var mass = fieldKg('mass');
-  var outKg = fieldKg('payloadKg');
-  var backKg = mission === 'photo' ? outKg : fieldKg('payloadBackKg');
+  // A photo / inspection flight carries no payload: its camera is part
+  // of the drone.
+  var outKg = mission === 'photo' ? 0 : fieldKg('payloadKg');
+  var backKg = mission === 'photo' ? 0 : fieldKg('payloadBackKg');
   function factor(kg){ return mass > 0 ? 1 + kg / mass : 1; }
   return { out: factor(outKg), back: factor(backKg), mass: mass, outKg: outKg, backKg: backKg, mtow: fieldKg('mtow') || null };
 }
