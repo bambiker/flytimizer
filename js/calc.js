@@ -229,6 +229,32 @@ export function renderGroundWind(start, dest, windResistance){
     ', at or over this drone’s ' + fmtSpeed(windResistance) + ' rating: take off and land somewhere more open, or wait for calmer wind.' : '';
 }
 
+// Towers by the route: the wind speeds up and gusts round them, so the
+// safety checks allow for more there (t: the engine's towerWind), and
+// the route keeps away from those whose gusts would be too much for the
+// drone at every height (kept: the engine's towersKeptOff).
+export function renderTowerWind(t, kept){
+  var el = document.getElementById('towerWindInfo');
+  if (!el) return;
+  kept = kept || [];
+  el.hidden = !t && !kept.length;
+  if (el.hidden) return;
+  var text = '';
+  if (t){
+    var one = t.count === 1;
+    text = (one ? 'A tall building (' + fmtLen(t.maxHeight) + ') stands' : t.count + ' tall buildings (up to ' + fmtLen(t.maxHeight) + ') stand') +
+      ' close to the route. The wind can speed up and gust round ' + (one ? 'it' : 'them') + ', so from the ground to ' +
+      fmtLen(t.maxHeight + t.above) + ' beside ' + (one ? 'it' : 'them') + ' the gust and crosswind checks allow for wind ' + t.factor + '× the forecast.';
+  }
+  if (kept.length){
+    var far = Math.max.apply(null, kept.map(function(k){ return k.distM; }));
+    text += (text ? ' ' : '') + 'In this wind the gusts beside ' + (kept.length === 1 ? 'a ' + fmtLen(kept[0].height) + ' tower' : kept.length + ' towers') +
+      ' on the way would be too much for this drone at every height it may fly, so the route keeps about ' + fmtLen(far) + ' away from ' +
+      (kept.length === 1 ? 'it' : 'them') + '.';
+  }
+  el.textContent = text;
+}
+
 // One line on what the buildings along the route do to the wind.
 export function renderUrbanWindInfo(urban, on){
   var el = document.getElementById('urbanWindInfo');
@@ -534,6 +560,7 @@ function renderResult(R, ctx){
     }
     renderNoFlyWarning(R.noFlyNear, rules);
     renderGroundWind(R.groundWind.start, R.groundWind.dest, ctx.inp.windResistance);
+    renderTowerWind(R.towerWind, R.towersKeptOff);
 
     // Over the drone's max takeoff weight: say so up front.
     const weight = payloadCheck(payloadFactors(ctx.mission));

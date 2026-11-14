@@ -1217,7 +1217,7 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
           Max takeoff weight
           <div class="field-input"><input type="text" inputmode="decimal" id="mtow" value="" placeholder="not published"><span class="unit">kg</span></div>
         </label>
-        <label class="field">
+        <label class="field" id="payloadField">
           <span id="payloadLabel">Payload (outbound)</span>
           <div class="field-input"><input type="text" inputmode="decimal" id="payloadKg" value="0"><span class="unit">kg</span></div>
         </label>
@@ -1313,6 +1313,7 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
     <div class="fly-warning" id="weightWarning" hidden></div>
     <div class="fly-warning" id="groundWindWarning" hidden></div>
     <p class="hint" id="groundWindInfo" hidden></p>
+    <p class="hint" id="towerWindInfo" hidden></p>
 
     <div class="forecast">
       <div class="forecast-head">
@@ -1396,6 +1397,19 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
   <details class="panel" id="whatsNew">
     <summary>What's new</summary>
     <div class="disclosure-body">
+      <p class="changelog-date">14 Nov 2026</p>
+      <ul>
+        <li><b>Photo flights carry no payload</b>: the camera is part of the
+        drone, so a photo or inspection flight no longer asks for one, and
+        its range and battery are worked out without one.</li>
+      </ul>
+      <p class="changelog-date">8 Nov 2026</p>
+      <ul>
+        <li><b>Wind beside towers</b>: the wind can speed up and gust round
+        tall buildings, so along the route (checked every ~30 m) the gust
+        and crosswind checks allow for stronger wind beside them. When even
+        that is too much for the drone, the route keeps further away.</li>
+      </ul>
       <p class="changelog-date">7 Nov 2026</p>
       <ul>
         <li><b>Building wind fixed</b>: the slow-down of the wind among
@@ -1660,8 +1674,8 @@ details.result-details[open] > summary{ margin-bottom: 8px; }
   <!-- Bump data-updated (and the What's new list) on every release.
        If the GitHub repo is reachable, the latest commit date
        replaces it automatically when it's newer. -->
-  <p class="updated" id="lastUpdated" data-updated="2026-11-07">
-    Updated <time id="lastUpdatedDate" datetime="2026-11-07">7 Nov 2026</time>
+  <p class="updated" id="lastUpdated" data-updated="2026-11-14">
+    Updated <time id="lastUpdatedDate" datetime="2026-11-14">14 Nov 2026</time>
   </p>
 
   <script>

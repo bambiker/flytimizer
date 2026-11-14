@@ -11,8 +11,9 @@ import { profileWaypoints } from './terrain.js';
 // back - the return leg can carry a different payload, and each leg
 // is its own mission (takeoff and landing at both ends).
 // Photo / inspection: fly to the destination, stay airborne there for
-// the time set, and come straight back at the same weight - no
-// landing or takeoff at the destination, one round-trip mission.
+// the time set, and come straight back - no payload (the camera is part
+// of the drone), no landing or takeoff at the destination, one
+// round-trip mission.
 // ---------------------------------------------------------------
 export var DWELL_DEFAULTS = { delivery: 30, photo: 60 };
 
@@ -23,10 +24,11 @@ export function currentMission(){
 
 export function onMissionChange(){
   var m = currentMission();
-  var backField = document.getElementById('payloadBackField');
-  if (backField) backField.style.display = m === 'photo' ? 'none' : '';
-  var lbl = document.getElementById('payloadLabel');
-  if (lbl) lbl.textContent = m === 'photo' ? 'Payload' : 'Payload (outbound)';
+  // No payload on a photo flight: both payload fields go.
+  ['payloadField', 'payloadBackField'].forEach(function(id){
+    var f = document.getElementById(id);
+    if (f) f.style.display = m === 'photo' ? 'none' : '';
+  });
   var d = document.getElementById('dwell');
   var other = m === 'photo' ? 'delivery' : 'photo';
   if (d && parseFloat(d.value) === DWELL_DEFAULTS[other]) d.value = DWELL_DEFAULTS[m];
@@ -34,7 +36,7 @@ export function onMissionChange(){
   var note = document.getElementById('missionNote');
   if (note){
     note.textContent = m === 'photo'
-      ? 'Flies to the destination, stays in the air there for the time you set, and comes straight back at the same weight. Flight plan: one round-trip mission.'
+      ? 'Flies to the destination, stays in the air there for the time you set, and comes straight back, with no payload (the camera is part of the drone). Flight plan: one round-trip mission.'
       : 'Lands or lowers the parcel at the destination (time at destination = hovering time; set 0 if it lands and waits powered down), then flies back with the return payload. Flight plans: one mission each way.';
   }
   saveSettings();
