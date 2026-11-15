@@ -1,0 +1,1738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flytimizer by Windrone — Fastest Drone Altitude for Your Route</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Free drone flight planner: finds the altitude that saves the most flight time and battery on your route, using live wind forecasts, terrain, buildings and no-fly areas. Export DJI waypoint missions.">
+<link rel="canonical" href="https://bambiker.github.io/flytimizer/">
+<meta name="theme-color" content="#0a0f1a">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flytimizer">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Flytimizer by Windrone">
+<meta property="og:url" content="https://bambiker.github.io/flytimizer/">
+<meta property="og:title" content="Flytimizer by Windrone — Fastest Drone Altitude for Your Route">
+<meta property="og:description" content="Live wind, terrain, buildings and no-fly areas — find the altitude that saves the most flight time and battery.">
+<meta property="og:image" content="https://bambiker.github.io/flytimizer/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Flytimizer: a drone route's altitude profile over terrain, with live wind">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Flytimizer by Windrone — Fastest Drone Altitude for Your Route">
+<meta name="twitter:description" content="Live wind, terrain, buildings and no-fly areas — find the altitude that saves the most flight time and battery.">
+<meta name="twitter:image" content="https://bambiker.github.io/flytimizer/og-image.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "Flytimizer",
+  "alternateName": "Flytimizer by Windrone",
+  "creator": { "@type": "Organization", "name": "Windrone" },
+  "url": "https://bambiker.github.io/flytimizer/",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Any (web browser)",
+  "description": "Drone flight planner that finds the altitude saving the most flight time and battery on a route, using live wind forecasts, terrain elevation, buildings and restricted areas.",
+  "dateModified": "2026-10-20",
+  "featureList": [
+    "Best altitude for each leg from hourly wind forecasts at several heights",
+    "Fastest, least-battery and fewer-people route plans",
+    "Battery estimate per leg with payload, cold and battery health",
+    "Round-trip range map in today's wind",
+    "Terrain following, buildings and restricted areas from OpenStreetMap",
+    "People living under the route from the EU population grid",
+    "Satellite count, Kp index and GPS spoofing check",
+    "DJI WPML waypoint mission export"
+  ],
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<base target="_top">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+
+:root{
+  --bg: #0a0f1a;
+  --panel: #121a2b;
+  --panel-2: #17223a;
+  --line: #263356;
+  --ink: #e7ecf6;
+  --muted: #8d9ab8;
+  --accent: #ff8a34;
+  --accent-ink: #1a1002;
+  --accent-2: #4fd1c5;
+  --accent-text: #ff8a34;  /* accent used as text: at least 4.5:1 on the panels */
+  --danger: #ff5a5a;
+  --danger-solid: #c62828; /* background behind white text */
+  --grid-line: rgba(79,209,197,0.06);
+  --field-shadow: rgba(0,0,0,0.35);
+  --danger-bg: rgba(255,90,90,0.12);
+  --radius: 6px;
+  --sans: "Space Grotesk", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light){
+  :root{
+    --bg: #f3f5fa;
+    --panel: #ffffff;
+    --panel-2: #eef1f8;
+    --line: #d7dceb;
+    --ink: #172037;
+    --muted: #58658a;
+    --accent: #d9670f;
+    --accent-ink: #1a1002;
+    --accent-2: #0a776c;
+    --accent-text: #b04f06;
+    --danger: #c93030;
+    --danger-solid: #c93030;
+    --grid-line: rgba(23,32,55,0.045);
+    --field-shadow: rgba(23,32,55,0.12);
+    --danger-bg: rgba(201,48,48,0.10);
+    color-scheme: light;
+  }
+}
+
+*{ box-sizing: border-box; }
+
+html,body{
+  margin:0;
+  padding:0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+body{
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 34px 34px;
+  background-attachment: fixed;
+}
+
+a{ color: var(--accent-2); }
+a:hover{ color: var(--accent); }
+
+::selection{ background: var(--accent); color: var(--accent-ink); }
+
+:focus-visible{
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
+.wrap{
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 28px 20px 64px;
+}
+
+/* ---------- header ---------- */
+
+.topbar{
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
+h1{
+  font-size: clamp(20px, 4vw, 28px);
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+h1 .logo{
+  color: var(--accent);
+  width: 0.9em;
+  height: 0.9em;
+  flex: none;
+}
+
+.by-brand{
+  font-size: 0.55em;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.subtitle{
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+}
+
+.btn.btn-install{ padding: 6px 12px; font-size: 13px; }
+.btn-install[hidden]{ display: none; }
+
+.setup-panel .step-title{ margin: 0 0 10px; font-weight: 600; color: var(--ink); }
+.setup-grid{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.step{
+  display: inline-grid; place-items: center;
+  width: 22px; height: 22px; margin-right: 6px;
+  border-radius: 50%; background: var(--accent); color: var(--accent-ink);
+  font-size: 13px; font-weight: 700; vertical-align: 1px;
+}
+/* The Calculate button stays at the bottom of the screen until the
+   page is scrolled to where it belongs. */
+.calc-bar{
+  position: sticky; bottom: 12px; z-index: 1000;
+  margin: 0 0 12px;
+}
+.calc-bar .btn{ margin: 0; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+.calc-bar .btn.busy{ opacity: .85; }
+
+/* Start (A) and destination (B) pins on the map. */
+.route-pin{ background: none; border: 0; }
+.route-pin .pin-dot{
+  display: grid; place-items: center;
+  width: 26px; height: 26px; box-sizing: border-box;
+  border-radius: 50%; border: 3px solid #fff;
+  color: #fff; font: 700 13px/1 var(--sans);
+  box-shadow: 0 1px 6px rgba(0,0,0,.5);
+}
+.route-pin-start .pin-dot{ background: #16a34a; }
+.route-pin-end .pin-dot{ background: #dc2626; }
+.route-pin .pin-label{
+  position: absolute; left: 30px; top: 3px;
+  white-space: nowrap; padding: 2px 7px; border-radius: 10px;
+  background: rgba(255,255,255,.92); color: #111827;
+  font: 600 12px/16px var(--sans);
+  box-shadow: 0 1px 4px rgba(0,0,0,.35);
+  pointer-events: none;
+}
+
+.brand-row{
+  display:flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
+}
+
+.updated{
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 22px;
+  font-family: var(--mono);
+}
+
+.changelog-date{
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent-2);
+  margin: 0 0 6px !important;
+}
+
+.lede{
+  color: var(--muted);
+  max-width: 62ch;
+  margin: 0 0 22px;
+}
+
+/* ---------- panels & disclosures ---------- */
+
+.panel{
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.panel-label{
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+details.panel{
+  padding: 0;
+}
+
+details.panel > summary{
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 18px;
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+details.panel > summary::-webkit-details-marker{ display:none; }
+
+details.panel > summary::after{
+  content: "+";
+  font-family: var(--mono);
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+
+details.panel[open] > summary::after{
+  content: "\2212";
+}
+
+details.panel .disclosure-body{
+  padding: 0 18px 16px;
+  color: var(--muted);
+}
+
+details.panel .disclosure-body ul{
+  margin: 0;
+  padding-left: 20px;
+}
+
+details.panel .disclosure-body li{
+  margin-bottom: 8px;
+}
+
+details.panel .disclosure-body p{
+  margin: 0 0 12px;
+}
+
+details.panel + details.panel{
+  margin-top: -4px;
+}
+
+/* Small "more" disclosures: the explanations most people don't need. */
+details.more{
+  margin: 6px 0 12px;
+}
+details.more > summary{
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  width: fit-content;
+}
+details.more > summary:hover{ color: var(--ink); }
+details.result-details{
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 4px;
+}
+details.result-details > summary{
+  cursor: pointer;
+  padding: 10px 0;
+  font-weight: 500;
+  color: var(--ink);
+}
+details.result-details[open] > summary{ margin-bottom: 8px; }
+
+/* ---------- map ---------- */
+
+#map{
+  width: 100%;
+  height: 340px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.map-actions{
+  display:flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.map-buttons{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.map-buttons [hidden]{ display: none; }
+
+.conditions{
+  margin-top: 12px;
+  border-left: 3px solid var(--accent-2);
+  padding: 2px 0 2px 12px;
+  font-size: 14px;
+}
+.conditions[hidden]{ display: none; }
+.conditions .cond-head{ margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+.conditions dl{ margin: 0; display: grid; gap: 8px; }
+.conditions .cond-row{ display: grid; grid-template-columns: minmax(110px, 30%) 1fr; gap: 10px; }
+.conditions dt{ color: var(--muted); }
+.conditions dd{ margin: 0; }
+@media (max-width: 560px){
+  .conditions .cond-row{ grid-template-columns: 1fr; gap: 2px; }
+}
+
+.location-search{
+  display:flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.location-search .field-input{
+  flex: 1;
+  min-width: 0;
+}
+
+.hint{
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+.lede-more{ margin: -6px 0 16px; }
+
+.field-grid{
+  display:flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field{
+  display:flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.field-input{
+  display:flex;
+  align-items:center;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 10px;
+  box-shadow: inset 0 1px 3px var(--field-shadow);
+}
+
+.field-input input{
+  flex:1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--accent-text);
+  font-family: var(--mono);
+  font-size: 15px;
+  padding: 4px 0;
+}
+
+.field-input input:focus{
+  outline: none;
+  color: var(--ink);
+}
+
+.field-input .unit{
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.field-input select{
+  flex:1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  padding: 5px 0;
+}
+
+.field-input select:focus{
+  outline: none;
+}
+
+.field-input select option{
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+.field-check{
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.field-check input{
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.site-toggles{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px 16px;
+  margin-top: 10px;
+}
+
+.rules-notes{
+  margin: 6px 0 6px;
+  padding-left: 18px;
+}
+
+.rules-notes li{ margin-bottom: 2px; }
+
+.field-note{
+  color: var(--muted);
+  font-size: 12px;
+  margin: 10px 0 0;
+}
+.field-note.field-warn{ color: var(--danger); font-weight: 600; }
+
+/* ---------- buttons ---------- */
+
+.btn{
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 500;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  padding: 12px 18px;
+  cursor: pointer;
+  transition: transform 0.05s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.btn-primary{
+  background: var(--accent);
+  color: var(--accent-ink);
+  width: 100%;
+  font-size: 16px;
+  margin: 4px 0 22px;
+}
+
+.btn-primary:hover{ background: #ffa15e; }
+.btn-primary:active{ transform: translateY(1px); }
+.btn:disabled{ opacity: 0.6; cursor: not-allowed; transform: none; }
+
+.btn-ghost{
+  background: transparent;
+  border-color: var(--line);
+  color: var(--ink);
+  align-self: flex-start;
+}
+
+.btn-ghost:hover{ border-color: var(--accent-2); color: var(--accent-2); }
+
+/* ---------- progress ---------- */
+
+.progress{
+  margin: -12px 0 22px;
+}
+
+.progress[hidden]{ display: none; }
+
+.progress-track{
+  height: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill{
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.2s linear;
+}
+
+.progress-meta{
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.progress-meta #progressEta{
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+.btn-inline{
+  padding: 4px 10px;
+  font-size: 13px;
+  margin-left: 6px;
+}
+
+/* ---------- results ---------- */
+
+.results{
+  border-color: var(--accent-2);
+}
+
+.result-headline{
+  display:flex;
+  gap: 14px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.readout{
+  flex: 1;
+  min-width: 140px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 12px 14px;
+}
+
+.readout-label{
+  display:block;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.readout-value{
+  font-family: var(--mono);
+  font-size: 28px;
+  font-weight: 600;
+}
+
+#heightfore{ color: var(--accent); }
+#heightback{ color: var(--accent-2); }
+
+.mission-grid{
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+
+/* Grid and flex items don't shrink below their content by default, so
+   a long dropdown option would push the field off a phone screen. */
+.mission-grid > *, .field, .field-input{ min-width: 0; }
+.speed-mode{ margin-top: 12px; }
+.field-input select{ width: 100%; text-overflow: ellipsis; }
+
+@media (max-width: 520px){
+  .mission-grid{ grid-template-columns: 1fr; }
+}
+
+.wpml-buttons{ display: contents; }
+
+/* ---------- 48-hour outlook ---------- */
+
+.forecast{
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 12px 6px;
+  margin-bottom: 16px;
+}
+
+.forecast-head{
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.forecast-head strong{ font-weight: 600; }
+
+.forecast-legend{
+  display: flex;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.forecast-legend span:first-child{ flex-basis: 100%; }
+
+.forecast-legend i{
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+.fc-bars{
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 64px;
+  padding-bottom: 16px;
+}
+
+.fc-bar{
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-end;
+}
+
+.fc-fill{
+  display: block;
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+}
+
+.fc-good .fc-fill{ background: var(--accent-2); }
+.fc-fair .fc-fill{ background: #d9a400; }
+.fc-bad .fc-fill{ background: var(--danger); }
+.fc-bar:hover .fc-fill{ opacity: 0.75; }
+
+.fc-selected::after{
+  content: "";
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: 0;
+  bottom: 0;
+  border: 1.5px solid var(--ink);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.fc-tick{
+  position: absolute;
+  bottom: -15px;
+  left: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.plan-tabs [hidden]{ display: none; }
+.plan-tabs{
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.plan-tab{
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 12px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--sans);
+}
+
+.plan-tab:hover{ border-color: var(--accent-2); }
+
+.plan-tab.active{
+  border-color: var(--accent);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.plan-title{
+  display: block;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.plan-detail{
+  display: block;
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.readout-sub{
+  display: block;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+#battUsed{ color: var(--ink); }
+
+.result-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.result-head .panel-label{ margin-bottom: 0; }
+
+.units-select{
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.readout-value small{
+  font-size: 14px;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+.range-info{
+  border-left: 3px solid #14b8a6;
+  padding: 2px 0 2px 12px;
+  margin: 0 0 14px;
+  font-size: 14px;
+}
+.range-info p{ margin: 0 0 6px; }
+.range-guide{ margin-left: 14px; font-size: 13px; color: var(--accent-text); }
+.range-toggle{ display:inline-flex; align-items:center; gap:6px; color: var(--muted); font-size: 13px; cursor:pointer; }
+.savings{
+  color: var(--muted);
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.savings strong{ color: var(--ink); }
+
+.fly-warning{
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 10px 14px;
+  border-radius: 4px;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.notice{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 8px 10px 8px 14px;
+  border-radius: 4px;
+  font-size: 14px;
+  margin: 12px 0;
+}
+.notice[hidden]{ display: none; }
+.notice.notice-info{ background: var(--panel-2); border-color: var(--line); color: var(--ink); }
+.notice > span{ flex: 1 1 200px; }
+.notice-copy{
+  flex: 1 1 100%;
+  order: 3;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.notice-close{
+  background: none;
+  border: 0;
+  color: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.no-fly-warning{
+  background: var(--danger-solid);
+  border: 2px solid var(--danger-solid);
+  color: #fff;
+  padding: 14px 16px;
+  border-radius: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.no-fly-warning .no-fly-detail{
+  display: block;
+  font-weight: 400;
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.readout.unsafe .readout-value{ color: var(--danger); }
+
+.unsafe-value{
+  color: var(--danger);
+  border-bottom: 1px dotted var(--danger);
+  cursor: pointer;
+}
+
+.warning-hint{
+  color: var(--danger);
+}
+
+.viz-row{
+  display:flex;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.compass{
+  flex: 1;
+  min-width: 220px;
+  max-width: 320px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px;
+}
+
+.compass svg{
+  width: 100%;
+  height: auto;
+  display:block;
+}
+
+.result-actions{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.terrain-profile{
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 18px;
+}
+
+.terrain-profile svg{
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.table-scroll{
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 16px;
+}
+
+.wind-table{
+  width: 100%;
+  min-width: 480px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.wind-table th{
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wind-table td{
+  font-family: var(--mono);
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.wind-table tr:last-child td{ border-bottom: none; }
+
+.meta-row{
+  display:flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.meta-row span span{ color: var(--ink); font-family: var(--mono); }
+
+/* ---------- footer bits ---------- */
+
+.credit{
+  color: var(--muted);
+  font-size: 13px;
+  margin: 8px 0 22px;
+}
+
+.feedback-link{
+  display:inline-block;
+  margin: 18px 0;
+  font-size: 14px;
+}
+
+@media (prefers-reduced-motion: reduce){
+  *{ transition: none !important; animation: none !important; }
+}
+
+</style>
+
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-5SL33P5MG7"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-5SL33P5MG7');
+</script>
+
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="topbar">
+    <div class="brand-row">
+      <h1><svg class="logo" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7 7l10 10M17 7L7 17"/><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg> Flytimizer <span class="by-brand">by Windrone</span></h1>
+      <p class="subtitle">Fly (Time & Battery) Optimizer</p>
+    </div>
+    <button class="btn btn-ghost btn-install" id="installBtn" data-action="install" hidden>Add to home screen</button>
+  </header>
+  <div class="notice notice-info" id="installNotice" role="status" hidden></div>
+
+  <main>
+
+  <section class="panel setup-panel">
+    <p class="step-title"><span class="step">1</span> What are you flying?</p>
+    <div class="setup-grid">
+      <label class="field">
+        Mission
+        <div class="field-input">
+          <select id="mission">
+            <option value="delivery">Delivery</option>
+            <option value="photo">Photo / inspection</option>
+          </select>
+        </div>
+      </label>
+      <label class="field">
+        Drone model
+        <div class="field-input">
+          <select id="droneModel">
+            <optgroup label="DJI Mini">
+              <option value="mini3">DJI Mini 3</option>
+              <option value="mini4k">DJI Mini 4K</option>
+              <option value="mini4pro">DJI Mini 4 Pro</option>
+              <option value="mini5pro">DJI Mini 5 Pro</option>
+            </optgroup>
+            <optgroup label="DJI Air and Mavic">
+              <option value="air3">DJI Air 3</option>
+              <option value="air3s">DJI Air 3S</option>
+              <option value="mavic3classic">DJI Mavic 3 Classic</option>
+              <option value="mavic4pro">DJI Mavic 4 Pro</option>
+            </optgroup>
+            <optgroup label="DJI Neo, Flip and Avata">
+              <option value="neo2" selected>DJI Neo 2</option>
+              <option value="flip">DJI Flip</option>
+              <option value="avata2">DJI Avata 2</option>
+            </optgroup>
+            <optgroup label="DJI Enterprise">
+              <option value="matrice300">DJI Matrice 300 RTK</option>
+            </optgroup>
+            <optgroup label="Autel">
+              <option value="evonanoplus">Autel EVO Nano+</option>
+              <option value="evolite">Autel EVO Lite+</option>
+              <option value="evo2prov3">Autel EVO II Pro V3</option>
+            </optgroup>
+            <optgroup label="Other makers">
+              <option value="anafiai">Parrot ANAFI Ai</option>
+              <option value="atom2">Potensic Atom 2</option>
+              <option value="skydiox10">Skydio X10</option>
+            </optgroup>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        </label>
+    </div>
+  </section>
+
+  <p class="lede"><span class="step">2</span> Tap the map (or search) for the start point, then tap
+  again for the destination &mdash; the best heights are worked out right away.</p>
+
+  <section class="panel map-panel">
+    <div id="map"></div>
+    <div class="map-actions">
+      <div class="location-search">
+        <div class="field-input">
+          <input type="text" id="locationSearchInput" placeholder="Search a place or address…" aria-label="Search a place or address" enterkeyhint="search" autocomplete="off">
+        </div>
+        <button class="btn btn-ghost" id="locationSearchBtn" data-action="search">Search</button>
+      </div>
+      <div class="map-buttons">
+        <button class="btn btn-ghost" data-action="locate">Use my location</button>
+        <button class="btn btn-ghost" id="conditionsBtn" data-action="conditions">Conditions here</button>
+        <button class="btn btn-ghost" id="resetBtn" data-action="reset" hidden>Start over</button>
+      </div>
+    </div>
+    <div class="notice" id="searchNotice" role="alert" hidden></div>
+    <div class="conditions" id="conditionsCard" aria-live="polite" hidden></div>
+  </section>
+
+  <p class="hint lede-more">Why not just fly at the highest allowed altitude? <a href="guides/best-drone-altitude-in-wind.html">Wind changes with height</a>, so the best altitude is often different for each leg. <a href="guides/">More guides</a></p>
+
+  <section class="panel">
+    <div class="mission-grid">
+      <label class="field">
+        Time at destination
+        <div class="field-input"><input type="text" inputmode="decimal" id="dwell" value="30"><span class="unit">s</span></div>
+      </label>
+    </div>
+    <details class="more">
+      <summary>About this mission type</summary>
+      <p class="field-note" id="missionNote"></p>
+    </details>
+    <label class="field speed-mode">
+      Speed in wind
+      <div class="field-input">
+        <select id="speedMode">
+          <option value="ground">Holds its speed over the ground — DJI waypoint missions, most multirotors</option>
+          <option value="air">Holds its speed through the air — fixed-wing, or flying flat out</option>
+        </select>
+      </div>
+    </label>
+    <details class="more">
+      <summary>What's the difference?</summary>
+      <p class="field-note">Into a headwind both slow down the same way. The difference is with the wind behind: holding ground speed, the drone doesn't go faster but uses less battery; holding airspeed, it goes faster. The DJI flight plan you can download here always holds a set ground speed.</p>
+    </details>
+  </section>
+
+  <details class="panel" id="sitesPanel">
+    <summary>Restricted areas: <span id="sitesSummary">all avoided</span></summary>
+    <div class="disclosure-body">
+      <p class="field-note">No-fly zones under the local rules are always
+      avoided. Untick the sites below you don't need to avoid.</p>
+      <details class="more">
+        <summary>Why these sites?</summary>
+        <p class="field-note">Airports, military sites, prisons and the other
+        sites the local rules make no-fly zones (in Israel also heliports and
+        embassies) are always avoided. The sites below aren't no-fly zones in
+        themselves: they're avoided by default because they're usually full of
+        people, and flying over people is restricted in many countries,
+        including Israel. Unticked sites still show on the map, in grey.
+        You're responsible for keeping to the rules where you fly.</p>
+      </details>
+      <input type="hidden" id="skipSites" value="">
+      <div class="site-toggles" id="siteToggles"></div>
+    </div>
+  </details>
+
+  <details class="panel" id="droneConfigPanel">
+      <summary>Drone details: <span id="droneSummaryName">DJI Neo 2</span> &middot; speeds, battery, payload</summary>
+      <div class="disclosure-body">
+      <div class="field-grid">
+        <label class="field">
+          Mission speed
+          <div class="field-input"><input type="text" inputmode="decimal" id="cruise" value="8"><span class="unit">m/s</span></div>
+        </label>
+        <label class="field">
+          Top speed (Sport)
+          <div class="field-input"><input type="text" inputmode="decimal" id="hor" value="12"><span class="unit">m/s</span></div>
+        </label>
+        <label class="field">
+          Ascent speed
+          <div class="field-input"><input type="text" inputmode="decimal" id="asc" value="5"><span class="unit">m/s</span></div>
+        </label>
+        <label class="field">
+          Descent speed
+          <div class="field-input"><input type="text" inputmode="decimal" id="des" value="3"><span class="unit">m/s</span></div>
+        </label>
+        <label class="field">
+          Wind resistance
+          <div class="field-input"><input type="text" inputmode="decimal" id="windres" value="10.7"><span class="unit">m/s</span></div>
+        </label>
+        <label class="field">
+          Battery energy
+          <div class="field-input"><input type="text" inputmode="decimal" id="batt" value="10"><span class="unit">Wh</span></div>
+        </label>
+        <label class="field">
+          Rated flight time
+          <div class="field-input"><input type="text" inputmode="decimal" id="ftime" value="10.5"><span class="unit">min</span></div>
+        </label>
+        <label class="field">
+          Takeoff weight
+          <div class="field-input"><input type="text" inputmode="decimal" id="mass" value="0.151"><span class="unit">kg</span></div>
+        </label>
+        <label class="field">
+          Battery health
+          <div class="field-input"><input type="text" inputmode="decimal" id="health" value="100"><span class="unit">%</span></div>
+        </label>
+        <label class="field">
+          Drag coefficient
+          <div class="field-input"><input type="text" inputmode="decimal" id="drag" value="1.0"><span class="unit">&nbsp;</span></div>
+        </label>
+        <label class="field">
+          Max takeoff weight
+          <div class="field-input"><input type="text" inputmode="decimal" id="mtow" value="" placeholder="not published"><span class="unit">kg</span></div>
+        </label>
+        <label class="field" id="payloadField">
+          <span id="payloadLabel">Payload (outbound)</span>
+          <div class="field-input"><input type="text" inputmode="decimal" id="payloadKg" value="0"><span class="unit">kg</span></div>
+        </label>
+        <label class="field" id="payloadBackField">
+          Payload (return)
+          <div class="field-input"><input type="text" inputmode="decimal" id="payloadBackKg" value="0"><span class="unit">kg</span></div>
+        </label>
+        <p class="field-note" id="payloadNote" hidden></p>
+        <label class="field-check">
+          <input type="checkbox" id="altPermit">
+          <span>I have authorization to fly above the local height limit
+          (e.g. a CAAI permit or FAA waiver) &mdash; allow up to 120&nbsp;m
+          above ground.</span>
+        </label>
+        <label class="field-check">
+          <input type="checkbox" id="urbanWind" checked>
+          <span>Account for buildings slowing the wind along the route
+          (beta: estimated from building data, for the flight times and
+          battery)</span>
+        </label>
+      </div>
+      <p class="field-note">The drone picked above loads its speeds and
+      wind resistance rating, or enter your own — editing a value
+      switches the picker to "Custom". A payload as heavy as the
+      drone itself halves that leg's speed. Battery energy, rated flight time and
+      weight drive the battery estimate; lower battery health for
+      older packs.</p>
+      </div>
+    </details>
+
+  <div class="calc-bar">
+    <button class="btn btn-primary" id="calcBtn" data-action="calculate">Find Optimal Route</button>
+  </div>
+  <div class="notice" id="calcNotice" role="alert" hidden></div>
+
+  <div class="progress" id="calcProgress" hidden>
+    <div class="progress-track" id="progressTrack" role="progressbar" aria-label="Route calculation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div class="progress-meta" aria-live="polite">
+      <span id="progressLabel"></span>
+      <span id="progressEta"></span>
+    </div>
+  </div>
+
+
+  <section class="panel results" id="result" style="display:none">
+    <div class="result-head">
+      <div class="panel-label">Result</div>
+      <select id="unitsSelect" class="units-select" aria-label="Units">
+        <option value="auto">Units: auto</option>
+        <option value="metric">Metric</option>
+        <option value="imperial">Imperial</option>
+      </select>
+    </div>
+
+    <div class="fly-warning" id="flyWarning" style="display:none"></div>
+
+    <div class="plan-tabs" id="planTabs" role="tablist" aria-label="Route plan" style="display:none">
+      <button class="plan-tab active" id="planFastBtn" role="tab" aria-selected="true" data-action="plan" data-arg="fast"><span class="plan-title">Fastest</span></button>
+      <button class="plan-tab" id="planEcoBtn" role="tab" aria-selected="false" data-action="plan" data-arg="eco"><span class="plan-title">Least battery</span></button>
+      <button class="plan-tab" id="planPeopleBtn" role="tab" aria-selected="false" data-action="plan" data-arg="people" hidden><span class="plan-title">Fewer people</span></button>
+    </div>
+    <p class="hint" id="planNote" style="display:none; margin-bottom:12px"></p>
+
+    <div class="result-headline">
+      <div class="readout" id="readoutFore">
+        <span class="readout-label">Outbound height above ground</span>
+        <span class="readout-value"><span id="heightfore"></span><small id="unitFore">m</small></span>
+        <span class="readout-sub" id="styleFore"></span>
+      </div>
+      <div class="readout" id="readoutBack">
+        <span class="readout-label">Return height above ground</span>
+        <span class="readout-value"><span id="heightback"></span><small id="unitBack">m</small></span>
+        <span class="readout-sub" id="styleBack"></span>
+      </div>
+      <div class="readout" id="readoutBatt" style="display:none">
+        <span class="readout-label">Battery, round trip</span>
+        <span class="readout-value"><span id="battUsed"></span></span>
+        <span class="readout-sub" id="battLeft"></span>
+      </div>
+    </div>
+
+    <div class="result-actions">
+      <button class="btn btn-ghost" id="shareRouteBtn" data-action="share">Share this route</button>
+      <span class="wpml-buttons" id="wpmlButtons"></span>
+    </div>
+    <div class="notice" id="resultNotice" role="alert" hidden></div>
+
+    <div class="no-fly-warning" id="noFlyWarning" style="display:none"></div>
+    <div class="fly-warning" id="rainWarning" style="display:none"></div>
+    <div class="fly-warning" id="batteryWarning" style="display:none"></div>
+    <div class="fly-warning" id="weightWarning" hidden></div>
+    <div class="fly-warning" id="groundWindWarning" hidden></div>
+    <p class="hint" id="groundWindInfo" hidden></p>
+    <p class="hint" id="towerWindInfo" hidden></p>
+
+    <div class="forecast">
+      <div class="forecast-head">
+        <strong id="forecastSelected">Planning for now</strong>
+        <button class="btn btn-ghost btn-inline" id="forecastNowBtn" style="display:none" data-action="forecast" data-arg="0">Back to now</button>
+      </div>
+      <div id="forecastStrip"></div>
+      <div class="forecast-legend">
+        <span>Next 48 h &middot; bar = wind at 80m</span>
+        <span><i style="background:var(--accent-2)"></i>good</span>
+        <span><i style="background:#d9a400"></i>marginal</span>
+        <span><i style="background:var(--danger)"></i>not recommended</span>
+      </div>
+    </div>
+
+    <div class="range-info" id="rangeInfo" style="display:none">
+      <p id="rangeText"></p>
+      <label class="range-toggle"><input type="checkbox" id="rangeToggle" checked> Show range on the map</label>
+      <a class="range-guide" href="guides/how-far-can-my-drone-fly-and-return.html">How the range works</a>
+    </div>
+
+    <details class="result-details" id="resultDetails">
+    <summary>Details: wind by height, side view, rules, buildings and people</summary>
+
+    <p class="savings" id="savingsText">Flying the optimal heights saves
+    <strong><span id="savesec"></span></strong>
+    <span id="savepercent"></span><span id="battSaving"></span> compared
+    with flying at <span id="baselineHeight"></span>, the highest allowed
+    height that's flyable today (<span id="totaltime120"></span> total,
+    <span id="timenowind"></span> with no wind at all).</p>
+
+
+    <div class="terrain-profile" id="terrainProfile" style="display:none"></div>
+
+    <div class="viz-row">
+      <div class="compass" id="compassRose"></div>
+    </div>
+
+    <div class="table-scroll">
+    <table class="wind-table">
+      <thead>
+        <tr><th>Height</th><th>Wind</th><th>Gust (est.)</th><th>Heading</th><th>Outbound</th><th>Return</th><th>Battery</th></tr>
+      </thead>
+      <tbody>
+        <tr><td id="alt30">30 m</td><td><span id="ws30"></span></td><td><span id="gust30"></span></td><td><span id="wd30"></span>&deg;</td><td><span id="timefore30"></span></td><td><span id="timeback30"></span></td><td><span id="batt30"></span></td></tr>
+        <tr><td id="alt80">80 m</td><td><span id="ws80"></span></td><td><span id="gust80"></span></td><td><span id="wd80"></span>&deg;</td><td><span id="timefore80"></span></td><td><span id="timeback80"></span></td><td><span id="batt80"></span></td></tr>
+        <tr><td id="alt120">120 m</td><td><span id="ws120"></span></td><td><span id="gust120"></span></td><td><span id="wd120"></span>&deg;</td><td><span id="timefore120"></span></td><td><span id="timeback120"></span></td><td><span id="batt120"></span></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p class="hint" id="unsafeReasonNote" style="display:none"></p>
+    <p class="hint" id="batteryNote" style="display:none; margin-bottom:10px"></p>
+
+    <p class="hint" id="rulesInfo" style="display:none; margin-bottom:10px"></p>
+    <p class="hint" id="terrainInfo" style="display:none"></p>
+    <p class="hint" id="urbanWindInfo" style="display:none"></p>
+    <p class="hint" id="buildingInfo" style="display:none"></p>
+    <p class="hint" id="hazardInfo" style="display:none"></p>
+    <p class="hint" id="peopleInfo" style="display:none"></p>
+
+    <div class="meta-row">
+      <span>Distance <span id="distance"></span><span id="detourNote"></span></span>
+      <span>Drone heading <span id="dronedir"></span>&deg;</span>
+      <span>Rain chance <span id="precipitation_probability"></span>%</span>
+      <span>Precipitation <span id="precipitation"></span></span>
+      <span>Visibility <span id="visibility"></span></span>
+      <span>Temperature <span id="temperature"></span></span>
+    </div>
+
+    <p class="hint" style="margin-top:12px">We only check heights
+    between 30m and 120m above the ground, and never above the local
+    legal limit.</p>
+    </details>
+  </section>
+
+  <p class="credit">Imagery &copy; Esri, Maxar, Earthstar Geographics. Map data &copy; OpenStreetMap contributors. Wind and elevation data from <a href="https://open-meteo.com" target="_blank">open-meteo.com</a> (elevation: Copernicus DEM GLO-90). Building heights missing from OpenStreetMap: <a href="https://human-settlement.emergency.copernicus.eu/" target="_blank">GHS-BUILT-H R2023A</a>, buildings' effect on the wind: GHS-BUILT-H and GHS-BUILT-S R2023A, and people under the route: GHS-POP R2023A, &copy; European Union, 2023 (CC BY 4.0).</p>
+
+  <script type="module" src="js/app.js"></script>
+
+  <details class="panel" id="whatsNew">
+    <summary>What's new</summary>
+    <div class="disclosure-body">
+      <p class="changelog-date">14 Nov 2026</p>
+      <ul>
+        <li><b>Photo flights carry no payload</b>: the camera is part of the
+        drone, so a photo or inspection flight no longer asks for one, and
+        its range and battery are worked out without one.</li>
+      </ul>
+      <p class="changelog-date">8 Nov 2026</p>
+      <ul>
+        <li><b>Wind beside towers</b>: the wind can speed up and gust round
+        tall buildings, so along the route (checked every ~30 m) the gust
+        and crosswind checks allow for stronger wind beside them. When even
+        that is too much for the drone, the route keeps further away.</li>
+      </ul>
+      <p class="changelog-date">7 Nov 2026</p>
+      <ul>
+        <li><b>Building wind fixed</b>: the slow-down of the wind among
+        buildings wasn't being applied, because one of the building data
+        files couldn't be read. It now is, along the route and at takeoff
+        and landing.</li>
+        <li><b>Calculated on Flytimizer's server</b>: the plans are worked
+        out on our calculation server; your browser still fetches the
+        forecast and map data. The first calculation after a quiet spell
+        can take a little longer while the server starts.</li>
+      </ul>
+      <p class="changelog-date">26 Oct 2026</p>
+      <ul>
+        <li><b>Wind stretch by stretch</b>: every ~30 m of the route gets
+        its own wind &mdash; the forecast at the nearest of up to 5 places
+        along a long route, the building effect at that spot, and the
+        stretch's own heading on a detour &mdash; for the times and
+        battery.</li>
+        <li><b>Takeoff and landing wind</b>: the wind 10&ndash;30 m up
+        at the start and the destination, among the buildings there
+        (funnelled or sheltered), with a warning when its gusts may be
+        too much for the drone.</li>
+        <li><b>Every plan is a waypoint mission</b>: plans now stay at the
+        mission speed (Normal mode) or slower, never Sport mode, so every
+        plan can be downloaded as a DJI flight plan and flown as it is. A
+        leg too windy for the mission speed shows as not safe.</li>
+      </ul>
+      <p class="changelog-date">25 Oct 2026</p>
+      <ul>
+        <li><b>Buildings slow the wind</b> (beta): along a route through
+        a built-up area, the wind at each height is scaled by how much
+        the buildings around it shelter it, for the flight times and
+        battery. The gust and crosswind checks still use the forecast.
+        It can be switched off in the drone settings.</li>
+      </ul>
+      <p class="changelog-date">21 Oct 2026</p>
+      <ul>
+        <li><b>Easier start</b>: pick the mission and drone at the top,
+        tap the start and the destination, and the route is worked out
+        right away. The Calculate button now stays on screen.</li>
+        <li>The <b>Fewer people</b> tab is always shown for a route: when
+        there's no worthwhile way round, it says why (hardly anyone under
+        the route, no detour saves enough, not flyable, no data).</li>
+        <li><b>12 more drones</b>: DJI Mini 3, Mini 4K, Mini 5 Pro, Air 3S,
+        Mavic 4 Pro, Flip and Avata 2; Autel EVO Nano+ and EVO II Pro V3;
+        Parrot ANAFI Ai, Potensic Atom 2 and Skydio X10.</li>
+        <li>Changed something while it's calculating? Press Calculate
+        again: it starts afresh. Start over stops it too.</li>
+        <li>The start and destination are now a green <b>A</b> and a red
+        <b>B</b> on the map, each labelled, so a shared route is easy to
+        read.</li>
+      </ul>
+      <p class="changelog-date">20 Oct 2026</p>
+      <ul>
+        <li><b>Add to home screen</b>: a button at the top installs
+        Flytimizer like an app (Android, Chrome and Edge); on iPhone and
+        iPad it shows the two taps to do it from Safari.</li>
+        <li><b>Payload in kg</b>: enter what the drone carries and the
+        app works out how much heavier it is. It warns over a published
+        max takeoff weight (Matrice 300 RTK: 9 kg) and when a sub-250 g
+        drone goes over 250 g.</li>
+        <li><b>More realistic battery</b>: each drone is calibrated at the
+        speed its maker measured the flight time at, and flight times not
+        measured from real logs are cut by 15% (makers measure them in a
+        lab, down to 0%).</li>
+        <li><b>Cleaner result</b>: the heights, battery, downloads,
+        warnings and forecast up front; the wind table, side view, rules,
+        buildings and people under <b>Details</b>. Longer explanations
+        open on a click.</li>
+      </ul>
+      <p class="changelog-date">19 Oct 2026</p>
+      <ul>
+        <li><b>People under the route</b>: roughly how many people live
+        within 50 m either side of it, and how crowded its busiest stretch
+        is, from the EU's population grid.</li>
+        <li><b>Three plans</b>: <b>Fastest</b>, <b>Least battery</b> and,
+        when a modest detour passes over far fewer people, <b>Fewer
+        people</b> (dashed purple line) &mdash; each with its own heights,
+        battery, side view and DJI flight-plan downloads, named after the
+        plan.</li>
+        <li><b>Two speeds per drone</b>: the <b>mission speed</b> (Normal
+        mode &mdash; the most a waypoint mission flies, from each drone's
+        specs), used by the plans and the downloads, and the <b>top speed
+        (Sport)</b>. Flight times are now for the speed a mission really
+        flies.</li>
+        <li><b>The plans pick the speed too</b>: into a headwind, Fastest
+        may fly a leg at Sport speed by hand; Least battery may fly a leg
+        slower, or into a strong headwind at Sport speed, when that saves
+        at least 1% of a battery.</li>
+        <li><b>Too windy for the mission speed?</b> Instead of &ldquo;no
+        safe height&rdquo;, the plan flies that leg in Sport mode by hand,
+        with a note that a mission can't fly it.</li>
+        <li><b>Restricted areas</b> settings: schools, hospitals,
+        playgrounds and other sites that aren't no-fly zones in themselves
+        can be switched off. No-fly sites under the local rules are always
+        avoided.</li>
+        <li><b>Conditions here</b> button: for the start point or your
+        location, the predicted number of navigation satellites overhead,
+        the Kp index (GPS space weather), the highest height today's wind
+        allows for your drone, and its round-trip range.</li>
+        <li><b>GPS spoofing check</b>: a warning when your device's location
+        is in another country than your internet connection and time zone
+        say &mdash; like the fake position at Beirut airport.</li>
+        <li>DJI Neo 2: battery, speed and climb figures measured from real
+        flight logs, so its battery estimate is no longer about a third too
+        low.</li>
+        <li>The side view of a photo / inspection mission no longer shows a
+        landing at the destination, since the drone turns around in the
+        air there.</li>
+      </ul>
+      <p class="changelog-date">8 Oct 2026</p>
+      <ul>
+        <li><b>Round-trip range</b> on the map: how far the drone can fly
+        from the start and still get back with a 20% reserve, in every
+        direction with today's wind. Works with just a start point.</li>
+        <li><b>Speed in wind</b> setting: drones that hold their speed
+        over the ground (DJI waypoint missions, most multirotors) or
+        through the air (fixed-wing, or flying flat out) &mdash; they
+        behave differently with a tailwind.</li>
+        <li>Building heights: where OpenStreetMap doesn't say how tall a
+        building is, the average building height around it from the EU's
+        Global Human Settlement Layer is used instead of a 7 m guess.</li>
+        <li>Detours explained on the map: a dashed ring shows the
+        keep-out distance around each restricted area, and the map zooms
+        out to show the whole route.</li>
+        <li>Restricted areas: public shelters are no longer counted as
+        military sites, the 3 km keep-out in Israel now applies only to
+        military airfields, and a start or destination inside a keep-out
+        zone no longer sends the route out to the zone's edge and
+        back.</li>
+        <li>The side view shows both legs, and says so when they fly the
+        same altitudes.</li>
+        <li><b>Start over</b> button; on phones the recommended heights
+        come first, number fields open a number keypad, and the mission
+        settings fit the screen.</li>
+        <li>Messages appear in the page instead of pop-ups, including a
+        clear message with <b>Try again</b> when the forecast can't be
+        loaded.</li>
+        <li>Better accessibility and contrast in light and dark mode.</li>
+        <li>New <a href="guides/">guides</a> on drone altitude, battery,
+        round-trip range and routes in wind.</li>
+      </ul>
+      <p class="changelog-date">5 Oct 2026</p>
+      <ul>
+        <li>48-hour outlook: see the wind and rain for every hour ahead
+        and tap an hour to plan the route for that time.</li>
+        <li>Mission types: <b>Delivery</b> (land or drop at the
+        destination, lighter on the way back, one flight plan each way)
+        and <b>Photo / inspection</b> (stay airborne at the destination,
+        same weight both ways, one round-trip flight plan), each with a
+        time at the destination.</li>
+        <li>Two plans for every route: <b>Fastest</b>, and <b>Least
+        battery</b>, which can hold its altitude over rolling terrain
+        instead of following every hill, to avoid costly climbs.</li>
+        <li>Battery estimate: round-trip battery use for the recommended
+        heights (and every row of the table), from each drone's rated
+        flight time, payload, climbs, wind and temperature &mdash; with
+        a warning when less than a 20% reserve would be left.</li>
+        <li>Imperial units (ft, mph, mi) for routes in the US, or
+        pick your units next to the result.</li>
+        <li>New satellite map with place names, plus a street-map
+        option.</li>
+        <li>Country-specific rules: the route now follows the drone
+        rules of the country it starts in (Israel and the US so far),
+        including height limits, airport distances and Washington DC's
+        no-drone zone.</li>
+        <li>Terrain-aware routes: heights are now above the ground, so
+        over hills like the Carmel the drone climbs and descends with
+        the terrain and never goes above 120m over the ground. New side
+        view of the route under the result.</li>
+        <li>Flight plans (WPML) now carry a separate height for every
+        waypoint, following the terrain.</li>
+        <li>Progress bar with an estimated time left, which learns from
+        your previous calculations.</li>
+        <li>More reliable restricted-area and building lookups: backup
+        map servers, automatic retries, and a "Try again" button.</li>
+        <li>More accurate wind model: crosswind correction, strong
+        headwinds flagged as unflyable, fixes to the forecast hour and
+        to wind direction between altitudes.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="panel">
+    <summary>Why altitude matters</summary>
+    <div class="disclosure-body">
+      <ul>
+        <li>The right height makes deliveries faster, keeps food warmer,
+        and saves battery or stretches your range.</li>
+        <li>Fly often — a delivery route, say — and small gains per trip
+        add up fast.</li>
+        <li>Wind isn't uniform with height, so a route grounded by a
+        high-wind warning near the ground can still be flyable higher
+        up.</li>
+        <li>We won't recommend flying below 30m — besides clearance
+        margins, it also cuts noise disturbance noticeably. We'll
+        keep you at least 20m above the tallest building OpenStreetMap
+        knows about near your route, shown in faint orange on the map —
+        climbing over buildings is simpler and safer than weaving
+        between them at low level.</li>
+        <li>We apply the drone rules of the country your route starts
+        in &mdash; currently Israel (CAAI, 50m height limit) and the
+        United States (FAA, 400ft / 122m). Anywhere else we fall back to
+        Israel's rules, which are on the strict side. If you hold a
+        permit to fly higher, tick the box in the drone settings.</li>
+        <li>Heights are above the ground, not above takeoff: over hills
+        the drone climbs and descends with the terrain, stays at least
+        the chosen height above it, and never goes above the local
+        height limit over it. The side view under the result
+        shows the planned altitude against the ground, from Copernicus
+        GLO-90 elevation data (~90m resolution).</li>
+        <li>Schools, kindergartens, hospitals, playgrounds, nursing
+        homes, universities/colleges and power infrastructure are
+        risky to fly over — we mark the ones OpenStreetMap knows about
+        in red on the map and route around them by at least 30m (or
+        their real size, if bigger), since altitude alone doesn't
+        make overflying them safe.</li>
+        <li>Airports, military sites, prisons and similar sites are a
+        different kind of risk — flying near them can be illegal or
+        need authorization no matter how you route around them. We use
+        each country's own distances (in Israel, for example, 2km from
+        airports; in the US, controlled airspace around airports needs
+        LAANC authorization, and Washington DC has its own no-drone
+        zone) and flag them with a separate, more prominent warning.
+        We only check OpenStreetMap's map data, not official
+        no-fly-zone maps or current NOTAMs/TFRs — always verify there
+        before flying.</li>
+        <li>Altitude choice matters most on long routes, with
+        higher-drag drones, and when the wind runs roughly along your
+        heading.</li>
+        <li>Drag isn't the enemy — flown with the wind, it works for
+        you.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="panel">
+    <summary>Research</summary>
+    <div class="disclosure-body">
+      <p><b>Payload effect</b><br>
+      <a href="https://www.tytorobotics.com/blogs/articles/how-does-drone-payload-affect-flight-time" target="_blank">tytorobotics.com — how payload affects flight time</a><br>
+      <a href="https://www.researchgate.net/figure/UAV-weight-and-payload-vs-flight-time_fig3_337948739" target="_blank">ResearchGate — UAV weight and payload vs flight time</a></p>
+      <p><b>Flying above 30m to reduce noise</b><br>
+      "Determination of optimal flight altitude to minimise acoustic
+      drone disturbance to wildlife using species audiograms",
+      <a href="https://doi.org/10.1111/2041-210X.13691" target="_blank">doi.org/10.1111/2041-210X.13691</a></p>
+      <p><b>Drift equations</b><br>
+      IJpelaar, Bruijn, de Haan, Schreur &amp; Holtslag (2016),
+      "Observing Boundary-Layer Winds from Hot-Air Balloon Flights."
+      a &asymp; 0.1 for a drone — after about a minute it's drifting at
+      almost the wind's speed.</p>
+    </div>
+  </details>
+  </main>
+
+  <a class="feedback-link" href="https://docs.google.com/forms/d/e/1FAIpQLScucpTGf_6hN_e8NQMgTJqoPX7q7B1HavnFdywewEtgMXFuNA/viewform?usp=sf_link" target="_blank">Contact us for questions, improvement suggestions and partnerships</a>
+  <span style="color:var(--muted); margin:0 8px;">&middot;</span>
+  <a class="feedback-link" href="terms.html">Terms of Use</a>
+  <span style="color:var(--muted); margin:0 8px;">&middot;</span>
+  <a class="feedback-link" href="guides/">Guides</a>
+
+  <!-- Bump data-updated (and the What's new list) on every release.
+       If the GitHub repo is reachable, the latest commit date
+       replaces it automatically when it's newer. -->
+  <p class="updated" id="lastUpdated" data-updated="2026-11-14">
+    Updated <time id="lastUpdatedDate" datetime="2026-11-14">14 Nov 2026</time>
+  </p>
+
+  <script>
+    // "Updated" date: start from the date written in the page, and
+    // replace it with the repo's latest commit date when that's newer
+    // (so it can't go stale if someone forgets to bump it). Any
+    // failure - offline, GitHub rate limit - just keeps the written date.
+    (function(){
+      var box = document.getElementById('lastUpdated');
+      var timeEl = document.getElementById('lastUpdatedDate');
+      if (!box || !timeEl) return;
+
+      function show(date){
+        var formatted = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        // Whole calendar days in the visitor's time zone, so a date from
+        // yesterday reads "yesterday" even if it was under 24 hours ago.
+        function dayStart(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+        var days = Math.round((dayStart(new Date()) - dayStart(date)) / 86400000);
+        var rel = days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 30 ? days + ' days ago' : null;
+        timeEl.textContent = rel ? formatted + ' (' + rel + ')' : formatted;
+        timeEl.setAttribute('datetime', date.toISOString().slice(0, 10));
+      }
+
+      var written = new Date(box.getAttribute('data-updated') + 'T12:00:00Z');
+      if (!isNaN(written)) show(written);
+
+      fetch('https://api.github.com/repos/bambiker/flytimizer/commits?per_page=1', { headers: { 'Accept': 'application/vnd.github+json' } })
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(commits){
+          var iso = commits && commits[0] && commits[0].commit && commits[0].commit.committer && commits[0].commit.committer.date;
+          var latest = iso ? new Date(iso) : null;
+          if (latest && !isNaN(latest) && (isNaN(written) || latest > written)) show(latest);
+        })
+        .catch(function(){});
+    })();
+  </script>
+
+  <!-- AddToAny BEGIN -->
+  <div class="a2a_kit a2a_kit_size_32 a2a_default_style" data-a2a-url="https://bambiker.github.io/flytimizer/" data-a2a-title="Flytimizer">
+    <a class="a2a_dd" href="https://www.addtoany.com/share" aria-label="More ways to share"></a>
+    <a class="a2a_button_copy_link"></a>
+    <a class="a2a_button_twitter"></a>
+    <a class="a2a_button_x"></a>
+    <a class="a2a_button_whatsapp"></a>
+    <a class="a2a_button_email"></a>
+    <a class="a2a_button_telegram"></a>
+    <a class="a2a_button_sms"></a>
+    <a class="a2a_button_facebook"></a>
+    <a class="a2a_button_pinterest"></a>
+    <a class="a2a_button_linkedin"></a>
+    <a class="a2a_button_reddit"></a>
+    <a class="a2a_button_facebook_messenger"></a>
+    <a class="a2a_button_google_gmail"></a>
+  </div>
+  <script async src="https://static.addtoany.com/menu/page.js"></script>
+  <!-- AddToAny END -->
+
+</div>
+</body>
+</html>

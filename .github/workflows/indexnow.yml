@@ -1,0 +1,39 @@
+name: IndexNow
+
+# After each update to main, tell the search engines that support
+# IndexNow (Bing - which ChatGPT and Copilot search use - Yandex and
+# others) which pages to re-crawl: every URL in sitemap.xml. Google
+# doesn't take IndexNow; it reads the sitemap submitted in Search
+# Console. The key file (in the repository root, so served at
+# /flytimizer/<key>.txt) proves the site is ours.
+
+on:
+  push:
+    branches: [main]
+    paths: ['**.html', 'sitemap.xml', 'llms.txt']
+  workflow_dispatch:
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Submit the sitemap's URLs
+        run: |
+          set -eu
+          KEY_FILE=$(ls | grep -E '^[0-9a-f]{32}\.txt$' | head -1)
+          KEY=${KEY_FILE%.txt}
+          SITE=https://bambiker.github.io/flytimizer
+          # Wait for GitHub Pages to publish this commit's key file.
+          for i in $(seq 1 30); do
+            [ "$(curl -s "$SITE/$KEY_FILE")" = "$KEY" ] && break
+            sleep 20
+          done
+          URLS=$(grep -o '<loc>[^<]*</loc>' sitemap.xml | sed 's/<[^>]*>//g' | jq -R . | jq -s -c .)
+          BODY=$(jq -n -c --arg key "$KEY" --arg loc "$SITE/$KEY_FILE" --argjson urls "$URLS" \
+            '{host: "bambiker.github.io", key: $key, keyLocation: $loc, urlList: $urls}')
+          STATUS=$(curl -s -o /dev/stderr -w '%{http_code}' -X POST https://api.indexnow.org/indexnow \
+            -H 'Content-Type: application/json; charset=utf-8' -d "$BODY")
+          echo "IndexNow answered HTTP $STATUS"
+          case "$STATUS" in 200|202) ;; *) exit 1 ;; esac

@@ -1,0 +1,56 @@
+// Mission type (delivery / photo) and its defaults.
+
+import { updatePayloadNote } from './drone.js';
+import { saveSettings } from './share.js';
+import { profileWaypoints } from './terrain.js';
+
+// ---------------------------------------------------------------
+// Mission type
+//
+// Delivery: land (or lower the parcel) at the destination, then fly
+// back - the return leg can carry a different payload, and each leg
+// is its own mission (takeoff and landing at both ends).
+// Photo / inspection: fly to the destination, stay airborne there for
+// the time set, and come straight back - no payload (the camera is part
+// of the drone), no landing or takeoff at the destination, one
+// round-trip mission.
+// ---------------------------------------------------------------
+export var DWELL_DEFAULTS = { delivery: 30, photo: 60 };
+
+export function currentMission(){
+  var el = document.getElementById('mission');
+  return (el && el.value === 'photo') ? 'photo' : 'delivery';
+}
+
+export function onMissionChange(){
+  var m = currentMission();
+  // No payload on a photo flight: both payload fields go.
+  ['payloadField', 'payloadBackField'].forEach(function(id){
+    var f = document.getElementById(id);
+    if (f) f.style.display = m === 'photo' ? 'none' : '';
+  });
+  var d = document.getElementById('dwell');
+  var other = m === 'photo' ? 'delivery' : 'photo';
+  if (d && parseFloat(d.value) === DWELL_DEFAULTS[other]) d.value = DWELL_DEFAULTS[m];
+  updatePayloadNote();
+  var note = document.getElementById('missionNote');
+  if (note){
+    note.textContent = m === 'photo'
+      ? 'Flies to the destination, stays in the air there for the time you set, and comes straight back, with no payload (the camera is part of the drone). Flight plan: one round-trip mission.'
+      : 'Lands or lowers the parcel at the destination (time at destination = hovering time; set 0 if it lands and waits powered down), then flies back with the return payload. Flight plans: one mission each way.';
+  }
+  saveSettings();
+}
+
+// One continuous waypoint list out and back, all heights relative to
+// the start point (the outbound takeoff).
+export function roundTripWaypoints(outSamples, outProf, backSamples, backProf){
+  var outW = profileWaypoints(outSamples, outProf);
+  var offset = backSamples[0].g - outSamples[0].g;
+  var backW = profileWaypoints(backSamples, backProf).map(function(w){
+    return { lat: w.lat, lng: w.lng, heightRel: w.heightRel + offset };
+  });
+  // Turn around at the destination at whichever leg's height is higher.
+  outW[outW.length - 1].heightRel = Math.max(outW[outW.length - 1].heightRel, backW[0].heightRel);
+  return outW.concat(backW.slice(1));
+}

@@ -1,0 +1,261 @@
+// Shared route state, duration formatting, place search, start/destination
+// markers, and the distance/bearing/wind math everything else builds on.
+
+import { track } from './analytics.js';
+import { map } from './map-view.js';
+import { hideNotice, showNotice } from './notice.js';
+import { rememberStartPoint } from './share.js';
+import { checkGpsCountry, gpsCheckHtml } from './spoof.js';
+
+//Set up some of our variables.
+export var marker = 0; ////Has the user plotted their location marker?
+export var lat1,lat2, lng1, lng2;
+export var marker1, marker2, label1, label2;
+
+// Formats a duration given in seconds as "M min S s" (or just "S s" under a minute).
+export function formatDuration(totalSeconds, decimals){
+  decimals = (typeof decimals === 'number') ? decimals : 0
+  if (!isFinite(totalSeconds)) return '\u2014' // leg can't make progress
+  var sign = totalSeconds < 0 ? '-' : ''
+  var abs = Math.abs(totalSeconds)
+  var mins = Math.floor(abs / 60)
+  var secs = abs - mins * 60
+  if (mins === 0){
+    return sign + secs.toFixed(decimals) + ' s'
+  }
+  return sign + mins + ' min ' + secs.toFixed(decimals) + ' s'
+}
+
+// Looks up a free-text place or address using OpenStreetMap's
+// Nominatim geocoder (the same open data source as the buildings and
+// hazard lookups above) and returns the best match's coordinates, or
+// null if nothing was found. Used by the location search box next to
+// "Use my location".
+export async function geocodeLocation(query){
+  var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(query);
+  var response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  if (!response.ok){
+    throw new Error('Location search failed: ' + response.status);
+  }
+  var results = await response.json();
+  if (!results || results.length === 0){
+    return null;
+  }
+  return { lat: parseFloat(results[0].lat), lng: parseFloat(results[0].lon), label: results[0].display_name };
+}
+
+//Function called to initialize / create the map.
+//This is called when the page has loaded.
+
+export function moveToLocation(lat, lng){
+  map.setView([lat, lng], 14);
+  setstartloc(lat, lng)
+}
+
+// Used by the "Use my location" button: always puts the start marker
+// at the given location, moving it if it already exists instead of
+// leaving it in place or creating a duplicate.
+export function useCurrentLocationAsStart(lat, lng){
+  map.setView([lat, lng], 14);
+  if (marker === 0){
+    setstartloc(lat, lng);
+  } else {
+    marker1.setLatLng([lat, lng]);
+    markerLocation(1, marker1);
+  }
+}
+
+// "Use my location" button.
+export function getLocation() {
+  hideNotice('searchNotice');
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(function(position){
+      track('use_location', { result: 'ok' });
+      showPosition(position);
+    }, function(){
+      track('use_location', { result: 'denied_or_unavailable' });
+      showNotice('searchNotice', "Couldn't get your location (it may be turned off or not allowed for this site). Search for a place or click the map instead.");
+    });
+  } else {
+    track('use_location', { result: 'unsupported' });
+    showNotice('searchNotice', "This browser can't share your location. Search for a place or click the map instead.");
+  }
+}
+
+export function showPosition(position) {
+  var lat = position.coords.latitude, lng = position.coords.longitude;
+  useCurrentLocationAsStart(lat, lng);
+  // Warn if the position looks spoofed (see spoof.js).
+  checkGpsCountry(lat, lng).then(function(a){
+    track('gps_check', { result: a.status, from: 'use_location' });
+    if (a.status === 'likely' || a.status === 'possible'){
+      showNotice('searchNotice', gpsCheckHtml(a, position.coords.accuracy).replace(/<[^>]+>/g, '').replace(/ GPS interference map\./, ''));
+    }
+  }, function(err){ console.warn('GPS check failed:', err); });
+}
+
+// Place search box: geocode the text and put the start point there.
+export async function searchLocation() {
+  var input = document.getElementById('locationSearchInput');
+  var query = input.value.trim();
+  if (!query) { input.focus(); return; }
+  hideNotice('searchNotice');
+
+  var btn = document.getElementById('locationSearchBtn');
+  var originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Searching\u2026';
+
+  try {
+    var result = await geocodeLocation(query);
+    if (!result) {
+      track('place_search', { result: 'not_found' });
+      showNotice('searchNotice', 'No location found for "' + query + '". Try a different search.');
+      return;
+    }
+    track('place_search', { result: 'found' });
+    useCurrentLocationAsStart(result.lat, result.lng);
+  } catch (err) {
+    console.error(err);
+    track('place_search', { result: 'error' });
+    showNotice('searchNotice', 'Something went wrong while searching for that location - please try again.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+}
+
+// The start and destination pins: a green "A" and a red "B", each
+// with its name always shown next to it, so anyone looking at the map
+// (or a shared link) can tell them apart.
+var PIN_LABELS = { start: 'Start', end: 'Destination' };
+export function routePin(latlng, kind){
+  var icon = L.divIcon({
+    className: 'route-pin route-pin-' + kind,
+    html: '<span class="pin-dot">' + (kind === 'start' ? 'A' : 'B') + '</span><span class="pin-label">' + PIN_LABELS[kind] + '</span>',
+    iconSize: [26, 26],
+    iconAnchor: [13, 13]
+  });
+  return L.marker(latlng, { icon: icon, draggable: true, autoPan: true, title: PIN_LABELS[kind], alt: PIN_LABELS[kind], keyboard: true });
+}
+
+export function setstartloc(lat, long)
+{
+    if(marker === 0){ // new marker
+            marker = 1;
+   marker1 = routePin([lat, long], 'start').addTo(map);
+         markerLocation(1, marker1);    
+   //Listen for drag events!
+   marker1.on('dragend', function() {
+       markerLocation(1, marker1);  
+});      
+    }
+}
+
+
+//This function will get the marker's current location and then add the lat/long
+//values to our textfields so that we can save the location.
+export function markerLocation(sd, mark){
+  updateResetButton();
+  var currentLocation = mark.getLatLng();
+  if (sd === 1){
+    lat1 = currentLocation.lat;
+    lng1 = currentLocation.lng;
+    rememberStartPoint(lat1, lng1);
+  } else {
+    lat2 = currentLocation.lat;
+    lng2 = currentLocation.lng;
+  }
+}
+
+// "Start over" is offered once there's a point on the map.
+function updateResetButton(){
+  var btn = document.getElementById('resetBtn');
+  if (btn) btn.hidden = marker === 0;
+}
+
+// Start over: removes both markers, so the next map click or search
+// sets a new start point.
+export function clearMarkers(){
+  if (marker1) marker1.remove();
+  if (marker2) marker2.remove();
+  marker1 = marker2 = undefined;
+  lat1 = lng1 = lat2 = lng2 = undefined;
+  marker = 0;
+  updateResetButton();
+}
+
+// Called when a map click places the destination for the first time
+// (app.js: run the calculation straight away).
+var onDestinationPlaced = null;
+export function setOnDestinationPlaced(fn){ onDestinationPlaced = fn; }
+
+// Map click: the first click places the start, the second the
+// destination, later clicks move the destination.
+export function addMarker(e){
+    // Add marker to map at click location; add popup window  
+
+        if(marker === 0){
+        marker=1;        
+       //Create the marker.
+   marker1 = routePin(e.latlng, 'start').addTo(map);
+
+       markerLocation(1, marker1);  
+       //Listen for drag events!
+
+marker1.on('dragend', function() {
+ markerLocation(1, marker1);
+});      
+    } else{
+        if(marker === 1){
+            marker=2;
+            //Create the marker.
+   marker2 = routePin(e.latlng, 'end').addTo(map);
+            markerLocation(2, marker2);
+            if (onDestinationPlaced) onDestinationPlaced();
+            //Listen for drag events!
+     marker2.on('dragend', function() {
+   markerLocation(2, marker2);  
+});      
+        } else{
+            //Marker has already been added, so just change its location.
+                var lat = (e.latlng.lat);
+                var lng = (e.latlng.lng);
+                var newLatLng = new L.LatLng(lat, lng);
+                marker2.setLatLng(newLatLng);    
+                markerLocation(2, marker2);  
+        }
+        }
+}
+
+// Places (or moves) the destination marker - the programmatic twin
+// of the second map click in addMarker().
+export function setDestination(lat, lng){
+  if (marker === 0) return;
+  if (marker === 1){
+    marker = 2;
+    marker2 = routePin([lat, lng], 'end').addTo(map);
+    marker2.on('dragend', function(){ markerLocation(2, marker2); });
+  } else {
+    marker2.setLatLng([lat, lng]);
+  }
+  markerLocation(2, marker2);
+}
+
+export function getDistanceFromLatLon(lat1, lon1, lat2, lon2) {
+  var R = 6371; // Radius of the earth in km
+  var dLat = deg2rad(lat2-lat1);  // deg2rad below
+  var dLon = deg2rad(lon2-lon1);
+  var a =
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon/2) * Math.sin(dLon/2)
+    ;
+  var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  var d = R * c * 1000; // Distance in m
+  return d;
+}
+
+export function deg2rad(deg) {
+  return deg * (Math.PI/180)
+}
